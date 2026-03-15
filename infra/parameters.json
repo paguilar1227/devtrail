@@ -4,7 +4,7 @@
   "parameters": {
     "environment": { "value": "prod" },
     "acrName": { "value": "yourregistry" },
-    "acrResourceGroup": { "value": "your-acr-rg" },
+    "acrResourceGroup": { "value": "shared-rg" },
     "consolidationSchedule": { "value": "0 */30 * * * *" }
   }
 }
