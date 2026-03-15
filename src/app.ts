@@ -6,6 +6,7 @@ import type { EmbeddingProvider, LLMProvider } from './providers/types.js';
 import type { BlobStorage } from './storage/blob.js';
 import type { Config } from './config.js';
 import { runCapturePipeline } from './capture/pipeline.js';
+import { mountMcpRoutes } from './mcp/server.js';
 
 export interface AppDeps {
   db: DbClient;
@@ -95,6 +96,9 @@ export function createApp(deps: AppDeps) {
 
     return c.json({ captureId: result.captureId }, 201);
   });
+
+  // MCP routes
+  mountMcpRoutes(app, deps);
 
   // Error handler
   app.onError((err, c) => {
