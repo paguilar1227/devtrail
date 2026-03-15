@@ -304,6 +304,12 @@ DAILY_DIGEST_ENABLED=true
 
 # Telegram Chat ID (for notifications)
 TELEGRAM_CHAT_ID=your-chat-id
+
+# Consolidation schedule (Azure Functions CRON format)
+# Every 30 min: 0 */30 * * * *
+# Every hour:   0 0 * * * *
+# Daily at 6AM: 0 0 6 * * *
+CONSOLIDATION_SCHEDULE=0 */30 * * * *
 ```
 
 - [ ] **Step 6: Create `docker-compose.yml`**
@@ -5421,7 +5427,7 @@ export default async function timerTrigger(): Promise<void> {
       "name": "myTimer",
       "type": "timerTrigger",
       "direction": "in",
-      "schedule": "0 0 6 * * *"
+      "schedule": "%CONSOLIDATION_SCHEDULE%"
     }
   ]
 }
@@ -6144,6 +6150,9 @@ param telegramWebhookSecret string
 @description('Telegram chat ID')
 param telegramChatId string
 
+@description('Consolidation CRON schedule (Azure Functions format). Default: every 30 min.')
+param consolidationSchedule string = '0 */30 * * * *'
+
 var prefix = 'openbrain-${environment}'
 
 // Log Analytics Workspace (required by Container Apps + App Insights)
@@ -6214,6 +6223,7 @@ module functionApp 'modules/function-app.bicep' = {
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultName: keyvault.outputs.keyVaultName
     storageAccountName: storage.outputs.storageAccountName
+    consolidationSchedule: consolidationSchedule
   }
 }
 
@@ -6573,6 +6583,9 @@ param appInsightsConnectionString string
 param keyVaultName string
 param storageAccountName string
 
+@description('CRON expression for consolidation schedule. Default: every 30 minutes.')
+param consolidationSchedule string = '0 */30 * * * *'
+
 // Function App needs a dedicated storage account for runtime
 resource funcStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: replace('${prefix}func', '-', '')
@@ -6616,6 +6629,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' }
         { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
+        { name: 'CONSOLIDATION_SCHEDULE', value: consolidationSchedule }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url)' }
         { name: 'GEMINI_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=gemini-api-key)' }
@@ -6650,6 +6664,7 @@ output functionAppName string = functionApp.name
     "acrName": { "value": "YOUR_SHARED_ACR_NAME" },
     "acrResourceGroup": { "value": "YOUR_ACR_RESOURCE_GROUP" },
     "telegramChatId": { "value": "YOUR_CHAT_ID" },
+    "consolidationSchedule": { "value": "0 */30 * * * *" },
     "dbAdminPassword": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "db-admin-password" } },
     "apiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "open-brain-api-key" } },
     "geminiApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "gemini-api-key" } },
