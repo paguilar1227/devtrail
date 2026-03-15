@@ -1,3 +1,4 @@
+import appInsights from 'applicationinsights';
 import type { DbClient } from '../db/client.js';
 import type { EmbeddingProvider, LLMProvider } from '../providers/types.js';
 import { findCapturesByStatus } from '../db/captures.js';
@@ -177,4 +178,14 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
     tokensUsed: totalTokens, durationMs: Date.now() - startTime,
     errorMessage: null,
   });
+
+  const client = appInsights.defaultClient;
+  if (client) {
+    client.trackMetric({ name: 'consolidation.captures_processed', value: pendingCaptures.length });
+    client.trackMetric({ name: 'consolidation.facts_created', value: totalFactsCreated });
+    client.trackMetric({ name: 'consolidation.facts_updated', value: totalFactsUpdated });
+    client.trackMetric({ name: 'consolidation.insights_created', value: insightsCreated });
+    client.trackMetric({ name: 'consolidation.tokens_used', value: totalTokens });
+    client.trackMetric({ name: 'consolidation.duration_ms', value: Date.now() - startTime });
+  }
 }

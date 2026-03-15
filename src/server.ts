@@ -1,4 +1,16 @@
-// src/server.ts
+// src/server.ts — add at the VERY TOP, before all other imports
+import appInsights from 'applicationinsights';
+
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights.setup()
+    .setAutoCollectRequests(true)
+    .setAutoCollectPerformance(true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectDependencies(true)  // tracks PostgreSQL, HTTP calls to Gemini/Anthropic
+    .setAutoCollectConsole(true)
+    .start();
+}
+
 import { serve } from '@hono/node-server';
 import { loadConfig } from './config.js';
 import { createDbClient } from './db/client.js';
