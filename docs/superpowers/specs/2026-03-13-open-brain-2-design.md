@@ -169,11 +169,13 @@ error_message           text    -- null on success, error details on failure
 ### Relationships
 
 ```
-captures ──[many-to-many via source_capture_ids[]]──→ facts
-facts    ──[many-to-many via source_fact_ids[]]──→ insights
+captures  ──[many-to-many via source_capture_ids[]]──→ facts
+facts     ──[many-to-many via source_fact_ids[]]──→ insights
+reminders ──[self-referential via parent_id]──→ reminders (subtasks)
+reminders ──[one-to-many via reminder_id]──→ reminder_comments
 ```
 
-No join tables — arrays store references. A single capture can feed multiple facts. A single fact can feed multiple insights. The same relationship works in reverse for provenance tracing.
+No join tables — arrays store references for profiler relationships. A single capture can feed multiple facts. A single fact can feed multiple insights. Reminders use `parent_id` for subtask hierarchy and a foreign key for comments.
 
 ## Capture Flow
 
@@ -327,7 +329,7 @@ Low-confidence response includes `evidence` array with source items and a `note`
 
 ## MCP Tool Surface
 
-13 tools exposed via JSON-RPC 2.0 (9 profiler + 4 reminders):
+17 tools exposed via JSON-RPC 2.0 (9 profiler + 8 reminders):
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
@@ -368,24 +370,45 @@ When a user edits a fact via `update_fact`:
 
 Open Brain is more than a profiler — it's a **bonding layer between human and AI**. Reminders are a core feature, not an add-on. They give the user a reason to interact with Open Brain daily, and the reminders themselves are profile signal (what someone reminds themselves about reveals interests, priorities, and active projects).
 
+### Reminder Hierarchy
+
+Reminders support a **Project → Section → Task** hierarchy with subtask nesting:
+
+```
+Project (e.g., "Deep Research Engine", "Personal", "QA Automation")
+  └── Section (e.g., "Backend", "Deployment", "Design")
+        └── Task (with status, priority, due date)
+              ├── Comment (timestamped progress log entry)
+              └── Subtask (recursive child task, up to 4 levels)
+```
+
+- Projects and sections are lightweight string identifiers — creating a project is implicit when a new project name is used. No separate project/section tables.
+- A subtask is a reminder with a `parent_id` pointing to its parent. Subtasks can nest up to 4 levels (parent → child → grandchild → great-grandchild), though 2 levels is the common case.
+- Comments are chronological progress log entries per task — "what happened." They're distinct from subtasks ("what needs to be done").
+
 ### Table: reminders
 
 ```sql
 -- Follows core table shape (see Extensibility Conventions)
 id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
-content         text NOT NULL           -- the reminder text
+content         text NOT NULL           -- the reminder/task text
 embedding       vector(3072)            -- enables cross-type semantic search
-metadata        jsonb                   -- type-specific attrs (future: recurrence, priority)
+metadata        jsonb                   -- type-specific attrs (future: recurrence)
 category        varchar                 -- auto-determined from semantic context
                                         -- e.g., 'work' | 'personal' | 'health'
                                         -- | 'learning' | 'finance' | 'social'
+project         varchar                 -- project grouping (e.g., 'deep-research-engine')
+section         varchar                 -- section within project (e.g., 'backend')
+parent_id       uuid                    -- null for top-level, references reminders.id for subtasks
+depth           int NOT NULL DEFAULT 0  -- 0 = top-level, 1-3 = subtask depth (max 4 levels)
 status          varchar DEFAULT 'not_started'
-                                        -- 'not_started' | 'in_progress'
-                                        -- | 'researching' | 'done' | 'cancelled'
+                                        -- 'not_started' | 'in_progress' | 'researching'
+                                        -- | 'paused' | 'done' | 'blocked' | 'cancelled'
+priority        varchar                 -- 'P1' | 'P2' | 'P3' | null (no priority)
 source_context  text                    -- what conversation/capture triggered it
 source          varchar                 -- 'telegram' | 'mcp' | 'api'
 archived        boolean DEFAULT false
-due_date        timestamptz             -- nullable, for future expansion
+due_date        timestamptz             -- nullable
 created_at      timestamptz DEFAULT now()
 updated_at      timestamptz DEFAULT now()
 
@@ -393,37 +416,76 @@ updated_at      timestamptz DEFAULT now()
 HNSW ON embedding (cosine distance)
 B-tree ON status
 B-tree ON category
+B-tree ON project
+B-tree ON section
+B-tree ON parent_id
+B-tree ON priority
 B-tree ON archived
 B-tree ON due_date (where not null)
+B-tree ON depth
 ```
 
-### MCP Tools (4 additional)
+### Table: reminder_comments
+
+Chronological progress log per task. Follows the core table shape.
+
+```sql
+id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+content         text NOT NULL           -- the comment text
+embedding       vector(3072)            -- enables cross-type semantic search
+reminder_id     uuid NOT NULL           -- which reminder this comment belongs to
+source          varchar                 -- 'telegram' | 'mcp' | 'api'
+created_at      timestamptz DEFAULT now()
+
+-- Indexes
+HNSW ON embedding (cosine distance)
+B-tree ON reminder_id
+B-tree ON created_at DESC
+```
+
+Comments get embeddings for cross-type semantic search — "What progress have I made on the research engine?" should pull from comments, not just task titles.
+
+### MCP Tools (8 reminder tools)
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
-| `create_reminder` | Create a new reminder from "remind me to..." or "add to my todos" | `content` (required), `category` (optional, auto-determined if omitted), `due_date` (optional), `source_context` (optional) |
-| `list_reminders` | List reminders filtered by status and/or category | `status` (optional), `category` (optional), `limit` (optional, default 20) |
-| `update_reminder` | Change status, edit content, set due date | `id` (required), `status` (optional), `content` (optional), `due_date` (optional) |
-| `complete_reminder` | Shortcut for marking done | `id` (required) |
+| `create_reminder` | Create a task or subtask | `content` (required), `project` (optional), `section` (optional), `parent_id` (optional — for subtasks), `category` (optional, auto-determined if omitted), `priority` (optional — P1/P2/P3), `due_date` (optional), `source_context` (optional) |
+| `list_reminders` | List reminders with flexible filtering | `project` (optional), `section` (optional), `status` (optional), `priority` (optional), `category` (optional), `due_before` (optional), `due_after` (optional), `include_done` (optional, default false), `top_level_only` (optional, default true), `limit` (optional, default 20) |
+| `get_reminder_detail` | Get a single task with ALL comments and full subtask tree | `id` (required) |
+| `update_reminder` | Change status, priority, content, due date, move to different section | `id` (required), `status` (optional), `priority` (optional), `content` (optional), `due_date` (optional), `project` (optional), `section` (optional) |
+| `complete_reminder` | Shortcut for marking done — cascades to subtasks | `id` (required) |
+| `delete_reminder` | Delete a task and cascade-delete subtasks + comments | `id` (required) |
+| `add_reminder_comment` | Add a progress comment to a task | `id` (required), `content` (required) |
+| `list_projects` | List all projects with summary stats (task counts by status) | none |
 
 ### Telegram Support
 
-- `/remind <text>` — creates a reminder
-- `/todos` — lists active reminders (not_started + in_progress + researching)
+- `/remind <text>` — creates a reminder (in default project if none specified)
+- `/todos` — lists active reminders (not_started + in_progress + researching + paused + blocked)
 - `/done <id>` — marks a reminder complete
+- `/comment <id> <text>` — adds a progress comment to a task
+
+### Subtask Behavior
+
+- **Creating:** `create_reminder` with `parent_id` creates a subtask. Validates parent exists and depth < 4.
+- **Completing:** `complete_reminder` on a parent does NOT auto-complete children. Each subtask is completed independently. (If you want to complete a parent with open subtasks, that's a conscious choice.)
+- **Deleting:** `delete_reminder` cascade-deletes all subtasks and their comments.
+- **Moving:** Updating a parent's project/section moves its subtasks with it.
+- **Listing:** `list_reminders` with `top_level_only=true` (default) shows only depth-0 tasks. Set `top_level_only=false` to see subtasks. `get_reminder_detail` always returns the full subtask tree.
 
 ### Integration with the Profiler
 
 Reminders feed back into the consolidation pipeline:
 - **Completed reminders** are treated as profile signal during consolidation. "User completed a Rust CLI research task" informs skills/interests facts. The consolidation job reads recently completed reminders alongside pending captures.
+- **Comments** are also profile signal — progress notes reveal work patterns, blockers, and decisions.
 - **Cancelled reminders** are weaker signal but still informative — patterns of cancellation can indicate shifting priorities.
-- **Active reminder categories** inform `get_user_profile` — the profile summary includes a brief note about what the user is currently focused on based on active reminders.
+- **Active reminder projects/categories** inform `get_user_profile` — the profile summary includes a brief note about what the user is currently focused on based on active reminders and their project groupings.
+- **Blocked reminders** are strong signal — what blocks someone reveals dependencies and constraints in their life.
 
 ### v3 Expansion
 
 - Due date notifications (Telegram push at specified time)
 - Recurring reminders
-- Priority levels
 - Webapp/mobile app reminder management UI
 - Calendar integration (reminders with dates show as calendar events)
 
@@ -613,7 +675,7 @@ The consolidation job should never be hardcoded to read only from `captures`. Ne
 
 Tools follow a verb-noun pattern. Profiler tools use `*_thought` or `*_fact`. New feature domains get their own noun:
 - Profiler: `capture_thought`, `search_thoughts`, `update_fact`
-- Reminders: `create_reminder`, `list_reminders`, `update_reminder`, `complete_reminder`
+- Reminders: `create_reminder`, `list_reminders`, `get_reminder_detail`, `update_reminder`, `complete_reminder`, `delete_reminder`, `add_reminder_comment`, `list_projects`
 - Future (appointments): `create_appointment`, `list_appointments`, etc.
 
 Cross-cutting tools (like `brain_stats`, `get_user_profile`) span all domains and should be updated when new data types are added.
@@ -622,7 +684,7 @@ Cross-cutting tools (like `brain_stats`, `get_user_profile`) span all domains an
 
 Each feature domain gets a small set of Telegram commands:
 - Profiler: message in chat (implicit capture), `/review`
-- Reminders: `/remind`, `/todos`, `/done`
+- Reminders: `/remind`, `/todos`, `/done`, `/comment`
 - Future: `/schedule`, `/mood`, `/reflect`, etc.
 
 Keep commands short and intuitive. Use inline keyboard buttons for multi-step interactions (approve/reject, status changes).
