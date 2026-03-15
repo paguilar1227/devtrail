@@ -23,8 +23,10 @@ CREATE TABLE captures (
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_captures_embedding ON captures
-    USING hnsw (embedding vector_cosine_ops);
+-- HNSW indexes deferred: B1ms tier lacks memory for 3072-dim HNSW init.
+-- Sequential scans are fine at single-user scale. Add HNSW when data grows.
+-- CREATE INDEX idx_captures_embedding ON captures
+--     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_captures_status ON captures (status);
 CREATE INDEX idx_captures_archived ON captures (archived);
 CREATE INDEX idx_captures_created_at ON captures (created_at DESC);
@@ -48,8 +50,8 @@ CREATE TABLE facts (
     edited_at           timestamptz
 );
 
-CREATE INDEX idx_facts_embedding ON facts
-    USING hnsw (embedding vector_cosine_ops);
+-- CREATE INDEX idx_facts_embedding ON facts
+--     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_facts_source_capture_ids ON facts
     USING gin (source_capture_ids);
 CREATE INDEX idx_facts_category ON facts (category);
@@ -75,8 +77,8 @@ CREATE TABLE insights (
     edited_at         timestamptz
 );
 
-CREATE INDEX idx_insights_embedding ON insights
-    USING hnsw (embedding vector_cosine_ops);
+-- CREATE INDEX idx_insights_embedding ON insights
+--     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_insights_source_fact_ids ON insights
     USING gin (source_fact_ids);
 CREATE INDEX idx_insights_review_status ON insights (review_status);
@@ -127,8 +129,8 @@ CREATE TABLE reminders (
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_reminders_embedding ON reminders
-    USING hnsw (embedding vector_cosine_ops);
+-- CREATE INDEX idx_reminders_embedding ON reminders
+--     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_reminders_status ON reminders (status);
 CREATE INDEX idx_reminders_category ON reminders (category);
 CREATE INDEX idx_reminders_project ON reminders (project);
@@ -152,7 +154,7 @@ CREATE TABLE reminder_comments (
     created_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_reminder_comments_embedding ON reminder_comments
-    USING hnsw (embedding vector_cosine_ops);
+-- CREATE INDEX idx_reminder_comments_embedding ON reminder_comments
+--     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_reminder_comments_reminder_id ON reminder_comments (reminder_id);
 CREATE INDEX idx_reminder_comments_created_at ON reminder_comments (created_at DESC);
