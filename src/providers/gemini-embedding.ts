@@ -2,7 +2,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { EmbeddingProvider } from './types.js';
 
-const EMBEDDING_MODEL = 'gemini-embedding-exp-03-07'; // Gemini Embedding 2 — verify latest model ID at implementation time
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview'; // Gemini Embedding 2 (multimodal, public preview)
 const DIMENSIONS = 3072;
 
 export class GeminiEmbeddingProvider implements EmbeddingProvider {
