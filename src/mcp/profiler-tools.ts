@@ -6,6 +6,7 @@ import { getCaptureById, setCaptureArchived } from '../db/captures.js';
 import { getFactById, setFactArchived, setFactReviewStatus, userEditFact, findPendingReviewFacts } from '../db/facts.js';
 import { getInsightById, setInsightArchived, setInsightReviewStatus, findPendingReviewInsights } from '../db/insights.js';
 import { runCapturePipeline } from '../capture/pipeline.js';
+import { runConsolidation } from '../consolidation/runner.js';
 
 export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
   // 1. get_user_profile — session bootstrap
@@ -245,6 +246,42 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       }
 
       return { content: [{ type: 'text' as const, text: `No fact or insight found with id ${id}` }], isError: true };
+    },
+  );
+
+  // 10. run_consolidation — manually trigger consolidation
+  server.tool(
+    'run_consolidation',
+    'Manually trigger the consolidation pipeline to process pending captures into facts and insights',
+    {},
+    async () => {
+      try {
+        await runConsolidation({
+          db: deps.db,
+          consolidationLLM: deps.consolidationLLM,
+          embeddingProvider: deps.embeddingProvider,
+          reviewMode: deps.config.reviewMode,
+        });
+        const logResult = await deps.db.query(
+          `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT 1`,
+        );
+        const log = logResult.rows[0];
+        if (!log) {
+          return { content: [{ type: 'text' as const, text: 'Consolidation completed but no log entry found.' }] };
+        }
+        const summary = [
+          `Consolidation ${log.status} in ${log.duration_ms}ms`,
+          `Captures processed: ${log.captures_processed}`,
+          `Facts created: ${log.facts_created} | Updated: ${log.facts_updated}`,
+          `Insights created: ${log.insights_created}`,
+          `Items flagged for review: ${log.items_flagged}`,
+          `Tokens used: ${log.tokens_used}`,
+          log.error_message ? `Error: ${log.error_message}` : null,
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text' as const, text: summary }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Consolidation failed: ${String(err)}` }], isError: true };
+      }
     },
   );
 }

@@ -16,9 +16,17 @@ export interface ClusterResult {
   tokensUsed: number;
 }
 
-const NOISE_CRITERIA_PROMPT = `You are a profile consolidation engine. Given a cluster of captures and existing facts about a person, determine what profile facts should be created or updated.
+const NOISE_CRITERIA_PROMPT = `You are a profile consolidation engine for a personal knowledge system. Your job is to extract profile facts about the user from their captured thoughts. You should be AGGRESSIVE about creating facts — this system exists to build a living profile, and every signal matters.
 
-NOISE CRITERIA — only discard a capture if ALL of these are true:
+Given a cluster of captures and any existing facts, determine what new profile facts should be created or existing ones updated.
+
+EXAMPLES of what SHOULD become facts:
+- "I love TypeScript" → create_fact: "Prefers TypeScript" (category: preference, confidence: 0.7)
+- "I am interested in healthy high-protein foods" → create_fact: "Interested in healthy high-protein foods" (category: preference, confidence: 0.7)
+- "I love this style of pizza" → create_fact: "Enjoys pizza" (category: preference, confidence: 0.5)
+- "Working on a new AI project" → create_fact: "Working on an AI project" (category: goal, confidence: 0.5)
+
+NOISE CRITERIA — ONLY discard a capture if ALL of these are true:
 1. Contains no preference, opinion, or value judgment
 2. Contains no information about a person or relationship
 3. Contains no habit, routine, or behavioral pattern
@@ -27,7 +35,9 @@ NOISE CRITERIA — only discard a capture if ALL of these are true:
 6. Contains no emotional response or reaction
 7. Is purely transactional with no recurring significance
 
-When in doubt, create a fact with low confidence (0.3-0.4) rather than discarding.
+Examples of ACTUAL noise: "test", "Hello", "ok", "query: show me all captures with file_urls" — these are operational messages with zero profile signal.
+
+YOUR DEFAULT SHOULD BE TO CREATE A FACT. Only discard if a capture is truly meaningless noise. When in doubt, create a fact with low confidence (0.3-0.4). It is far worse to miss a real signal than to create a low-confidence fact that gets refined later.
 
 IMPORTANT: Never modify facts with origin "user_edited". If new evidence contradicts a user_edited fact, flag it for review instead.
 
