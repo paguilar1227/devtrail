@@ -7,6 +7,7 @@ import type { BlobStorage } from './storage/blob.js';
 import type { Config } from './config.js';
 import { runCapturePipeline } from './capture/pipeline.js';
 import { mountMcpRoutes } from './mcp/server.js';
+import { setupTelegramWebhook } from './telegram/webhook.js';
 
 export interface AppDeps {
   db: DbClient;
@@ -99,6 +100,9 @@ export function createApp(deps: AppDeps) {
 
   // MCP routes
   mountMcpRoutes(app, deps);
+
+  // Telegram webhook
+  setupTelegramWebhook(app, deps);
 
   // Error handler
   app.onError((err, c) => {

@@ -8,6 +8,10 @@ vi.mock('../../src/capture/pipeline.js', () => ({
   runCapturePipeline: vi.fn(),
 }));
 
+vi.mock('../../src/telegram/webhook.js', () => ({
+  setupTelegramWebhook: vi.fn(),
+}));
+
 const mockRunCapturePipeline = vi.mocked(runCapturePipeline);
 
 beforeEach(() => {
