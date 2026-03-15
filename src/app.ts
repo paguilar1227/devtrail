@@ -56,6 +56,17 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
+  // GET /api/v1/captures — List recent captures (for debugging/admin)
+  app.get('/api/v1/captures', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '10');
+    const result = await deps.db.query(
+      `SELECT id, content, content_types, file_urls, source, status, created_at
+       FROM captures ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
+    return c.json(result.rows);
+  });
+
   // POST /api/v1/capture — Universal ingest endpoint
   app.post('/api/v1/capture', async (c) => {
     const body = await c.req.json();
