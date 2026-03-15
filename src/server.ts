@@ -11,6 +11,9 @@ if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
     .start();
 }
 
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { serve } from '@hono/node-server';
 import { loadConfig } from './config.js';
 import { createDbClient } from './db/client.js';
@@ -32,8 +35,43 @@ const deps = {
   config,
 };
 
+// Run migrations on startup (idempotent — safe to run every boot)
+async function runMigrations() {
+  try {
+    // Check if tables already exist
+    const result = await deps.db.query(
+      "SELECT count(*) as count FROM pg_tables WHERE schemaname = 'public' AND tablename = 'captures'",
+    );
+    if (parseInt(result.rows[0].count) > 0) {
+      console.log('Database tables already exist, skipping migration.');
+      return;
+    }
+
+    console.log('Running database migration...');
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const migrationPath = join(__dirname, '..', 'migrations', '001_initial_schema.sql');
+    const sql = readFileSync(migrationPath, 'utf-8');
+
+    // Split on semicolons and execute each statement (pg doesn't support multi-statement in one query)
+    const statements = sql
+      .split(';')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith('--'));
+
+    for (const statement of statements) {
+      await deps.db.query(statement);
+    }
+    console.log('Database migration complete.');
+  } catch (err) {
+    console.error('Migration failed:', err);
+    process.exit(1);
+  }
+}
+
 const app = createApp(deps);
 
-serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`Open Brain v2 running on http://localhost:${info.port}`);
+runMigrations().then(() => {
+  serve({ fetch: app.fetch, port: config.port }, (info) => {
+    console.log(`Open Brain v2 running on http://localhost:${info.port}`);
+  });
 });
