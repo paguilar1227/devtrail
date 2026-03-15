@@ -1,0 +1,119 @@
+import type { DbClient } from './client.js';
+
+export interface CaptureInsert {
+  content: string;
+  contentTypes: string[];
+  fileUrls: string[] | null;
+  fileHashes: string[] | null;
+  embedding: number[];
+  metadata: Record<string, unknown>;
+  source: string;
+}
+
+export interface CaptureRow {
+  id: string;
+  content: string;
+  content_types: string[];
+  file_urls: string[] | null;
+  file_hashes: string[] | null;
+  embedding: number[];
+  metadata: Record<string, unknown>;
+  source: string;
+  status: string;
+  archived: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export async function insertCapture(
+  db: DbClient,
+  capture: CaptureInsert,
+): Promise<{ id: string }> {
+  const result = await db.query(
+    `INSERT INTO captures (content, content_types, file_urls, file_hashes, embedding, metadata, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [
+      capture.content,
+      capture.contentTypes,
+      capture.fileUrls,
+      capture.fileHashes,
+      JSON.stringify(capture.embedding),
+      JSON.stringify(capture.metadata),
+      capture.source,
+    ],
+  );
+  return result.rows[0];
+}
+
+export async function findCapturesByStatus(
+  db: DbClient,
+  status: string,
+): Promise<CaptureRow[]> {
+  const result = await db.query(
+    `SELECT * FROM captures WHERE status = $1 AND archived = false ORDER BY created_at ASC`,
+    [status],
+  );
+  return result.rows;
+}
+
+export async function updateCaptureStatus(
+  db: DbClient,
+  id: string,
+  status: string,
+): Promise<void> {
+  await db.query(
+    `UPDATE captures SET status = $1, updated_at = now() WHERE id = $2`,
+    [status, id],
+  );
+}
+
+export async function findSimilarCaptures(
+  db: DbClient,
+  embedding: number[],
+  threshold: number,
+  limit: number = 20,
+): Promise<Array<CaptureRow & { similarity: number }>> {
+  const result = await db.query(
+    `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
+     FROM captures
+     WHERE archived = false
+       AND embedding IS NOT NULL
+       AND 1 - (embedding <=> $1::vector) > $2
+     ORDER BY similarity DESC
+     LIMIT $3`,
+    [JSON.stringify(embedding), threshold, limit],
+  );
+  return result.rows;
+}
+
+export async function setCaptureArchived(
+  db: DbClient,
+  id: string,
+  archived: boolean,
+): Promise<void> {
+  await db.query(
+    `UPDATE captures SET archived = $1, updated_at = now() WHERE id = $2`,
+    [archived, id],
+  );
+}
+
+export async function getCaptureById(
+  db: DbClient,
+  id: string,
+): Promise<CaptureRow | null> {
+  const result = await db.query(`SELECT * FROM captures WHERE id = $1`, [id]);
+  return result.rows[0] ?? null;
+}
+
+export async function findCapturesByHashes(
+  db: DbClient,
+  hashes: string[],
+): Promise<Array<{ file_hashes: string[]; file_urls: string[] }>> {
+  const result = await db.query(
+    `SELECT file_hashes, file_urls FROM captures
+     WHERE file_hashes && $1 AND archived = false`,
+    [hashes],
+  );
+  return result.rows;
+}
