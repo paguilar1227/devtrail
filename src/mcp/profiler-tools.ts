@@ -8,7 +8,91 @@ import { getInsightById, setInsightArchived, setInsightReviewStatus, findPending
 import { runCapturePipeline } from '../capture/pipeline.js';
 import { runConsolidation } from '../consolidation/runner.js';
 
+const BRAIN_HELP_TEXT = `# Open Brain — AI Usage Guide
+
+## What This Is
+
+Open Brain is a personal knowledge system that builds a living profile of the user. It captures raw thoughts, synthesizes them into facts, and identifies cross-cutting patterns (insights). Every AI client connected to Open Brain should actively contribute to this profile.
+
+## When to Capture
+
+Capture a thought whenever you observe something profile-relevant about the user during your interaction. This includes:
+
+- **Decisions made** — what they chose and why (or what they rejected)
+- **Preferences expressed** — likes, dislikes, opinions, aesthetic taste
+- **Skills demonstrated** — what they're good at, tools they use fluently
+- **Goals stated or implied** — what they're working toward, ambitions
+- **Work patterns** — how they approach problems, collaboration style
+- **Emotional reactions** — what excites them, frustrates them, bores them
+- **Relationships mentioned** — people, teams, companies they reference
+- **Task completions** — what they accomplished and what it reveals
+
+Do NOT capture:
+- Purely operational exchanges ("run this command", "read this file")
+- Information the user is asking YOU about (that's your knowledge, not theirs)
+- Verbatim conversation (capture the signal, not the transcript)
+
+## How to Format Captures
+
+Write in **third person** as an observer describing the user. The audience is a consolidation AI that will synthesize captures into profile facts, so optimize for clarity and signal density.
+
+### Good Format
+
+\`\`\`
+[CATEGORY] Observation. Context if relevant.
+\`\`\`
+
+**Categories:** preference, habit, skill, relationship, opinion, goal, personality, history
+
+### Examples
+
+Good:
+- "[preference] Pedro prefers TypeScript over JavaScript for all new projects. Expressed strong conviction when choosing the tech stack."
+- "[skill] Pedro has deep experience with Azure infrastructure — set up Container Apps, Functions, Key Vault, and Bicep IaC fluently without guidance."
+- "[goal] Pedro is building a personal AI knowledge system (Open Brain) to help AI tools understand who he is. This is a passion project, not work-related."
+- "[personality] Pedro values efficiency and directness. He pushed back on over-engineering and wanted minimal, focused solutions."
+- "[habit] Pedro prefers to work on feature branches and merge to main, with reasonable commit sizes that are easy to review individually."
+- "[opinion] Pedro believes the best AI models should be used regardless of provider — he's not locked into any single vendor."
+
+Bad:
+- "User asked me to fix a bug" (operational, no profile signal)
+- "I love TypeScript" (first person — use third person)
+- "Pedro used Claude Code today" (too vague — what did it reveal about him?)
+
+### Key Principles
+
+1. **Third person always** — "Pedro prefers..." not "I prefer..."
+2. **One signal per capture** — don't bundle unrelated observations
+3. **Include context** — "chose X over Y because Z" is better than "likes X"
+4. **Be specific** — "uses Hono for HTTP APIs" beats "likes web frameworks"
+5. **Capture the why** — motivations and reasoning are the richest profile signal
+6. **Confidence through language** — "strongly believes" vs "seems to prefer" vs "mentioned once"
+
+## Available Tools
+
+- **capture_thought** — save a new observation (use the format above)
+- **search_thoughts** — find what's known about a topic
+- **get_user_profile** — get the synthesized profile summary (call at session start)
+- **brain_stats** — system dashboard
+- **create_reminder** / **list_reminders** / **complete_reminder** — task management
+- **run_consolidation** — manually process pending captures into facts/insights
+- **review_pending** / **approve_reject** — review AI-generated facts and insights
+
+## Proactive Capture
+
+Don't wait for the user to say "remember this." If you notice a pattern, preference, or significant decision during normal interaction, capture it. The user has opted into this — Open Brain exists specifically for this purpose. Just don't interrupt the conversation flow to announce it.`;
+
 export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
+  // 0. brain_help — usage guide for AI clients
+  server.tool(
+    'brain_help',
+    'Returns instructions on what Open Brain is, when and how to capture thoughts, and the optimal format for captures. Call this when you first connect or need guidance.',
+    {},
+    async () => {
+      return { content: [{ type: 'text' as const, text: BRAIN_HELP_TEXT }] };
+    },
+  );
+
   // 1. get_user_profile — session bootstrap
   server.tool(
     'get_user_profile',
