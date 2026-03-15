@@ -51,6 +51,39 @@ describe('telegram handlers', () => {
     expect(mockComplete).toHaveBeenCalledWith('rem-1');
   });
 
+  it('handles /comment command → adds progress comment', async () => {
+    const mockAddComment = vi.fn().mockResolvedValue({ id: 'cmt-1' });
+    const { handleCommentCommand } = await import('../../../src/telegram/handlers.js');
+
+    const result = await handleCommentCommand(
+      { text: '/comment rem-abc-123 Finished the auth module', chatId: '123' },
+      mockAddComment,
+    );
+
+    expect(result.id).toBe('cmt-1');
+    expect(result.reminderId).toBe('rem-abc-123');
+    expect(result.content).toBe('Finished the auth module');
+    expect(mockAddComment).toHaveBeenCalledWith('rem-abc-123', 'Finished the auth module', 'telegram');
+  });
+
+  it('/comment throws on missing text', async () => {
+    const mockAddComment = vi.fn();
+    const { handleCommentCommand } = await import('../../../src/telegram/handlers.js');
+
+    await expect(
+      handleCommentCommand({ text: '/comment rem-abc-123', chatId: '123' }, mockAddComment),
+    ).rejects.toThrow('Usage:');
+  });
+
+  it('/comment throws when no id and text provided', async () => {
+    const mockAddComment = vi.fn();
+    const { handleCommentCommand } = await import('../../../src/telegram/handlers.js');
+
+    await expect(
+      handleCommentCommand({ text: '/comment', chatId: '123' }, mockAddComment),
+    ).rejects.toThrow('Usage:');
+  });
+
   it('handles photo message → downloads and captures', async () => {
     const mockPipeline = vi.fn().mockResolvedValue({ success: true, captureId: 'cap-1' });
     const mockDownload = vi.fn().mockResolvedValue(Buffer.from('photo bytes'));

@@ -16,6 +16,7 @@ type DownloadFn = (fileId: string) => Promise<Buffer>;
 type CreateReminderFn = (content: string, source: string) => Promise<{ id: string }>;
 type ListRemindersFn = () => Promise<Array<{ id: string; content: string; status: string }>>;
 type CompleteReminderFn = (id: string) => Promise<void>;
+type AddCommentFn = (reminderId: string, content: string, source: string) => Promise<{ id: string }>;
 
 export async function handleTextMessage(
   input: TelegramTextInput,
@@ -53,6 +54,25 @@ export async function handleDoneCommand(
   completeReminder: CompleteReminderFn,
 ): Promise<void> {
   await completeReminder(reminderId);
+}
+
+export async function handleCommentCommand(
+  input: TelegramTextInput,
+  addComment: AddCommentFn,
+): Promise<{ id: string; reminderId: string; content: string }> {
+  // Format: /comment <id> <text>
+  const withoutCmd = input.text.replace(/^\/comment\s+/, '').trim();
+  const spaceIdx = withoutCmd.indexOf(' ');
+  if (spaceIdx === -1) {
+    throw new Error('Usage: /comment <id> <text>');
+  }
+  const reminderId = withoutCmd.slice(0, spaceIdx).trim();
+  const content = withoutCmd.slice(spaceIdx + 1).trim();
+  if (!content) {
+    throw new Error('Usage: /comment <id> <text>');
+  }
+  const result = await addComment(reminderId, content, 'telegram');
+  return { id: result.id, reminderId, content };
 }
 
 export async function handlePhotoMessage(

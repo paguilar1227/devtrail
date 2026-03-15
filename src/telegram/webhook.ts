@@ -3,13 +3,15 @@ import { Bot, webhookCallback } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById } from '../db/reminders.js';
+import { insertComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
   handlePhotoMessage,
   handleRemindCommand,
   handleTodosCommand,
   handleDoneCommand,
+  handleCommentCommand,
   handleVoiceMessage,
   handleDocumentMessage,
 } from './handlers.js';
@@ -71,6 +73,25 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     }
     await dbCompleteReminder(deps.db, id);
     await ctx.reply('Reminder completed!');
+  });
+
+  bot.command('comment', async (ctx) => {
+    const text = ctx.message?.text ?? '';
+    try {
+      const result = await handleCommentCommand(
+        { text, chatId: String(ctx.chat.id) },
+        async (reminderId, content, source) => {
+          const reminder = await getReminderById(deps.db, reminderId);
+          if (!reminder) throw new Error(`Reminder ${reminderId} not found`);
+          const embedding = await deps.embeddingProvider.embed(content);
+          return insertComment(deps.db, { content, embedding, reminderId, source });
+        },
+      );
+      await ctx.reply(`Comment added to ${result.reminderId.slice(0, 8)} (${result.id.slice(0, 8)})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      await ctx.reply(message);
+    }
   });
 
   bot.command('review', async (ctx) => {
