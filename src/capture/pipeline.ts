@@ -44,8 +44,10 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   }
 
   // Step 3: Generate embedding (from text + file bytes together)
-  const fileBuffers = files.length > 0 ? files.map((f) => f.data) : undefined;
-  const embedding = await embeddingProvider.embed(content, fileBuffers);
+  const embeddingFiles = files.length > 0
+    ? files.map((f) => ({ data: f.data, mimeType: f.contentType }))
+    : undefined;
+  const embedding = await embeddingProvider.embed(content, embeddingFiles);
 
   // Step 4: Semantic dedup check (against ALL captures)
   const dedup = await checkSemanticDedup(db, embedding);

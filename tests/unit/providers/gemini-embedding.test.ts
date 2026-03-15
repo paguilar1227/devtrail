@@ -43,7 +43,7 @@ describe('GeminiEmbeddingProvider', () => {
     const provider = new GeminiEmbeddingProvider('test-key');
 
     const fileBuffer = Buffer.from('fake image data');
-    await provider.embed('Photo of my desk', [fileBuffer]);
+    await provider.embed('Photo of my desk', [{ data: fileBuffer, mimeType: 'image/jpeg' }]);
 
     expect(__mockEmbedContent).toHaveBeenCalledWith(
       expect.objectContaining({

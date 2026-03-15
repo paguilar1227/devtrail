@@ -13,7 +13,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     this.client = new GoogleGenerativeAI(apiKey);
   }
 
-  async embed(content: string, files?: Buffer[]): Promise<number[]> {
+  async embed(content: string, files?: Array<{ data: Buffer; mimeType: string }>): Promise<number[]> {
     const model = this.client.getGenerativeModel({ model: EMBEDDING_MODEL });
 
     const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [
@@ -24,8 +24,8 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       for (const file of files) {
         parts.push({
           inlineData: {
-            data: file.toString('base64'),
-            mimeType: 'application/octet-stream',
+            data: file.data.toString('base64'),
+            mimeType: file.mimeType,
           },
         });
       }

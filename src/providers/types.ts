@@ -5,7 +5,7 @@ export interface EmbeddingProvider {
    * Generate an embedding vector from text and optional file buffers.
    * Files and text are embedded together into a single vector space.
    */
-  embed(content: string, files?: Buffer[]): Promise<number[]>;
+  embed(content: string, files?: Array<{ data: Buffer; mimeType: string }>): Promise<number[]>;
 
   /** Dimensionality of output vectors (3072 for Gemini Embedding 2) */
   readonly dimensions: number;
