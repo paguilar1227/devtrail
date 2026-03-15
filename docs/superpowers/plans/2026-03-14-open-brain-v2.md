@@ -129,6 +129,26 @@ open-brain-v2/
 │       ├── capture-pipeline.test.ts
 │       └── consolidation.test.ts
 │
+├── infra/
+│   ├── main.bicep                       # Azure IaC orchestrator
+│   ├── parameters.json                  # Deployment parameters
+│   └── modules/
+│       ├── container-app.bicep          # Container Apps + managed identity
+│       ├── function-app.bicep           # Azure Functions (consumption)
+│       ├── postgresql.bicep             # PostgreSQL Flexible Server + pgvector
+│       ├── storage.bicep                # Blob Storage account + container
+│       ├── keyvault.bicep               # Key Vault + all secrets
+│       └── monitoring.bicep             # App Insights + Log Analytics
+│
+├── scripts/
+│   ├── deploy.sh                        # Build, push ACR, deploy Container App + Functions
+│   └── migrate-azure.sh                 # Run migrations against Azure PostgreSQL
+│
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                       # PR checks: lint, typecheck, test
+│       └── deploy.yml                   # Auto-deploy to Azure on push to main
+│
 ├── docker-compose.yml                   # Local dev: PostgreSQL 16 + pgvector
 ├── Dockerfile                           # Production multi-stage build
 ├── host.json                            # Azure Functions host config
@@ -6063,6 +6083,829 @@ git commit -m "feat: Dockerfile for production deployment and shared test mock h
 
 ---
 
+## Chunk 10: Azure Infrastructure & Deployment
+
+All infrastructure lives on Azure. Only the AI model APIs (Gemini → Google, Claude → Anthropic) go to their native providers — because they're the best for their respective tasks.
+
+### Task 32: Azure Infrastructure as Code (Bicep)
+
+**Files:**
+- Create: `infra/main.bicep`
+- Create: `infra/modules/container-app.bicep`
+- Create: `infra/modules/function-app.bicep`
+- Create: `infra/modules/postgresql.bicep`
+- Create: `infra/modules/storage.bicep`
+- Create: `infra/modules/keyvault.bicep`
+- Create: `infra/modules/monitoring.bicep`
+- Create: `infra/parameters.json`
+
+- [ ] **Step 1: Create main Bicep orchestrator**
+
+```bicep
+// infra/main.bicep
+targetScope = 'resourceGroup'
+
+@description('Environment name (dev, prod)')
+param environment string = 'prod'
+
+@description('Azure region')
+param location string = resourceGroup().location
+
+@description('Shared ACR name (existing)')
+param acrName string
+
+@description('ACR resource group (if different)')
+param acrResourceGroup string = resourceGroup().name
+
+@description('PostgreSQL admin password')
+@secure()
+param dbAdminPassword string
+
+@description('Open Brain API key')
+@secure()
+param apiKey string
+
+@description('Gemini API key')
+@secure()
+param geminiApiKey string
+
+@description('Anthropic API key')
+@secure()
+param anthropicApiKey string
+
+@description('Telegram bot token')
+@secure()
+param telegramBotToken string
+
+@description('Telegram webhook secret')
+@secure()
+param telegramWebhookSecret string
+
+@description('Telegram chat ID')
+param telegramChatId string
+
+var prefix = 'openbrain-${environment}'
+
+// Log Analytics Workspace (required by Container Apps + App Insights)
+module monitoring 'modules/monitoring.bicep' = {
+  name: 'monitoring'
+  params: {
+    prefix: prefix
+    location: location
+  }
+}
+
+// Azure Key Vault
+module keyvault 'modules/keyvault.bicep' = {
+  name: 'keyvault'
+  params: {
+    prefix: prefix
+    location: location
+    apiKey: apiKey
+    geminiApiKey: geminiApiKey
+    anthropicApiKey: anthropicApiKey
+    telegramBotToken: telegramBotToken
+    telegramWebhookSecret: telegramWebhookSecret
+    dbConnectionString: postgresql.outputs.connectionString
+    storageConnectionString: storage.outputs.connectionString
+    telegramChatId: telegramChatId
+  }
+}
+
+// Azure Database for PostgreSQL Flexible Server
+module postgresql 'modules/postgresql.bicep' = {
+  name: 'postgresql'
+  params: {
+    prefix: prefix
+    location: location
+    adminPassword: dbAdminPassword
+  }
+}
+
+// Azure Blob Storage
+module storage 'modules/storage.bicep' = {
+  name: 'storage'
+  params: {
+    prefix: prefix
+    location: location
+  }
+}
+
+// Azure Container App (API + MCP + Telegram webhook)
+module containerApp 'modules/container-app.bicep' = {
+  name: 'container-app'
+  params: {
+    prefix: prefix
+    location: location
+    acrName: acrName
+    acrResourceGroup: acrResourceGroup
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    keyVaultName: keyvault.outputs.keyVaultName
+  }
+}
+
+// Azure Function App (consolidation timer trigger)
+module functionApp 'modules/function-app.bicep' = {
+  name: 'function-app'
+  params: {
+    prefix: prefix
+    location: location
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    keyVaultName: keyvault.outputs.keyVaultName
+    storageAccountName: storage.outputs.storageAccountName
+  }
+}
+
+output containerAppUrl string = containerApp.outputs.fqdn
+output functionAppName string = functionApp.outputs.functionAppName
+```
+
+- [ ] **Step 2: Create PostgreSQL module**
+
+```bicep
+// infra/modules/postgresql.bicep
+param prefix string
+param location string
+
+@secure()
+param adminPassword string
+
+var serverName = '${prefix}-pgserver'
+
+resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
+  name: serverName
+  location: location
+  sku: {
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
+  }
+  properties: {
+    version: '16'
+    administratorLogin: 'openbrain'
+    administratorLoginPassword: adminPassword
+    storage: {
+      storageSizeGB: 32
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+  }
+}
+
+// Enable pgvector extension
+resource pgvectorConfig 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'azure.extensions'
+  properties: {
+    value: 'VECTOR,UUID-OSSP'
+    source: 'user-override'
+  }
+}
+
+// Allow Azure services
+resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+// Database
+resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'openbrain'
+}
+
+output connectionString string = 'postgresql://openbrain:${adminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/openbrain?sslmode=require'
+output serverName string = postgresServer.name
+```
+
+- [ ] **Step 3: Create Key Vault module**
+
+```bicep
+// infra/modules/keyvault.bicep
+param prefix string
+param location string
+
+@secure()
+param apiKey string
+@secure()
+param geminiApiKey string
+@secure()
+param anthropicApiKey string
+@secure()
+param telegramBotToken string
+@secure()
+param telegramWebhookSecret string
+@secure()
+param dbConnectionString string
+@secure()
+param storageConnectionString string
+param telegramChatId string
+
+var vaultName = replace('${prefix}-kv', '-', '')
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: vaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+  }
+}
+
+// Store all secrets
+var secrets = [
+  { name: 'open-brain-api-key', value: apiKey }
+  { name: 'gemini-api-key', value: geminiApiKey }
+  { name: 'anthropic-api-key', value: anthropicApiKey }
+  { name: 'telegram-bot-token', value: telegramBotToken }
+  { name: 'telegram-webhook-secret', value: telegramWebhookSecret }
+  { name: 'database-url', value: dbConnectionString }
+  { name: 'storage-connection-string', value: storageConnectionString }
+  { name: 'telegram-chat-id', value: telegramChatId }
+]
+
+resource keyVaultSecrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [
+  for secret in secrets: {
+    parent: keyVault
+    name: secret.name
+    properties: {
+      value: secret.value
+    }
+  }
+]
+
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri
+```
+
+- [ ] **Step 4: Create Storage module**
+
+```bicep
+// infra/modules/storage.bicep
+param prefix string
+param location string
+
+var storageAccountName = replace('${prefix}stor', '-', '')
+
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageAccountName
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storageAccount
+  name: 'default'
+}
+
+resource filesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'open-brain-files'
+}
+
+output storageAccountName string = storageAccount.name
+output connectionString string = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+```
+
+- [ ] **Step 5: Create Monitoring module**
+
+```bicep
+// infra/modules/monitoring.bicep
+param prefix string
+param location string
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: '${prefix}-logs'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${prefix}-insights'
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+  }
+}
+
+output logAnalyticsWorkspaceId string = logAnalytics.id
+output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
+```
+
+- [ ] **Step 6: Create Container App module**
+
+```bicep
+// infra/modules/container-app.bicep
+param prefix string
+param location string
+param acrName string
+param acrResourceGroup string
+param logAnalyticsWorkspaceId string
+param appInsightsConnectionString string
+param keyVaultName string
+
+// Reference existing ACR
+resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' existing = {
+  name: acrName
+  scope: resourceGroup(acrResourceGroup)
+}
+
+// Container Apps Environment
+resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: '${prefix}-env'
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: reference(logAnalyticsWorkspaceId, '2023-09-01').customerId
+        sharedKey: listKeys(logAnalyticsWorkspaceId, '2023-09-01').primarySharedKey
+      }
+    }
+  }
+}
+
+// Managed Identity for Key Vault + ACR access
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-identity'
+  location: location
+}
+
+// Container App
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: '${prefix}-api'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: containerAppEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 3000
+        transport: 'http'
+      }
+      registries: [
+        {
+          server: acr.properties.loginServer
+          identity: identity.id
+        }
+      ]
+      secrets: [
+        { name: 'database-url', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/database-url', identity: identity.id }
+        { name: 'open-brain-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/open-brain-api-key', identity: identity.id }
+        { name: 'gemini-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/gemini-api-key', identity: identity.id }
+        { name: 'anthropic-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/anthropic-api-key', identity: identity.id }
+        { name: 'telegram-bot-token', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/telegram-bot-token', identity: identity.id }
+        { name: 'telegram-webhook-secret', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/telegram-webhook-secret', identity: identity.id }
+        { name: 'storage-connection-string', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/storage-connection-string', identity: identity.id }
+        { name: 'telegram-chat-id', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/telegram-chat-id', identity: identity.id }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'open-brain'
+          image: '${acr.properties.loginServer}/open-brain-v2:latest'
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: [
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'OPEN_BRAIN_API_KEY', secretRef: 'open-brain-api-key' }
+            { name: 'GEMINI_API_KEY', secretRef: 'gemini-api-key' }
+            { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }
+            { name: 'TELEGRAM_BOT_TOKEN', secretRef: 'telegram-bot-token' }
+            { name: 'TELEGRAM_WEBHOOK_SECRET', secretRef: 'telegram-webhook-secret' }
+            { name: 'AZURE_STORAGE_CONNECTION_STRING', secretRef: 'storage-connection-string' }
+            { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+            { name: 'TELEGRAM_CHAT_ID', secretRef: 'telegram-chat-id' }
+            { name: 'PORT', value: '3000' }
+            { name: 'NODE_ENV', value: 'production' }
+            { name: 'REVIEW_MODE', value: 'hybrid' }
+            { name: 'DAILY_DIGEST_ENABLED', value: 'true' }
+            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              periodSeconds: 30
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 5
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 3
+        rules: [
+          {
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '50'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+output fqdn string = containerApp.properties.configuration.ingress.fqdn
+```
+
+- [ ] **Step 7: Create Function App module**
+
+```bicep
+// infra/modules/function-app.bicep
+param prefix string
+param location string
+param appInsightsConnectionString string
+param keyVaultName string
+param storageAccountName string
+
+// Function App needs a dedicated storage account for runtime
+resource funcStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: replace('${prefix}func', '-', '')
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+}
+
+// App Service Plan (consumption)
+resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: '${prefix}-func-plan'
+  location: location
+  kind: 'functionapp'
+  sku: {
+    name: 'Y1'
+    tier: 'Dynamic'
+  }
+}
+
+// Managed Identity
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-func-identity'
+  location: location
+}
+
+resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
+  name: '${prefix}-func'
+  location: location
+  kind: 'functionapp'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    serverFarmId: plan.id
+    siteConfig: {
+      appSettings: [
+        { name: 'AzureWebJobsStorage', value: 'DefaultEndpointsProtocol=https;AccountName=${funcStorageAccount.name};AccountKey=${funcStorageAccount.listKeys().keys[0].value}' }
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' }
+        { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+        { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url)' }
+        { name: 'GEMINI_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=gemini-api-key)' }
+        { name: 'ANTHROPIC_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=anthropic-api-key)' }
+        { name: 'OPEN_BRAIN_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=open-brain-api-key)' }
+        { name: 'AZURE_STORAGE_CONNECTION_STRING', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=storage-connection-string)' }
+        { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+        { name: 'TELEGRAM_BOT_TOKEN', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-bot-token)' }
+        { name: 'TELEGRAM_WEBHOOK_SECRET', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-webhook-secret)' }
+        { name: 'TELEGRAM_CHAT_ID', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-chat-id)' }
+        { name: 'REVIEW_MODE', value: 'hybrid' }
+        { name: 'DAILY_DIGEST_ENABLED', value: 'true' }
+      ]
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+    }
+  }
+}
+
+output functionAppName string = functionApp.name
+```
+
+- [ ] **Step 8: Create parameters file**
+
+```json
+// infra/parameters.json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "prod" },
+    "acrName": { "value": "YOUR_SHARED_ACR_NAME" },
+    "acrResourceGroup": { "value": "YOUR_ACR_RESOURCE_GROUP" },
+    "telegramChatId": { "value": "YOUR_CHAT_ID" },
+    "dbAdminPassword": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "db-admin-password" } },
+    "apiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "open-brain-api-key" } },
+    "geminiApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "gemini-api-key" } },
+    "anthropicApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "anthropic-api-key" } },
+    "telegramBotToken": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "telegram-bot-token" } },
+    "telegramWebhookSecret": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "telegram-webhook-secret" } }
+  }
+}
+```
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add infra/
+git commit -m "feat: Azure Bicep IaC for all infrastructure (PostgreSQL, Container Apps, Functions, Key Vault, Storage, App Insights)"
+```
+
+---
+
+### Task 33: Application Insights Integration
+
+**Files:**
+- Modify: `package.json` (add `applicationinsights` dependency)
+- Modify: `src/server.ts` (initialize App Insights before anything else)
+
+- [ ] **Step 1: Add Application Insights dependency**
+
+Add to `package.json` dependencies:
+```json
+"applicationinsights": "^3.4.0"
+```
+
+Run: `npm install`
+
+- [ ] **Step 2: Wire App Insights into server entry point**
+
+Add to the very top of `src/server.ts` (must be first import):
+
+```typescript
+// src/server.ts — add at the VERY TOP, before all other imports
+import appInsights from 'applicationinsights';
+
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights.setup()
+    .setAutoCollectRequests(true)
+    .setAutoCollectPerformance(true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectDependencies(true)  // tracks PostgreSQL, HTTP calls to Gemini/Anthropic
+    .setAutoCollectConsole(true)
+    .start();
+}
+
+// ... rest of existing imports and server setup
+```
+
+- [ ] **Step 3: Add custom metrics for consolidation runner**
+
+Add to `src/consolidation/runner.ts` — after each consolidation run, track business metrics:
+
+```typescript
+import appInsights from 'applicationinsights';
+
+// At the end of runConsolidation, after inserting the log:
+const client = appInsights.defaultClient;
+if (client) {
+  client.trackMetric({ name: 'consolidation.captures_processed', value: pendingCaptures.length });
+  client.trackMetric({ name: 'consolidation.facts_created', value: totalFactsCreated });
+  client.trackMetric({ name: 'consolidation.facts_updated', value: totalFactsUpdated });
+  client.trackMetric({ name: 'consolidation.insights_created', value: insightsCreated });
+  client.trackMetric({ name: 'consolidation.tokens_used', value: totalTokens });
+  client.trackMetric({ name: 'consolidation.duration_ms', value: Date.now() - startTime });
+}
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add package.json package-lock.json src/server.ts src/consolidation/runner.ts
+git commit -m "feat: Azure Application Insights for telemetry and custom consolidation metrics"
+```
+
+---
+
+### Task 34: Deployment Scripts
+
+**Files:**
+- Create: `scripts/deploy.sh`
+- Create: `scripts/migrate-azure.sh`
+
+- [ ] **Step 1: Create deployment script**
+
+```bash
+#!/bin/bash
+# scripts/deploy.sh — Build, push to ACR, deploy Container App + run migrations
+set -euo pipefail
+
+# Configuration
+RESOURCE_GROUP="${RESOURCE_GROUP:?Set RESOURCE_GROUP}"
+ACR_NAME="${ACR_NAME:?Set ACR_NAME}"
+CONTAINER_APP_NAME="${CONTAINER_APP_NAME:-openbrain-prod-api}"
+IMAGE_NAME="open-brain-v2"
+IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
+
+echo "=== Building Docker image ==="
+docker build -t "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" .
+docker tag "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:latest"
+
+echo "=== Pushing to ACR ==="
+az acr login --name "${ACR_NAME}"
+docker push "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
+docker push "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:latest"
+
+echo "=== Updating Container App ==="
+az containerapp update \
+  --name "${CONTAINER_APP_NAME}" \
+  --resource-group "${RESOURCE_GROUP}" \
+  --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
+
+echo "=== Deploying Azure Function ==="
+FUNCTION_APP_NAME="${FUNCTION_APP_NAME:-openbrain-prod-func}"
+cd functions/consolidation-trigger
+func azure functionapp publish "${FUNCTION_APP_NAME}" --typescript
+cd ../..
+
+echo "=== Done! ==="
+az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query "properties.configuration.ingress.fqdn" -o tsv
+```
+
+- [ ] **Step 2: Create Azure migration script**
+
+```bash
+#!/bin/bash
+# scripts/migrate-azure.sh — Run migrations against Azure PostgreSQL
+set -euo pipefail
+
+DB_URL="${DATABASE_URL:?Set DATABASE_URL (Azure PostgreSQL connection string with sslmode=require)}"
+
+echo "=== Running migrations against Azure PostgreSQL ==="
+psql "${DB_URL}" -f migrations/001_initial_schema.sql
+
+echo "=== Verifying tables ==="
+psql "${DB_URL}" -c "\dt"
+
+echo "=== Done! ==="
+```
+
+- [ ] **Step 3: Make scripts executable and commit**
+
+```bash
+chmod +x scripts/deploy.sh scripts/migrate-azure.sh
+git add scripts/
+git commit -m "feat: deployment and migration scripts for Azure"
+```
+
+---
+
+### Task 35: GitHub Actions CI/CD
+
+**Files:**
+- Create: `.github/workflows/ci.yml`
+- Create: `.github/workflows/deploy.yml`
+
+- [ ] **Step 1: Create CI workflow**
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+```
+
+- [ ] **Step 2: Create deploy workflow**
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  CONTAINER_APP_NAME: ${{ vars.CONTAINER_APP_NAME }}
+  FUNCTION_APP_NAME: ${{ vars.FUNCTION_APP_NAME }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
+          docker tag ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+
+      - name: Deploy Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${{ github.sha }}
+
+      - name: Deploy Azure Function
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNCTION_APP_NAME }}
+          package: ./functions/consolidation-trigger
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .github/
+git commit -m "feat: GitHub Actions CI/CD for Azure deployment"
+```
+
+---
+
 ## Summary
 
 | Chunk | Tasks | Description |
@@ -6075,6 +6918,30 @@ git commit -m "feat: Dockerfile for production deployment and shared test mock h
 | 6 | 20-22 | MCP server with 13 tools (9 profiler + 4 reminders) |
 | 7 | 23-27 | Consolidation (DBSCAN, Phase 1-3, runner, Azure Function) |
 | 8 | 28-30 | Retrieval (profile + tiered search), notifications (review + digest) |
-| 9 | 31 | Docker deployment, shared test helpers |
+| 9 | 31 | Docker build, shared test helpers |
+| 10 | 32-35 | Azure IaC (Bicep), App Insights, deployment scripts, CI/CD |
 
-**Total: 31 tasks across 9 chunks. ~31 commits.**
+**Total: 35 tasks across 10 chunks. ~35 commits.**
+
+### Azure Infrastructure Summary
+
+| Component | Azure Service | Config |
+|-----------|--------------|--------|
+| API + MCP + Telegram | Azure Container Apps | Scale-to-zero, consumption plan |
+| Consolidation | Azure Functions | Timer trigger, consumption plan |
+| Database | Azure PostgreSQL Flexible Server | B1ms, pgvector enabled |
+| File Storage | Azure Blob Storage | Standard LRS, private access |
+| Secrets | Azure Key Vault | RBAC auth, managed identity |
+| Container Registry | Azure Container Registry | Shared, existing |
+| Monitoring | Azure Application Insights | Auto-collect + custom metrics |
+| Logging | Azure Log Analytics | 30-day retention |
+| CI/CD | GitHub Actions → Azure | OIDC auth, auto-deploy on main |
+
+### Non-Azure (models only — by design)
+
+| Task | Provider | Reason |
+|------|----------|--------|
+| Embeddings | Google Gemini API | Only model with native multimodal embedding |
+| Metadata extraction | Google Gemini API | Best speed+quality for structured extraction |
+| Consolidation | Anthropic API | Best reasoning for profile synthesis |
+| Retrieval synthesis | Google Gemini API | Best speed+quality for on-demand use |
