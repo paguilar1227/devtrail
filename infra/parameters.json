@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "prod" },
+    "acrName": { "value": "YOUR_SHARED_ACR_NAME" },
+    "acrResourceGroup": { "value": "YOUR_ACR_RESOURCE_GROUP" },
+    "telegramChatId": { "value": "YOUR_CHAT_ID" },
+    "consolidationSchedule": { "value": "0 */30 * * * *" },
+    "dbAdminPassword": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "db-admin-password" } },
+    "apiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "open-brain-api-key" } },
+    "geminiApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "gemini-api-key" } },
+    "anthropicApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "anthropic-api-key" } },
+    "telegramBotToken": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "telegram-bot-token" } },
+    "telegramWebhookSecret": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "telegram-webhook-secret" } }
+  }
+}
