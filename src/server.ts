@@ -51,16 +51,7 @@ async function runMigrations() {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     const migrationPath = join(__dirname, '..', 'migrations', '001_initial_schema.sql');
     const sql = readFileSync(migrationPath, 'utf-8');
-
-    // Split on semicolons and execute each statement (pg doesn't support multi-statement in one query)
-    const statements = sql
-      .split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.startsWith('--'));
-
-    for (const statement of statements) {
-      await deps.db.pool.query(statement);
-    }
+    await deps.db.pool.query(sql);
     console.log('Database migration complete.');
   } catch (err) {
     console.error('Migration failed:', err);
