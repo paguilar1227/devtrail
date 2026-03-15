@@ -6,6 +6,7 @@ import type { EmbeddingProvider, LLMProvider } from './providers/types.js';
 import type { BlobStorage } from './storage/blob.js';
 import type { Config } from './config.js';
 import { runCapturePipeline } from './capture/pipeline.js';
+import { runConsolidation } from './consolidation/runner.js';
 import { mountMcpRoutes } from './mcp/server.js';
 import { setupTelegramWebhook } from './telegram/webhook.js';
 
@@ -64,6 +65,77 @@ export function createApp(deps: AppDeps) {
        FROM captures ORDER BY created_at DESC LIMIT $1`,
       [limit],
     );
+    return c.json(result.rows);
+  });
+
+  // GET /api/v1/facts — List facts
+  app.get('/api/v1/facts', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '20');
+    const result = await deps.db.query(
+      `SELECT id, content, category, confidence, origin, review_status, source_capture_ids, created_at, updated_at
+       FROM facts WHERE archived = false ORDER BY confidence DESC, created_at DESC LIMIT $1`,
+      [limit],
+    );
+    return c.json(result.rows);
+  });
+
+  // GET /api/v1/insights — List insights
+  app.get('/api/v1/insights', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '20');
+    const result = await deps.db.query(
+      `SELECT id, content, category, confidence, origin, review_status, source_fact_ids, generated_at, updated_at
+       FROM insights WHERE archived = false ORDER BY confidence DESC, generated_at DESC LIMIT $1`,
+      [limit],
+    );
+    return c.json(result.rows);
+  });
+
+  // GET /api/v1/consolidation/logs — View consolidation run history
+  app.get('/api/v1/consolidation/logs', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '10');
+    const result = await deps.db.query(
+      `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT $1`,
+      [limit],
+    );
+    return c.json(result.rows);
+  });
+
+  // POST /api/v1/consolidation/trigger — Manually trigger a consolidation run
+  app.post('/api/v1/consolidation/trigger', async (c) => {
+    try {
+      await runConsolidation({
+        db: deps.db,
+        consolidationLLM: deps.consolidationLLM,
+        embeddingProvider: deps.embeddingProvider,
+        reviewMode: deps.config.reviewMode,
+      });
+      // Fetch the latest log entry to return results
+      const result = await deps.db.query(
+        `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT 1`,
+      );
+      return c.json({ status: 'completed', log: result.rows[0] ?? null });
+    } catch (err) {
+      const result = await deps.db.query(
+        `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT 1`,
+      );
+      return c.json({ status: 'error', error: String(err), log: result.rows[0] ?? null }, 500);
+    }
+  });
+
+  // GET /api/v1/reminders — List reminders
+  app.get('/api/v1/reminders', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '20');
+    const status = c.req.query('status');
+    const project = c.req.query('project');
+    let query = `SELECT id, content, category, project, section, status, priority, depth, parent_id, due_date, created_at
+       FROM reminders WHERE archived = false`;
+    const params: unknown[] = [];
+    let paramIdx = 1;
+    if (status) { query += ` AND status = $${paramIdx++}`; params.push(status); }
+    if (project) { query += ` AND project = $${paramIdx++}`; params.push(project); }
+    query += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+    params.push(limit);
+    const result = await deps.db.query(query, params);
     return c.json(result.rows);
   });
 
