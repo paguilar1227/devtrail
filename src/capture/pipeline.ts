@@ -5,6 +5,7 @@ import type { BlobStorage } from '../storage/blob.js';
 import { insertCapture } from '../db/captures.js';
 import { computeFileHash, checkFileHashDedup, checkSemanticDedup } from './dedup.js';
 import { extractMetadata } from './metadata.js';
+import { convertForEmbedding } from './media-convert.js';
 
 export interface FileInput {
   data: Buffer;
@@ -43,9 +44,26 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     existingUrls = await checkFileHashDedup(db, fileHashes);
   }
 
-  // Step 3: Generate embedding (from text + file bytes together)
+  // Step 3: Convert files to Gemini-supported MIME types, then generate embedding
+  // NOTE: conversion happens AFTER hash check so we always hash the original bytes.
+  //       The original file (not converted) is what gets uploaded to blob storage.
   const embeddingFiles = files.length > 0
-    ? files.map((f) => ({ data: f.data, mimeType: f.contentType }))
+    ? await Promise.all(
+        files.map(async (f) => {
+          try {
+            const converted = await convertForEmbedding(f.data, f.contentType);
+            // If ffmpeg wasn't available the returned buffer is empty — skip that file
+            if (converted.data.length === 0) return null;
+            return { data: converted.data, mimeType: converted.mimeType };
+          } catch {
+            // Unsupported type — skip embedding this file, embed text only
+            return null;
+          }
+        }),
+      ).then((results) => {
+        const valid = results.filter((r): r is { data: Buffer; mimeType: string } => r !== null);
+        return valid.length > 0 ? valid : undefined;
+      })
     : undefined;
   const embedding = await embeddingProvider.embed(content, embeddingFiles);
 
