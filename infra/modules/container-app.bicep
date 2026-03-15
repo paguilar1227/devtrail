@@ -49,20 +49,13 @@ resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-// AcrPull role for the managed identity
-resource acrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, identity.id, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-  scope: acr
-  properties: {
-    principalId: identity.properties.principalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d') // AcrPull
-    principalType: 'ServicePrincipal'
-  }
-}
+// NOTE: AcrPull role for the managed identity on the shared ACR (different RG)
+// must be assigned via CLI after deployment:
+// az role assignment create --assignee <identity-principal-id> --role AcrPull --scope <acr-resource-id>
 
-// Container App (depends on role assignments)
+// Container App (depends on KV role assignment)
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
-  dependsOn: [kvRoleAssignment, acrRoleAssignment]
+  dependsOn: [kvRoleAssignment]
   name: '${prefix}-api'
   location: location
   identity: {
@@ -160,3 +153,4 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output fqdn string = containerApp.properties.configuration.ingress.fqdn
+output identityPrincipalId string = identity.properties.principalId

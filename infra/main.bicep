@@ -118,4 +118,5 @@ module functionApp 'modules/function-app.bicep' = {
 }
 
 output containerAppUrl string = containerApp.outputs.fqdn
+output containerAppIdentityPrincipalId string = containerApp.outputs.identityPrincipalId
 output functionAppName string = functionApp.outputs.functionAppName
