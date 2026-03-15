@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: openbrain
+      POSTGRES_PASSWORD: openbrain
+      POSTGRES_DB: openbrain
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+
+volumes:
+  pgdata:
