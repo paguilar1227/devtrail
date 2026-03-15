@@ -38,8 +38,8 @@ const deps = {
 // Run migrations on startup (idempotent — safe to run every boot)
 async function runMigrations() {
   try {
-    // Check if tables already exist
-    const result = await deps.db.query(
+    // Use raw pool to avoid pgvector type registration (extension doesn't exist yet)
+    const result = await deps.db.pool.query(
       "SELECT count(*) as count FROM pg_tables WHERE schemaname = 'public' AND tablename = 'captures'",
     );
     if (parseInt(result.rows[0].count) > 0) {
@@ -59,7 +59,7 @@ async function runMigrations() {
       .filter((s) => s.length > 0 && !s.startsWith('--'));
 
     for (const statement of statements) {
-      await deps.db.query(statement);
+      await deps.db.pool.query(statement);
     }
     console.log('Database migration complete.');
   } catch (err) {
