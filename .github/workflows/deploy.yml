@@ -1,0 +1,54 @@
+# .github/workflows/deploy.yml
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  CONTAINER_APP_NAME: ${{ vars.CONTAINER_APP_NAME }}
+  FUNCTION_APP_NAME: ${{ vars.FUNCTION_APP_NAME }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
+          docker tag ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+
+      - name: Deploy Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${{ github.sha }}
+
+      - name: Deploy Azure Function
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNCTION_APP_NAME }}
+          package: ./functions/consolidation-trigger
