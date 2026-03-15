@@ -4,7 +4,7 @@ import appInsights from 'applicationinsights';
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
   appInsights.setup()
     .setAutoCollectRequests(true)
-    .setAutoCollectPerformance(true)
+    .setAutoCollectPerformance(true, true)
     .setAutoCollectExceptions(true)
     .setAutoCollectDependencies(true)  // tracks PostgreSQL, HTTP calls to Gemini/Anthropic
     .setAutoCollectConsole(true)

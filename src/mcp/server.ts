@@ -1,6 +1,6 @@
 // src/mcp/server.ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { registerProfilerTools } from './profiler-tools.js';
@@ -32,7 +32,7 @@ export function mountMcpRoutes(app: Hono, deps: AppDeps): void {
 
   // Streamable HTTP transport endpoint
   app.all('/mcp', async (c) => {
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // Stateless
     });
     await server.connect(transport);

@@ -80,7 +80,7 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     fileUrls: fileUrls.length > 0 ? fileUrls : null,
     fileHashes: fileHashes.length > 0 ? fileHashes : null,
     embedding,
-    metadata,
+    metadata: metadata as unknown as Record<string, unknown>,
     source,
   });
 

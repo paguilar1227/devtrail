@@ -50,6 +50,11 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       content,
       embedding,
       category: null, // Auto-determined later
+      project: null,
+      section: null,
+      parentId: null,
+      depth: 0,
+      priority: null,
       source: 'telegram',
       sourceContext: null,
       dueDate: null,

@@ -1,6 +1,7 @@
 
 export interface ClusterPoint {
   id: string;
+  content: string;
   embedding: number[];
 }
 
