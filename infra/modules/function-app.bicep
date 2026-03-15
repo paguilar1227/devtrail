@@ -33,7 +33,23 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
 }
 
+// Key Vault Secrets User role for the function identity
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, identity.id, '4633458b-17de-408a-b874-0445c86b69e6')
+  scope: keyVault
+  properties: {
+    principalId: identity.properties.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
+  dependsOn: [kvRoleAssignment]
   name: '${prefix}-func'
   location: location
   kind: 'functionapp'

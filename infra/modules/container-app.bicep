@@ -34,8 +34,35 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
 }
 
-// Container App
+// Key Vault Secrets User role for the managed identity
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, identity.id, '4633458b-17de-408a-b874-0445c86b69e6')
+  scope: keyVault
+  properties: {
+    principalId: identity.properties.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// AcrPull role for the managed identity
+resource acrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, identity.id, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  scope: acr
+  properties: {
+    principalId: identity.properties.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d') // AcrPull
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Container App (depends on role assignments)
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  dependsOn: [kvRoleAssignment, acrRoleAssignment]
   name: '${prefix}-api'
   location: location
   identity: {
