@@ -536,6 +536,7 @@ Return ONLY valid JSON.`,
     try {
       const doc = ctx.message.document;
       // Infer MIME type from extension if Telegram gives us a generic one
+      console.log(`[telegram] Document: name=${doc.file_name}, telegram_mime=${doc.mime_type}`);
       let docMimeType = doc.mime_type ?? 'application/octet-stream';
       if (docMimeType === 'application/octet-stream' && doc.file_name) {
         const ext = doc.file_name.split('.').pop()?.toLowerCase();
