@@ -545,6 +545,14 @@ Return ONLY valid JSON.`,
   // Initialize bot info (required for bot.handleUpdate)
   bot.init().catch((err) => console.error('[telegram] Bot init failed:', err));
 
+  // Global error handler — grammY wraps errors in BotError, extract the cause
+  bot.catch((err) => {
+    const cause = err.error;
+    console.error(`[telegram] Handler error for update ${err.ctx?.update?.update_id}:`, cause);
+    // Try to reply to the user
+    err.ctx?.reply?.(`Error: ${cause instanceof Error ? cause.message : String(cause)}`).catch(() => {});
+  });
+
   // Dedup guard — track recently processed update IDs to prevent retry loops.
   // Telegram retries if we don't respond within its timeout (~60s).
   // We respond 200 immediately and process in the background, but if a retry
