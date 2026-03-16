@@ -556,6 +556,16 @@ Return ONLY valid JSON.`,
           json: 'application/json',
           doc: 'application/msword',
           docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          html: 'text/html',
+          htm: 'text/html',
+          xml: 'text/xml',
+          md: 'text/markdown',
+          rtf: 'application/rtf',
+          xls: 'application/vnd.ms-excel',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          ppt: 'application/vnd.ms-powerpoint',
+          pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          zip: 'application/zip',
         };
         if (ext && mimeMap[ext]) docMimeType = mimeMap[ext];
       }
@@ -564,6 +574,17 @@ Return ONLY valid JSON.`,
         captureFn,
         downloadFile,
         async (fileBuffer, mimeType) => {
+          // For text-based formats, extract text and summarize as text
+          const textTypes = ['text/html', 'text/plain', 'text/csv', 'text/xml', 'text/markdown', 'application/json'];
+          if (textTypes.includes(mimeType) || mimeType === 'application/octet-stream') {
+            const textContent = fileBuffer.toString('utf-8').slice(0, 30000); // Limit to ~30K chars
+            const response = await deps.metadataLLM.complete(
+              [{ role: 'user', content: `Summarize this document:\n\n${textContent}` }],
+              { maxTokens: 1024 },
+            );
+            return response.content;
+          }
+          // For binary formats Gemini supports (PDF, images), send as inline data
           const response = await deps.metadataLLM.complete(
             [{ role: 'user', content: [{ type: 'text', text: `Summarize this ${mimeType} document.` }, { type: 'image', data: fileBuffer, mimeType }] }],
           );
