@@ -535,8 +535,31 @@ Return ONLY valid JSON.`,
   bot.on('message:document', async (ctx) => {
     try {
       const doc = ctx.message.document;
+      // Infer MIME type from extension if Telegram gives us a generic one
+      let docMimeType = doc.mime_type ?? 'application/octet-stream';
+      if (docMimeType === 'application/octet-stream' && doc.file_name) {
+        const ext = doc.file_name.split('.').pop()?.toLowerCase();
+        const mimeMap: Record<string, string> = {
+          pdf: 'application/pdf',
+          png: 'image/png',
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          gif: 'image/gif',
+          webp: 'image/webp',
+          mp4: 'video/mp4',
+          mp3: 'audio/mpeg',
+          wav: 'audio/wav',
+          ogg: 'audio/ogg',
+          txt: 'text/plain',
+          csv: 'text/csv',
+          json: 'application/json',
+          doc: 'application/msword',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+        if (ext && mimeMap[ext]) docMimeType = mimeMap[ext];
+      }
       const result = await handleDocumentMessage(
-        { fileId: doc.file_id, fileName: doc.file_name ?? 'document', mimeType: doc.mime_type ?? 'application/octet-stream', chatId: String(ctx.chat.id) },
+        { fileId: doc.file_id, fileName: doc.file_name ?? 'document', mimeType: docMimeType, chatId: String(ctx.chat.id) },
         captureFn,
         downloadFile,
         async (fileBuffer, mimeType) => {
