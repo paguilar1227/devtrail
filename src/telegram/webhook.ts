@@ -237,6 +237,7 @@ Return ONLY valid JSON.`,
     // Use LLM to classify intent
     let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string };
     try {
+      console.log(`[intent-classifier] Input: "${text}"`);
       const classifyResponse = await deps.metadataLLM.complete(
         [{ role: 'user', content: text }],
         {
@@ -273,8 +274,10 @@ Return ONLY valid JSON.`,
         },
       );
       intent = JSON.parse(classifyResponse.content);
-    } catch {
+      console.log(`[intent-classifier] Result: ${JSON.stringify(intent)}`);
+    } catch (err) {
       // If classification fails, default to capture
+      console.error(`[intent-classifier] Failed:`, err);
       intent = { action: 'capture_thought' };
     }
 
