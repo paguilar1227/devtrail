@@ -103,8 +103,15 @@ export async function checkDueReminders(deps: DueDateCheckerDeps): Promise<numbe
   );
 
   const reminders: ReminderRow[] = result.rows;
+  console.log(`[due-date-checker] Checking... found ${reminders.length} due reminder${reminders.length === 1 ? '' : 's'}`);
+
+  if (reminders.length === 0) {
+    return 0;
+  }
+
   for (const reminder of reminders) {
     const message = formatDueNotification(reminder);
+    console.log(`[due-date-checker] Sending notification for reminder ${reminder.id}: "${reminder.content}"`);
     await send(config.telegramBotToken, config.telegramChatId, message);
 
     // Mark as notified
