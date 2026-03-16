@@ -1,9 +1,9 @@
 // src/telegram/webhook.ts
-import { Bot, webhookCallback } from 'grammy';
+import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder } from '../db/reminders.js';
 import { insertComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
@@ -15,6 +15,7 @@ import {
   handleVoiceMessage,
   handleDocumentMessage,
 } from './handlers.js';
+import { formatRemindersMarkdown } from '../notifications/format-reminders.js';
 
 export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   const bot = new Bot(deps.config.telegramBotToken);
@@ -107,10 +108,50 @@ Return ONLY valid JSON.`,
 
   bot.command('todos', async (ctx) => {
     const reminders = await findActiveReminders(deps.db);
-    const text = await handleTodosCommand(async () =>
-      reminders.map((r) => ({ id: r.id, content: r.content, status: r.status }))
-    );
-    await ctx.reply(text);
+
+    if (reminders.length === 0) {
+      await ctx.reply('No active reminders.');
+      return;
+    }
+
+    const text = formatRemindersMarkdown(reminders);
+
+    // Build inline keyboard — one row per top-level task with Done + Pause buttons
+    const keyboard = new InlineKeyboard();
+    for (const r of reminders) {
+      if (r.depth === 0) {
+        const label = r.content.length > 30 ? r.content.slice(0, 27) + '…' : r.content;
+        keyboard
+          .text(`✓ ${label}`, `done:${r.id}`)
+          .text(`⏸ ${label}`, `pause:${r.id}`)
+          .row();
+      }
+    }
+
+    await ctx.reply(text, { reply_markup: keyboard });
+  });
+
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const colonIdx = data.indexOf(':');
+    if (colonIdx === -1) {
+      await ctx.answerCallbackQuery({ text: 'Unknown action' });
+      return;
+    }
+    const action = data.slice(0, colonIdx);
+    const reminderId = data.slice(colonIdx + 1);
+
+    if (action === 'done') {
+      await dbCompleteReminder(deps.db, reminderId);
+      await ctx.answerCallbackQuery({ text: 'Marked as done ✓' });
+      await ctx.editMessageText(`${ctx.callbackQuery.message?.text ?? ''}\n\n✓ Task marked done.`);
+    } else if (action === 'pause') {
+      await updateReminder(deps.db, reminderId, { status: 'paused' });
+      await ctx.answerCallbackQuery({ text: 'Paused ⏸' });
+      await ctx.editMessageText(`${ctx.callbackQuery.message?.text ?? ''}\n\n⏸ Task paused.`);
+    } else {
+      await ctx.answerCallbackQuery({ text: 'Unknown action' });
+    }
   });
 
   bot.command('done', async (ctx) => {
