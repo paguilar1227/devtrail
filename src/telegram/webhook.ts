@@ -495,46 +495,63 @@ Return ONLY valid JSON.`,
   });
 
   bot.on('message:photo', async (ctx) => {
-    const photos = ctx.message.photo;
-    const largest = photos[photos.length - 1];
-    const result = await handlePhotoMessage(
-      { caption: ctx.message.caption ?? null, fileId: largest.file_id, chatId: String(ctx.chat.id) },
-      captureFn,
-      downloadFile,
-    );
-    await ctx.reply(result.success ? `Photo captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    try {
+      const photos = ctx.message.photo;
+      const largest = photos[photos.length - 1];
+      const result = await handlePhotoMessage(
+        { caption: ctx.message.caption ?? null, fileId: largest.file_id, chatId: String(ctx.chat.id) },
+        captureFn,
+        downloadFile,
+      );
+      await ctx.reply(result.success ? `Photo captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[telegram] Photo handler error: ${msg}`, err);
+      await ctx.reply(`Error processing photo: ${msg}`).catch(() => {});
+    }
   });
 
   bot.on('message:voice', async (ctx) => {
-    const result = await handleVoiceMessage(
-      { fileId: ctx.message.voice.file_id, chatId: String(ctx.chat.id) },
-      captureFn,
-      downloadFile,
-      async (audio) => {
-        // Use Gemini Flash to transcribe + summarize audio
-        const response = await deps.metadataLLM.complete(
-          [{ role: 'user', content: [{ type: 'text', text: 'Transcribe and summarize this voice message.' }, { type: 'image', data: audio, mimeType: 'audio/ogg' }] }],
-        );
-        return response.content;
-      },
-    );
-    await ctx.reply(result.success ? `Voice captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    try {
+      const result = await handleVoiceMessage(
+        { fileId: ctx.message.voice.file_id, chatId: String(ctx.chat.id) },
+        captureFn,
+        downloadFile,
+        async (audio) => {
+          const response = await deps.metadataLLM.complete(
+            [{ role: 'user', content: [{ type: 'text', text: 'Transcribe and summarize this voice message.' }, { type: 'image', data: audio, mimeType: 'audio/ogg' }] }],
+          );
+          return response.content;
+        },
+      );
+      await ctx.reply(result.success ? `Voice captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[telegram] Voice handler error: ${msg}`, err);
+      await ctx.reply(`Error processing voice message: ${msg}`).catch(() => {});
+    }
   });
 
   bot.on('message:document', async (ctx) => {
-    const doc = ctx.message.document;
-    const result = await handleDocumentMessage(
-      { fileId: doc.file_id, fileName: doc.file_name ?? 'document', mimeType: doc.mime_type ?? 'application/octet-stream', chatId: String(ctx.chat.id) },
-      captureFn,
-      downloadFile,
-      async (fileBuffer, mimeType) => {
-        const response = await deps.metadataLLM.complete(
-          [{ role: 'user', content: [{ type: 'text', text: `Summarize this ${mimeType} document.` }, { type: 'image', data: fileBuffer, mimeType }] }],
-        );
-        return response.content;
-      },
-    );
-    await ctx.reply(result.success ? `Document captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    try {
+      const doc = ctx.message.document;
+      const result = await handleDocumentMessage(
+        { fileId: doc.file_id, fileName: doc.file_name ?? 'document', mimeType: doc.mime_type ?? 'application/octet-stream', chatId: String(ctx.chat.id) },
+        captureFn,
+        downloadFile,
+        async (fileBuffer, mimeType) => {
+          const response = await deps.metadataLLM.complete(
+            [{ role: 'user', content: [{ type: 'text', text: `Summarize this ${mimeType} document.` }, { type: 'image', data: fileBuffer, mimeType }] }],
+          );
+          return response.content;
+        },
+      );
+      await ctx.reply(result.success ? `Document captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[telegram] Document handler error: ${msg}`, err);
+      await ctx.reply(`Error processing document: ${msg}`).catch(() => {});
+    }
   });
 
   // TODO: Media group handling — Telegram sends media groups as separate messages
