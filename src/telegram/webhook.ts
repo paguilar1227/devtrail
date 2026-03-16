@@ -3,7 +3,7 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
@@ -235,7 +235,7 @@ Return ONLY valid JSON.`,
     }
 
     // Use LLM to classify intent
-    let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string };
+    let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string };
     try {
       const classifyResponse = await deps.metadataLLM.complete(
         [{ role: 'user', content: text }],
@@ -247,8 +247,8 @@ Return JSON with one of these actions:
 {"action": "create_reminder", "content": "clean task text", "project": "project or null", "section": "section or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
   Triggers: "add", "remind me", "I need to", "todo", "don't forget", "put on my list", "task:", creating any kind of task or reminder
 
-{"action": "list_reminders", "project": "filter by project or null", "status": "filter by status or null"}
-  Triggers: "what are my todos", "show my tasks", "what am I working on", "my reminders", "what's on my plate"
+{"action": "list_reminders", "project": "filter by project or null", "status": "filter by status or null", "dueFilter": "today|overdue|this_week or null"}
+  Triggers: "what are my todos", "show my tasks", "what am I working on", "my reminders", "what's on my plate", "what's due today", "show overdue tasks", "due this week"
 
 {"action": "complete_reminder", "taskSearch": "description of which task to complete"}
   Triggers: "mark X as done", "finished X", "completed X", "done with X", "X is done"
@@ -307,12 +307,29 @@ Return ONLY valid JSON.`,
       await ctx.reply(`${INTENT_PREFIX} new reminder.\nCreated: "${taskContent}"${detailStr} (${result.id.slice(0, 8)})${UNDO_HINT}`);
 
     } else if (intent.action === 'list_reminders') {
-      const reminders = await findActiveReminders(deps.db);
+      let reminders;
+      let header = '';
+      if (intent.dueFilter === 'today') {
+        reminders = await findRemindersDueOnDate(deps.db, new Date(), deps.config.timezone);
+        header = '📅 *Due Today*\n';
+      } else if (intent.dueFilter === 'overdue') {
+        reminders = await findOverdueReminders(deps.db);
+        header = '🔴 *Overdue*\n';
+      } else if (intent.dueFilter === 'this_week') {
+        // Get reminders due in the next 7 days
+        const now = new Date();
+        const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const { listReminders } = await import('../db/reminders.js');
+        reminders = await listReminders(deps.db, { due_before: weekEnd, due_after: now });
+        header = '📅 *Due This Week*\n';
+      } else {
+        reminders = await findActiveReminders(deps.db);
+      }
       if (reminders.length === 0) {
-        await ctx.reply('No active reminders.');
+        await ctx.reply(intent.dueFilter ? `No ${intent.dueFilter === 'overdue' ? 'overdue' : 'due'} reminders.` : 'No active reminders.');
         return;
       }
-      const formatted = formatRemindersMarkdown(reminders);
+      const formatted = header + formatRemindersMarkdown(reminders);
       const keyboard = new InlineKeyboard();
       for (const r of reminders) {
         if (r.depth === 0) {

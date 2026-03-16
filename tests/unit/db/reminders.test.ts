@@ -240,6 +240,34 @@ describe('reminders', () => {
     expect(results).toHaveLength(1);
   });
 
+  it('findRemindersDueOnDate queries with date bounds', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ id: 'rem-due', content: 'Due today' }],
+      command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+    });
+    const { findRemindersDueOnDate } = await import('../../../src/db/reminders.js');
+    const results = await findRemindersDueOnDate(db, new Date('2026-03-15T12:00:00Z'), 'UTC');
+    expect(results).toHaveLength(1);
+    const sql = vi.mocked(db.query).mock.calls[0][0];
+    expect(sql).toContain('due_date >= $1');
+    expect(sql).toContain('due_date <= $2');
+  });
+
+  it('findOverdueReminders queries for past-due items', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ id: 'rem-overdue', content: 'Late task' }],
+      command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+    });
+    const { findOverdueReminders } = await import('../../../src/db/reminders.js');
+    const results = await findOverdueReminders(db);
+    expect(results).toHaveLength(1);
+    const sql = vi.mocked(db.query).mock.calls[0][0];
+    expect(sql).toContain('due_date < now()');
+    expect(sql).toContain("status NOT IN ('done', 'cancelled')");
+  });
+
   it('findActiveReminders includes paused and blocked statuses', async () => {
     const db = mockDb();
     vi.mocked(db.query).mockResolvedValueOnce({

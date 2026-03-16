@@ -270,6 +270,63 @@ export async function findActiveReminders(db: DbClient): Promise<ReminderRow[]> 
   return result.rows;
 }
 
+export async function findRemindersDueOnDate(
+  db: DbClient,
+  date: Date,
+  timezone: string,
+): Promise<ReminderRow[]> {
+  // Calculate start and end of the given day in the user's timezone
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '00';
+  const dateStr = `${get('year')}-${get('month')}-${get('day')}`;
+
+  // Get timezone offset for this date to create UTC bounds
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'shortOffset' });
+  const formatted = formatter.format(date);
+  const offsetMatch = formatted.match(/GMT([+-]\d{1,2}(?::?\d{2})?)/);
+  let offsetMinutes = 0;
+  if (offsetMatch) {
+    const offsetStr = offsetMatch[1];
+    const [hours, mins] = offsetStr.split(':').map(Number);
+    offsetMinutes = (hours ?? 0) * 60 + (Math.sign(hours ?? 0) * (mins ?? 0));
+  }
+
+  const startLocal = new Date(`${dateStr}T00:00:00`);
+  const endLocal = new Date(`${dateStr}T23:59:59.999`);
+  const start = new Date(startLocal.getTime() - offsetMinutes * 60_000);
+  const end = new Date(endLocal.getTime() - offsetMinutes * 60_000);
+
+  const result = await db.query(
+    `SELECT * FROM reminders
+     WHERE due_date IS NOT NULL
+       AND due_date >= $1 AND due_date <= $2
+       AND status NOT IN ('done', 'cancelled')
+       AND archived = false
+     ORDER BY due_date ASC`,
+    [start, end],
+  );
+  return result.rows;
+}
+
+export async function findOverdueReminders(db: DbClient): Promise<ReminderRow[]> {
+  const result = await db.query(
+    `SELECT * FROM reminders
+     WHERE due_date IS NOT NULL
+       AND due_date < now()
+       AND status NOT IN ('done', 'cancelled')
+       AND archived = false
+     ORDER BY due_date ASC`,
+    [],
+  );
+  return result.rows;
+}
+
 export async function getReminderById(db: DbClient, id: string): Promise<ReminderRow | null> {
   const result = await db.query(`SELECT * FROM reminders WHERE id = $1`, [id]);
   return result.rows[0] ?? null;
