@@ -110,7 +110,7 @@ Return ONLY valid JSON.`,
       parsed.priority ? parsed.priority : null,
       parsed.dueDate ? `due: ${(() => {
         const d = new Date(parsed.dueDate!);
-        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: deps.config.timezone });
+        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: deps.config.timezone });
         const hasTime = !parsed.dueDate!.endsWith('T00:00:00Z') && !parsed.dueDate!.endsWith('T00:00:00.000Z');
         return hasTime ? `${date} at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone })}` : date;
       })()}` : null,
@@ -318,7 +318,7 @@ Return ONLY valid JSON.`,
       });
       const formatDue = (iso: string) => {
         const d = new Date(iso);
-        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: deps.config.timezone });
+        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: deps.config.timezone });
         const hasTime = !iso.endsWith('T00:00:00Z') && !iso.endsWith('T00:00:00.000Z');
         if (hasTime) {
           const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone });
