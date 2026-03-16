@@ -57,6 +57,11 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         {
           systemPrompt: `Parse this reminder text into structured fields. Extract any project, section, priority, category, and due date mentioned naturally or via tags like [project:name].
 
+TODAY'S DATE: ${new Date().toISOString().split('T')[0]} (${new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date())})
+USER TIMEZONE: ${deps.config.timezone}
+
+When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year. If a time is specified, include it. If only a date, use T00:00:00Z.
+
 Return JSON:
 {
   "content": "the clean task text without tags or metadata",
@@ -103,7 +108,12 @@ Return ONLY valid JSON.`,
       parsed.project ? `project: ${parsed.project}` : null,
       parsed.section ? `section: ${parsed.section}` : null,
       parsed.priority ? parsed.priority : null,
-      parsed.dueDate ? `due: ${parsed.dueDate.split('T')[0]}` : null,
+      parsed.dueDate ? `due: ${(() => {
+        const d = new Date(parsed.dueDate!);
+        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: deps.config.timezone });
+        const hasTime = !parsed.dueDate!.endsWith('T00:00:00Z') && !parsed.dueDate!.endsWith('T00:00:00.000Z');
+        return hasTime ? `${date} at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone })}` : date;
+      })()}` : null,
     ].filter(Boolean);
     const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
     await ctx.reply(`Reminder created${detailStr} (${result.id.slice(0, 8)})`);
@@ -244,6 +254,11 @@ Return ONLY valid JSON.`,
         {
           systemPrompt: `You are an intent classifier for a personal assistant. The user sent a message. Determine if it's a task/reminder action or a thought to capture.
 
+TODAY'S DATE: ${new Date().toISOString().split('T')[0]} (${new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date())})
+USER TIMEZONE: ${deps.config.timezone}
+
+When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year.
+
 Return JSON with one of these actions:
 
 {"action": "create_reminder", "content": "clean task text", "project": "project or null", "section": "section or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
@@ -301,10 +316,20 @@ Return ONLY valid JSON.`,
         sourceContext: null,
         dueDate: intent.dueDate ? new Date(intent.dueDate) : null,
       });
+      const formatDue = (iso: string) => {
+        const d = new Date(iso);
+        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: deps.config.timezone });
+        const hasTime = !iso.endsWith('T00:00:00Z') && !iso.endsWith('T00:00:00.000Z');
+        if (hasTime) {
+          const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone });
+          return `${date} at ${time}`;
+        }
+        return date;
+      };
       const details = [
         intent.project ? `project: ${intent.project}` : null,
         intent.priority,
-        intent.dueDate ? `due: ${intent.dueDate.split('T')[0]}` : null,
+        intent.dueDate ? `due: ${formatDue(intent.dueDate)}` : null,
       ].filter(Boolean);
       const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
       lastActions.set(chatId, { action: 'create', reminderId: result.id });
