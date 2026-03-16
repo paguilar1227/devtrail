@@ -40,6 +40,16 @@ export async function findCommentsByReminderId(
   return result.rows;
 }
 
+export async function deleteComment(
+  db: DbClient,
+  commentId: string,
+): Promise<void> {
+  await db.query(
+    `DELETE FROM reminder_comments WHERE id = $1`,
+    [commentId],
+  );
+}
+
 export async function deleteCommentsByReminderId(
   db: DbClient,
   reminderId: string,

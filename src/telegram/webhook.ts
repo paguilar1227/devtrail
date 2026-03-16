@@ -3,8 +3,8 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder } from '../db/reminders.js';
-import { insertComment } from '../db/reminder-comments.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder } from '../db/reminders.js';
+import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
   handlePhotoMessage,
@@ -36,6 +36,9 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const response = await fetch(url);
     return Buffer.from(await response.arrayBuffer());
   };
+
+  // Undo tracking — stores the last action per chat for reversal
+  const lastActions = new Map<string, { action: string; reminderId: string; previousState?: Record<string, unknown> }>();
 
   // Command handlers
   bot.command('remind', async (ctx) => {
@@ -192,6 +195,44 @@ Return ONLY valid JSON.`,
   bot.on('message:text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return; // Skip unhandled commands
     const text = ctx.message.text;
+    const chatId = String(ctx.chat.id);
+
+    // Fast-path: undo last action without hitting the LLM
+    if (text.toLowerCase().trim() === 'undo') {
+      const last = lastActions.get(chatId);
+      if (!last) {
+        await ctx.reply('Nothing to undo.');
+        return;
+      }
+      try {
+        if (last.action === 'create') {
+          await deleteReminder(deps.db, last.reminderId);
+          await ctx.reply(`↩️ Undone: deleted the reminder (${last.reminderId.slice(0, 8)})`);
+        } else if (last.action === 'complete') {
+          const prev = last.previousState ?? {};
+          await updateReminder(deps.db, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
+          await ctx.reply(`↩️ Undone: restored reminder status to ${(prev.status as string) ?? 'not_started'} (${last.reminderId.slice(0, 8)})`);
+        } else if (last.action === 'update') {
+          const prev = last.previousState ?? {};
+          await updateReminder(deps.db, last.reminderId, {
+            status: prev.status as string | undefined,
+            priority: prev.priority as string | null | undefined,
+            project: prev.project as string | null | undefined,
+          });
+          await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
+        } else if (last.action === 'comment') {
+          await deleteComment(deps.db, last.reminderId); // reminderId holds the commentId for this action
+          await ctx.reply(`↩️ Undone: removed the comment (${last.reminderId.slice(0, 8)})`);
+        } else {
+          await ctx.reply('Cannot undo that action.');
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        await ctx.reply(`Undo failed: ${msg}`);
+      }
+      lastActions.delete(chatId);
+      return;
+    }
 
     // Use LLM to classify intent
     let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string };
@@ -217,6 +258,9 @@ Return JSON with one of these actions:
 
 {"action": "add_comment", "taskSearch": "description of which task", "content": "the comment text"}
   Triggers: "update on X:", "note on X:", "progress on X:", "regarding X:"
+
+{"action": "undo"}
+  Triggers: "undo", "undo that", "take that back", "reverse that", "nevermind"
 
 {"action": "capture_thought"}
   Default — anything that isn't a task action. Personal observations, opinions, experiences, preferences, feelings, information sharing.
@@ -259,6 +303,7 @@ Return ONLY valid JSON.`,
         intent.dueDate ? `due: ${intent.dueDate.split('T')[0]}` : null,
       ].filter(Boolean);
       const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+      lastActions.set(chatId, { action: 'create', reminderId: result.id });
       await ctx.reply(`${INTENT_PREFIX} new reminder.\nCreated: "${taskContent}"${detailStr} (${result.id.slice(0, 8)})${UNDO_HINT}`);
 
     } else if (intent.action === 'list_reminders') {
@@ -283,6 +328,7 @@ Return ONLY valid JSON.`,
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
+        lastActions.set(chatId, { action: 'complete', reminderId: match.id, previousState: { status: match.status } });
         await dbCompleteReminder(deps.db, match.id);
         await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
       } else {
@@ -294,17 +340,13 @@ Return ONLY valid JSON.`,
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
+        lastActions.set(chatId, { action: 'update', reminderId: match.id, previousState: { status: match.status, priority: match.priority, project: match.project } });
         await updateReminder(deps.db, match.id, {
           status: intent.status,
+          priority: intent.priority ?? undefined,
+          project: intent.project ?? undefined,
           dueDate: intent.dueDate ? new Date(intent.dueDate) : undefined,
         });
-        // Handle priority separately since updateReminder doesn't cover it
-        if (intent.priority) {
-          await deps.db.query(`UPDATE reminders SET priority = $1, updated_at = now() WHERE id = $2`, [intent.priority, match.id]);
-        }
-        if (intent.project) {
-          await deps.db.query(`UPDATE reminders SET project = $1, updated_at = now() WHERE id = $2`, [intent.project, match.id]);
-        }
         const changes = [intent.status, intent.priority, intent.project ? `→ ${intent.project}` : null].filter(Boolean).join(', ');
         await ctx.reply(`${INTENT_PREFIX} task update.\nUpdated: "${match.content}" (${changes})${UNDO_HINT}`);
       } else {
@@ -317,10 +359,46 @@ Return ONLY valid JSON.`,
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match && intent.content) {
         const embedding = await deps.embeddingProvider.embed(intent.content);
-        await insertComment(deps.db, { content: intent.content, embedding, reminderId: match.id, source: 'telegram' });
+        const commentResult = await insertComment(deps.db, { content: intent.content, embedding, reminderId: match.id, source: 'telegram' });
+        lastActions.set(chatId, { action: 'comment', reminderId: commentResult.id });
         await ctx.reply(`${INTENT_PREFIX} comment on task.\nAdded to "${match.content}": "${intent.content}"${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}".`);
+      }
+
+    } else if (intent.action === 'undo') {
+      // LLM-classified undo — reuse the fast-path logic
+      const last = lastActions.get(chatId);
+      if (!last) {
+        await ctx.reply('Nothing to undo.');
+      } else {
+        try {
+          if (last.action === 'create') {
+            await deleteReminder(deps.db, last.reminderId);
+            await ctx.reply(`↩️ Undone: deleted the reminder (${last.reminderId.slice(0, 8)})`);
+          } else if (last.action === 'complete') {
+            const prev = last.previousState ?? {};
+            await updateReminder(deps.db, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
+            await ctx.reply(`↩️ Undone: restored reminder status to ${(prev.status as string) ?? 'not_started'} (${last.reminderId.slice(0, 8)})`);
+          } else if (last.action === 'update') {
+            const prev = last.previousState ?? {};
+            await updateReminder(deps.db, last.reminderId, {
+              status: prev.status as string | undefined,
+              priority: prev.priority as string | null | undefined,
+              project: prev.project as string | null | undefined,
+            });
+            await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
+          } else if (last.action === 'comment') {
+            await deleteComment(deps.db, last.reminderId);
+            await ctx.reply(`↩️ Undone: removed the comment (${last.reminderId.slice(0, 8)})`);
+          } else {
+            await ctx.reply('Cannot undo that action.');
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          await ctx.reply(`Undo failed: ${msg}`);
+        }
+        lastActions.delete(chatId);
       }
 
     } else {
