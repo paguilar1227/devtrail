@@ -205,6 +205,9 @@ export async function checkDailyReport(deps: DailyReportDeps, now?: Date): Promi
     lines.push(formatRemindersMarkdown(dueTodayReminders));
   }
 
+  lines.push('');
+  lines.push(`_${todayStr} | ${config.timezone}_`);
+
   await send(config.telegramBotToken, config.telegramChatId, lines.join('\n'));
   lastReportDate = todayStr;
   return true;
