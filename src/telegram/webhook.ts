@@ -193,6 +193,7 @@ Return ONLY valid JSON.`,
 
   // Natural language router — classify intent before acting
   bot.on('message:text', async (ctx) => {
+    console.log(`[telegram] message:text handler hit: "${ctx.message.text}"`);
     if (ctx.message.text.startsWith('/')) return; // Skip unhandled commands
     const text = ctx.message.text;
     const chatId = String(ctx.chat.id);
@@ -482,6 +483,7 @@ Return ONLY valid JSON.`,
 
   // Register webhook route
   app.post('/telegram/webhook', async (c) => {
+    console.log(`[telegram] webhook route hit`);
     // Verify webhook secret
     const secret = c.req.header('X-Telegram-Bot-Api-Secret-Token');
     if (secret !== deps.config.telegramWebhookSecret) {
