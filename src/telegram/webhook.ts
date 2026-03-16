@@ -234,6 +234,9 @@ Return ONLY valid JSON.`,
       intent = { action: 'capture_thought' };
     }
 
+    const INTENT_PREFIX = '🤖 Interpreted as';
+    const UNDO_HINT = '\n↩️ Wrong? Say "undo" or reply with what you meant.';
+
     if (intent.action === 'create_reminder') {
       const taskContent = intent.content ?? text;
       const embedding = await deps.embeddingProvider.embed(taskContent);
@@ -256,7 +259,7 @@ Return ONLY valid JSON.`,
         intent.dueDate ? `due: ${intent.dueDate.split('T')[0]}` : null,
       ].filter(Boolean);
       const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
-      await ctx.reply(`Reminder created${detailStr} (${result.id.slice(0, 8)})`);
+      await ctx.reply(`${INTENT_PREFIX} new reminder.\nCreated: "${taskContent}"${detailStr} (${result.id.slice(0, 8)})${UNDO_HINT}`);
 
     } else if (intent.action === 'list_reminders') {
       const reminders = await findActiveReminders(deps.db);
@@ -281,7 +284,7 @@ Return ONLY valid JSON.`,
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
         await dbCompleteReminder(deps.db, match.id);
-        await ctx.reply(`✓ Done: ${match.content} (${match.id.slice(0, 8)})`);
+        await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
       }
@@ -303,7 +306,7 @@ Return ONLY valid JSON.`,
           await deps.db.query(`UPDATE reminders SET project = $1, updated_at = now() WHERE id = $2`, [intent.project, match.id]);
         }
         const changes = [intent.status, intent.priority, intent.project ? `→ ${intent.project}` : null].filter(Boolean).join(', ');
-        await ctx.reply(`Updated: ${match.content} (${changes})`);
+        await ctx.reply(`${INTENT_PREFIX} task update.\nUpdated: "${match.content}" (${changes})${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
       }
@@ -315,7 +318,7 @@ Return ONLY valid JSON.`,
       if (match && intent.content) {
         const embedding = await deps.embeddingProvider.embed(intent.content);
         await insertComment(deps.db, { content: intent.content, embedding, reminderId: match.id, source: 'telegram' });
-        await ctx.reply(`Comment added to "${match.content}" (${match.id.slice(0, 8)})`);
+        await ctx.reply(`${INTENT_PREFIX} comment on task.\nAdded to "${match.content}": "${intent.content}"${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}".`);
       }
