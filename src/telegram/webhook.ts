@@ -515,7 +515,7 @@ Return ONLY valid JSON.`,
       return c.json({ error: 'Invalid secret' }, 403);
     }
 
-    const handler = webhookCallback(bot, 'std/http');
+    const handler = webhookCallback(bot, 'std/http', { timeoutMilliseconds: 120_000 });
     return handler(c.req.raw);
   });
 
