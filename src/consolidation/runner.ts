@@ -26,6 +26,7 @@ export interface ConsolidationDeps {
 export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
   const startTime = Date.now();
   const { db, consolidationLLM, embeddingProvider, reviewMode } = deps;
+  console.log(`[consolidation] Starting run...`);
 
   // Guard: skip if nothing to do
   const pendingCaptures = await findCapturesByStatus(db, 'pending');
@@ -42,6 +43,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       [since],
     );
     if (parseInt(updatedFacts.rows[0].count) === 0) {
+      console.log(`[consolidation] Skipped — no pending captures, no completed reminders, no updated facts since last run.`);
       await insertConsolidationLog(db, {
         status: 'no-op', capturesProcessed: 0, factsCreated: 0, factsUpdated: 0,
         insightsCreated: 0, insightsRegenerated: 0, duplicatesDetected: 0, itemsFlagged: 0,
@@ -102,6 +104,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       totalTokens += phase1Tokens;
     }
   } catch (err) {
+    console.error(`[consolidation] Phase 1 FAILED after ${Date.now() - startTime}ms:`, err);
     await insertConsolidationLog(db, {
       status: 'failed', capturesProcessed: pendingCaptures.length,
       factsCreated: totalFactsCreated, factsUpdated: totalFactsUpdated,
@@ -124,7 +127,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       // Estimate Phase 2 cost: ~200 tokens per fact + ~300 per existing insight
       const estimatedPhase2Cost = activeFacts.length * 200 + existingInsights.length * 300;
       if (estimatedPhase2Cost > PHASE2_TOKEN_BUDGET) {
-        // Defer insight generation to next run
+        console.log(`[consolidation] Partial — Phase 2 deferred (estimated ${estimatedPhase2Cost} tokens exceeds ${PHASE2_TOKEN_BUDGET} budget). Phase 1: ${totalFactsCreated} facts created, ${totalFactsUpdated} updated.`);
         await insertConsolidationLog(db, {
           status: 'partial', capturesProcessed: pendingCaptures.length,
           factsCreated: totalFactsCreated, factsUpdated: totalFactsUpdated,
@@ -152,6 +155,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       totalItemsFlagged += insightsCreated; // All new insights are pending_review
     }
   } catch (err) {
+    console.error(`[consolidation] Partial — Phase 2 FAILED after ${Date.now() - startTime}ms. Phase 1 committed (${totalFactsCreated} facts created, ${totalFactsUpdated} updated).`, err);
     await insertConsolidationLog(db, {
       status: 'partial', capturesProcessed: pendingCaptures.length,
       factsCreated: totalFactsCreated, factsUpdated: totalFactsUpdated,
@@ -170,12 +174,15 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
     digestEnabled: deps.digestEnabled,
   });
 
+  const durationMs = Date.now() - startTime;
+  console.log(`[consolidation] Completed in ${durationMs}ms — captures: ${pendingCaptures.length}, facts created: ${totalFactsCreated}, facts updated: ${totalFactsUpdated}, insights created: ${insightsCreated}, insights regenerated: ${insightsRegenerated}, items flagged: ${totalItemsFlagged}, tokens: ${totalTokens}`);
+
   await insertConsolidationLog(db, {
     status: 'success', capturesProcessed: pendingCaptures.length,
     factsCreated: totalFactsCreated, factsUpdated: totalFactsUpdated,
     insightsCreated, insightsRegenerated, duplicatesDetected: 0,
     itemsFlagged: totalItemsFlagged, modelUsed: 'claude-opus-4-6',
-    tokensUsed: totalTokens, durationMs: Date.now() - startTime,
+    tokensUsed: totalTokens, durationMs,
     errorMessage: null,
   });
 
