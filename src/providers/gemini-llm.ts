@@ -2,7 +2,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LLMProvider, LLMMessage, LLMOptions, LLMResponse } from './types.js';
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export class GeminiLLMProvider implements LLMProvider {
   private client: GoogleGenerativeAI;
