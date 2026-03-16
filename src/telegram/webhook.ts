@@ -4,6 +4,7 @@ import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
 import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders } from '../db/reminders.js';
+import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
@@ -40,6 +41,37 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   // Undo tracking — stores the last action per chat for reversal
   const lastActions = new Map<string, { action: string; reminderId: string; previousState?: Record<string, unknown> }>();
 
+  // Todo number maps — stores number → reminder ID per chat for inline keyboard navigation
+  const todoNumberMaps = new Map<string, Map<number, string>>();
+
+  /** Build a numbered todos keyboard + formatted text, storing the number map for the given chat. */
+  function buildTodosMessage(chatId: string, reminders: ReminderRow[]): { text: string; keyboard: InlineKeyboard } {
+    const numMap = new Map<number, string>();
+    todoNumberMaps.set(chatId, numMap);
+
+    // Build numbered text by prepending numbers to top-level tasks
+    const numberedReminders = reminders.map((r) => {
+      if (r.depth === 0) {
+        const n = numMap.size + 1;
+        numMap.set(n, r.id);
+        return { ...r, content: `${n}. ${r.content}` };
+      }
+      return r;
+    });
+
+    const text = formatRemindersMarkdown(numberedReminders);
+
+    const keyboard = new InlineKeyboard();
+    for (const [n] of numMap) {
+      const remId = numMap.get(n)!;
+      const rem = reminders.find((r) => r.id === remId);
+      if (!rem || rem.status === 'done' || rem.status === 'cancelled') continue;
+      keyboard.text(`✓ ${n}`, `done:${remId}`).text(`⏸ ${n}`, `pause:${remId}`).row();
+    }
+
+    return { text, keyboard };
+  }
+
   // Command handlers
   bot.command('remind', async (ctx) => {
     const text = ctx.message?.text ?? '';
@@ -62,6 +94,8 @@ USER TIMEZONE: ${deps.config.timezone}
 
 When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year. If a time is specified, include it. If only a date, use T00:00:00Z.
 
+For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", compute the exact UTC datetime by adding the offset to TODAY'S DATE and current time (assume current time is approximately now). Return the full ISO 8601 datetime string.
+
 Return JSON:
 {
   "content": "the clean task text without tags or metadata",
@@ -76,6 +110,8 @@ Examples:
 - "[project:meals] Research high-protein recipes P1" → {"content":"Research high-protein recipes","project":"meals","section":null,"priority":"P1","category":"health","dueDate":null}
 - "Fix login bug by 2026-03-20 [project:work, section:backend]" → {"content":"Fix login bug","project":"work","section":"backend","priority":null,"category":"work","dueDate":"2026-03-20T00:00:00Z"}
 - "Buy groceries" → {"content":"Buy groceries","project":null,"section":null,"priority":null,"category":"personal","dueDate":null}
+- "Call dentist in 30 minutes" → {"content":"Call dentist","project":null,"section":null,"priority":null,"category":"health","dueDate":"<NOW + 30min as ISO 8601>"}
+- "Check oven in 1 hour" → {"content":"Check oven","project":null,"section":null,"priority":null,"category":"personal","dueDate":"<NOW + 1hr as ISO 8601>"}
 
 Return ONLY valid JSON.`,
           responseFormat: 'json',
@@ -83,8 +119,9 @@ Return ONLY valid JSON.`,
         },
       );
       parsed = JSON.parse(parseResponse.content);
-    } catch {
+    } catch (err) {
       // Fallback: use raw text, no structured fields
+      console.error('[remind-parser] LLM parse failed:', err);
       parsed = { content, project: null, section: null, priority: null, category: null, dueDate: null };
     }
 
@@ -127,20 +164,8 @@ Return ONLY valid JSON.`,
       return;
     }
 
-    const text = formatRemindersMarkdown(reminders);
-
-    // Build inline keyboard — one row per top-level task with Done + Pause buttons
-    const keyboard = new InlineKeyboard();
-    for (const r of reminders) {
-      if (r.depth === 0) {
-        const label = r.content.length > 30 ? r.content.slice(0, 27) + '…' : r.content;
-        keyboard
-          .text(`✓ ${label}`, `done:${r.id}`)
-          .text(`⏸ ${label}`, `pause:${r.id}`)
-          .row();
-      }
-    }
-
+    const chatId = String(ctx.chat.id);
+    const { text, keyboard } = buildTodosMessage(chatId, reminders);
     await ctx.reply(text, { reply_markup: keyboard });
   });
 
@@ -153,15 +178,30 @@ Return ONLY valid JSON.`,
     }
     const action = data.slice(0, colonIdx);
     const reminderId = data.slice(colonIdx + 1);
+    const chatId = String(ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id ?? '');
 
     if (action === 'done') {
       await dbCompleteReminder(deps.db, reminderId);
       await ctx.answerCallbackQuery({ text: 'Marked as done ✓' });
-      await ctx.editMessageText(`${ctx.callbackQuery.message?.text ?? ''}\n\n✓ Task marked done.`);
+      // Re-render the full list with updated statuses
+      const reminders = await findActiveReminders(deps.db);
+      if (reminders.length === 0) {
+        await ctx.editMessageText('All done! No active reminders.');
+      } else {
+        const { text, keyboard } = buildTodosMessage(chatId, reminders);
+        await ctx.editMessageText(text, { reply_markup: keyboard });
+      }
     } else if (action === 'pause') {
       await updateReminder(deps.db, reminderId, { status: 'paused' });
       await ctx.answerCallbackQuery({ text: 'Paused ⏸' });
-      await ctx.editMessageText(`${ctx.callbackQuery.message?.text ?? ''}\n\n⏸ Task paused.`);
+      // Re-render the full list with updated statuses
+      const reminders = await findActiveReminders(deps.db);
+      if (reminders.length === 0) {
+        await ctx.editMessageText('No active reminders.');
+      } else {
+        const { text, keyboard } = buildTodosMessage(chatId, reminders);
+        await ctx.editMessageText(text, { reply_markup: keyboard });
+      }
     } else {
       await ctx.answerCallbackQuery({ text: 'Unknown action' });
     }
@@ -258,6 +298,8 @@ TODAY'S DATE: ${new Date().toISOString().split('T')[0]} (${new Intl.DateTimeForm
 USER TIMEZONE: ${deps.config.timezone}
 
 When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year.
+
+For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", compute the exact UTC datetime by adding the offset to today's current time. Return the full ISO 8601 datetime string.
 
 Return JSON with one of these actions:
 
@@ -358,14 +400,8 @@ Return ONLY valid JSON.`,
         await ctx.reply(intent.dueFilter ? `No ${intent.dueFilter === 'overdue' ? 'overdue' : 'due'} reminders.` : 'No active reminders.');
         return;
       }
-      const formatted = header + formatRemindersMarkdown(reminders);
-      const keyboard = new InlineKeyboard();
-      for (const r of reminders) {
-        if (r.depth === 0) {
-          const label = r.content.length > 30 ? r.content.slice(0, 27) + '…' : r.content;
-          keyboard.text(`✓ ${label}`, `done:${r.id}`).text(`⏸ ${label}`, `pause:${r.id}`).row();
-        }
-      }
+      const { text: todosText, keyboard } = buildTodosMessage(chatId, reminders);
+      const formatted = header + todosText;
       await ctx.reply(formatted, { reply_markup: keyboard });
 
     } else if (intent.action === 'complete_reminder') {
