@@ -22,6 +22,7 @@ import { GeminiLLMProvider } from './providers/gemini-llm.js';
 import { AnthropicLLMProvider } from './providers/anthropic-llm.js';
 import { createBlobStorage } from './storage/blob.js';
 import { createApp } from './app.js';
+import { startDueDateChecker, startDailyReport } from './notifications/due-date-checker.js';
 
 const config = loadConfig();
 
@@ -64,5 +65,10 @@ const app = createApp(deps);
 runMigrations().then(() => {
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Open Brain v2 running on http://localhost:${info.port}`);
+
+    // Start background notification checkers
+    startDueDateChecker({ db: deps.db, config });
+    startDailyReport({ db: deps.db, config });
+    console.log(`Due date checker and daily report started (timezone: ${config.timezone}, report at: ${config.dailyReportTime})`);
   });
 });
