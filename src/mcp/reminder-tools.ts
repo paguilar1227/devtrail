@@ -13,6 +13,11 @@ import {
   listProjects,
 } from '../db/reminders.js';
 import { insertComment } from '../db/reminder-comments.js';
+import {
+  formatRemindersMarkdown,
+  formatReminderDetailMarkdown,
+  type SubtaskCount,
+} from '../notifications/format-reminders.js';
 
 export function registerReminderTools(server: McpServer, deps: AppDeps): void {
   // 1. create_reminder
@@ -90,7 +95,25 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
         top_level_only,
         limit,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(reminders, null, 2) }] };
+
+      let subtaskCounts: SubtaskCount[] = [];
+      if (reminders.length > 0) {
+        const ids = reminders.map((r) => r.id);
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const result = await deps.db.query(
+          `SELECT parent_id AS "reminderId",
+                  COUNT(*)::int AS total,
+                  COUNT(*) FILTER (WHERE status = 'done')::int AS done
+           FROM reminders
+           WHERE parent_id IN (${placeholders}) AND archived = false
+           GROUP BY parent_id`,
+          ids,
+        );
+        subtaskCounts = result.rows;
+      }
+
+      const text = formatRemindersMarkdown(reminders, subtaskCounts);
+      return { content: [{ type: 'text' as const, text }] };
     },
   );
 
@@ -106,7 +129,8 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       if (!detail) {
         return { content: [{ type: 'text' as const, text: `Reminder ${id} not found` }] };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(detail, null, 2) }] };
+      const text = formatReminderDetailMarkdown(detail, detail.comments, detail.subtasks);
+      return { content: [{ type: 'text' as const, text }] };
     },
   );
 
