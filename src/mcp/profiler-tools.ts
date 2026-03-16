@@ -154,7 +154,8 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       if (!result.success) {
         return { content: [{ type: 'text' as const, text: `Skipped: ${result.reason}` }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: `Captured! ID: ${result.captureId}` }] };
+      const warningText = result.warnings?.length ? `\nWarnings:\n${result.warnings.map((w) => `- ${w}`).join('\n')}` : '';
+      return { content: [{ type: 'text' as const, text: `Captured! ID: ${result.captureId}${warningText}` }] };
     },
   );
 

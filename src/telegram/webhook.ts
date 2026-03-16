@@ -503,7 +503,8 @@ Return ONLY valid JSON.`,
         captureFn,
         downloadFile,
       );
-      await ctx.reply(result.success ? `Photo captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+      const photoWarnings = result.warnings?.length ? `\n⚠️ ${result.warnings.join('\n⚠️ ')}` : '';
+      await ctx.reply(result.success ? `Photo captured! (${result.captureId?.slice(0, 8)})${photoWarnings}` : `Skipped: ${result.reason}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[telegram] Photo handler error: ${msg}`, err);
@@ -524,7 +525,8 @@ Return ONLY valid JSON.`,
           return response.content;
         },
       );
-      await ctx.reply(result.success ? `Voice captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+      const voiceWarnings = result.warnings?.length ? `\n⚠️ ${result.warnings.join('\n⚠️ ')}` : '';
+      await ctx.reply(result.success ? `Voice captured! (${result.captureId?.slice(0, 8)})${voiceWarnings}` : `Skipped: ${result.reason}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[telegram] Voice handler error: ${msg}`, err);
@@ -607,7 +609,8 @@ Return ONLY valid JSON.`,
           }
         },
       );
-      await ctx.reply(result.success ? `Document captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
+      const docWarnings = result.warnings?.length ? `\n⚠️ ${result.warnings.join('\n⚠️ ')}` : '';
+      await ctx.reply(result.success ? `Document captured! (${result.captureId?.slice(0, 8)})${docWarnings}` : `Skipped: ${result.reason}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[telegram] Document handler error: ${msg}`, err);

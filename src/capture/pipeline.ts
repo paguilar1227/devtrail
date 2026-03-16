@@ -27,6 +27,7 @@ export interface PipelineResult {
   success: boolean;
   captureId?: string;
   reason?: string;
+  warnings?: string[];
 }
 
 export async function runCapturePipeline(input: PipelineInput): Promise<PipelineResult> {
@@ -47,16 +48,21 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   // Step 3: Convert files to Gemini-supported MIME types, then generate embedding
   // NOTE: conversion happens AFTER hash check so we always hash the original bytes.
   //       The original file (not converted) is what gets uploaded to blob storage.
+  const warnings: string[] = [];
   const embeddingFiles = files.length > 0
     ? await Promise.all(
         files.map(async (f) => {
           try {
             const converted = await convertForEmbedding(f.data, f.contentType);
             // If ffmpeg wasn't available the returned buffer is empty — skip that file
-            if (converted.data.length === 0) return null;
+            if (converted.data.length === 0) {
+              warnings.push(`File "${f.filename}" (${f.contentType}): conversion failed, stored but not embedded.`);
+              return null;
+            }
             return { data: converted.data, mimeType: converted.mimeType };
           } catch {
             // Unsupported type — skip embedding this file, embed text only
+            warnings.push(`File "${f.filename}" (${f.contentType}): unsupported type for embedding, stored but not embedded.`);
             return null;
           }
         }),
@@ -104,5 +110,5 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     source,
   });
 
-  return { success: true, captureId: result.id };
+  return { success: true, captureId: result.id, warnings: warnings.length > 0 ? warnings : undefined };
 }

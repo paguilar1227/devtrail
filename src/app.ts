@@ -178,7 +178,7 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: result.reason }, 409);
     }
 
-    return c.json({ captureId: result.captureId }, 201);
+    return c.json({ captureId: result.captureId, ...(result.warnings?.length && { warnings: result.warnings }) }, 201);
   });
 
   // MCP routes
