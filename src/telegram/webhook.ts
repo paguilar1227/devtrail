@@ -506,17 +506,52 @@ Return ONLY valid JSON.`,
   // (e.g., 500ms) to collect all items before processing as a single capture.
   // Deferred to implementation — requires stateful message buffering.
 
+  // Dedup guard — track recently processed update IDs to prevent retry loops.
+  // Telegram retries if we don't respond within its timeout (~60s).
+  // We respond 200 immediately and process in the background, but if a retry
+  // still arrives, this set ensures we don't process the same update twice.
+  const processedUpdates = new Set<number>();
+  const MAX_PROCESSED_CACHE = 1000;
+
   // Register webhook route
   app.post('/telegram/webhook', async (c) => {
-    console.log(`[telegram] webhook route hit`);
     // Verify webhook secret
     const secret = c.req.header('X-Telegram-Bot-Api-Secret-Token');
     if (secret !== deps.config.telegramWebhookSecret) {
       return c.json({ error: 'Invalid secret' }, 403);
     }
 
-    const handler = webhookCallback(bot, 'std/http', { timeoutMilliseconds: 120_000 });
-    return handler(c.req.raw);
+    // Parse the update to check for duplicates
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ ok: true });
+    }
+
+    const updateId = body?.update_id;
+    if (updateId && processedUpdates.has(updateId)) {
+      console.log(`[telegram] Skipping duplicate update_id: ${updateId}`);
+      return c.json({ ok: true }); // Respond 200 so Telegram stops retrying
+    }
+
+    if (updateId) {
+      processedUpdates.add(updateId);
+      // Evict old entries to prevent unbounded memory growth
+      if (processedUpdates.size > MAX_PROCESSED_CACHE) {
+        const oldest = processedUpdates.values().next().value;
+        if (oldest !== undefined) processedUpdates.delete(oldest);
+      }
+    }
+
+    // Process in the background — respond 200 immediately to prevent Telegram retries
+    // The bot handlers send replies directly via the Telegram API, so they don't need
+    // the webhook response.
+    bot.handleUpdate(body).catch((err) => {
+      console.error(`[telegram] Error processing update ${updateId}:`, err);
+    });
+
+    return c.json({ ok: true });
   });
 
   return bot;
