@@ -574,21 +574,37 @@ Return ONLY valid JSON.`,
         captureFn,
         downloadFile,
         async (fileBuffer, mimeType) => {
-          // For text-based formats, extract text and summarize as text
-          const textTypes = ['text/html', 'text/plain', 'text/csv', 'text/xml', 'text/markdown', 'application/json'];
-          if (textTypes.includes(mimeType) || mimeType === 'application/octet-stream') {
-            const textContent = fileBuffer.toString('utf-8').slice(0, 30000); // Limit to ~30K chars
+          // Gemini-supported binary types for inline data
+          const geminiSupported = new Set([
+            'application/pdf',
+            'image/png', 'image/jpeg',
+            'audio/mpeg', 'audio/wav',
+            'video/mp4', 'video/quicktime',
+          ]);
+          // Text-based types we can read as UTF-8
+          const textTypes = new Set([
+            'text/html', 'text/plain', 'text/csv', 'text/xml', 'text/markdown',
+            'application/json', 'application/rtf',
+          ]);
+
+          if (geminiSupported.has(mimeType)) {
+            const response = await deps.metadataLLM.complete(
+              [{ role: 'user', content: [{ type: 'text', text: `Summarize this ${mimeType} document.` }, { type: 'image', data: fileBuffer, mimeType }] }],
+            );
+            return response.content;
+          } else if (textTypes.has(mimeType)) {
+            const textContent = fileBuffer.toString('utf-8').slice(0, 30000);
             const response = await deps.metadataLLM.complete(
               [{ role: 'user', content: `Summarize this document:\n\n${textContent}` }],
               { maxTokens: 1024 },
             );
             return response.content;
+          } else {
+            // Unsupported — notify user, skip summarization, use filename as content
+            console.warn(`[telegram] Unsupported MIME type for summarization: ${mimeType} (file: ${doc.file_name})`);
+            await ctx.reply(`⚠️ MIME type "${mimeType}" is not supported for summarization. File will be stored but not summarized. Let me know so this type can be added.`);
+            return `[Unsummarized document: ${doc.file_name ?? 'unknown'} (${mimeType})]`;
           }
-          // For binary formats Gemini supports (PDF, images), send as inline data
-          const response = await deps.metadataLLM.complete(
-            [{ role: 'user', content: [{ type: 'text', text: `Summarize this ${mimeType} document.` }, { type: 'image', data: fileBuffer, mimeType }] }],
-          );
-          return response.content;
         },
       );
       await ctx.reply(result.success ? `Document captured! (${result.captureId?.slice(0, 8)})` : `Skipped: ${result.reason}`);
