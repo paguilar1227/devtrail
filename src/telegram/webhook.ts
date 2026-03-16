@@ -188,18 +188,146 @@ Return ONLY valid JSON.`,
     await ctx.reply('Review feature coming soon.');
   });
 
-  // Message handlers (non-command text → capture)
+  // Natural language router — classify intent before acting
   bot.on('message:text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return; // Skip unhandled commands
-    const result = await captureFn({
-      content: ctx.message.text,
-      files: [],
-      source: 'telegram',
-    });
-    if (result.success) {
-      await ctx.reply(`Captured! (${result.captureId?.slice(0, 8)})`);
+    const text = ctx.message.text;
+
+    // Use LLM to classify intent
+    let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string };
+    try {
+      const classifyResponse = await deps.metadataLLM.complete(
+        [{ role: 'user', content: text }],
+        {
+          systemPrompt: `You are an intent classifier for a personal assistant. The user sent a message. Determine if it's a task/reminder action or a thought to capture.
+
+Return JSON with one of these actions:
+
+{"action": "create_reminder", "content": "clean task text", "project": "project or null", "section": "section or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
+  Triggers: "add", "remind me", "I need to", "todo", "don't forget", "put on my list", "task:", creating any kind of task or reminder
+
+{"action": "list_reminders", "project": "filter by project or null", "status": "filter by status or null"}
+  Triggers: "what are my todos", "show my tasks", "what am I working on", "my reminders", "what's on my plate"
+
+{"action": "complete_reminder", "taskSearch": "description of which task to complete"}
+  Triggers: "mark X as done", "finished X", "completed X", "done with X", "X is done"
+
+{"action": "update_reminder", "taskSearch": "description of which task", "status": "new status or null", "priority": "new priority or null", "project": "move to project or null"}
+  Triggers: "change X to", "pause X", "block X", "move X to", "set priority of X"
+
+{"action": "add_comment", "taskSearch": "description of which task", "content": "the comment text"}
+  Triggers: "update on X:", "note on X:", "progress on X:", "regarding X:"
+
+{"action": "capture_thought"}
+  Default — anything that isn't a task action. Personal observations, opinions, experiences, preferences, feelings, information sharing.
+
+IMPORTANT: Lean toward capture_thought for ambiguous cases. Only classify as a task action if the intent is clear. "I love pizza" is a thought. "Add buy pizza to my list" is a task.
+
+Return ONLY valid JSON.`,
+          responseFormat: 'json',
+          maxTokens: 256,
+        },
+      );
+      intent = JSON.parse(classifyResponse.content);
+    } catch {
+      // If classification fails, default to capture
+      intent = { action: 'capture_thought' };
+    }
+
+    if (intent.action === 'create_reminder') {
+      const taskContent = intent.content ?? text;
+      const embedding = await deps.embeddingProvider.embed(taskContent);
+      const result = await insertReminder(deps.db, {
+        content: taskContent,
+        embedding,
+        category: intent.category ?? null,
+        project: intent.project ?? null,
+        section: intent.section ?? null,
+        parentId: null,
+        depth: 0,
+        priority: intent.priority ?? null,
+        source: 'telegram',
+        sourceContext: null,
+        dueDate: intent.dueDate ? new Date(intent.dueDate) : null,
+      });
+      const details = [
+        intent.project ? `project: ${intent.project}` : null,
+        intent.priority,
+        intent.dueDate ? `due: ${intent.dueDate.split('T')[0]}` : null,
+      ].filter(Boolean);
+      const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+      await ctx.reply(`Reminder created${detailStr} (${result.id.slice(0, 8)})`);
+
+    } else if (intent.action === 'list_reminders') {
+      const reminders = await findActiveReminders(deps.db);
+      if (reminders.length === 0) {
+        await ctx.reply('No active reminders.');
+        return;
+      }
+      const formatted = formatRemindersMarkdown(reminders);
+      const keyboard = new InlineKeyboard();
+      for (const r of reminders) {
+        if (r.depth === 0) {
+          const label = r.content.length > 30 ? r.content.slice(0, 27) + '…' : r.content;
+          keyboard.text(`✓ ${label}`, `done:${r.id}`).text(`⏸ ${label}`, `pause:${r.id}`).row();
+        }
+      }
+      await ctx.reply(formatted, { reply_markup: keyboard });
+
+    } else if (intent.action === 'complete_reminder') {
+      // Search for the task by description
+      const reminders = await findActiveReminders(deps.db);
+      const search = (intent.taskSearch ?? '').toLowerCase();
+      const match = reminders.find((r) => r.content.toLowerCase().includes(search));
+      if (match) {
+        await dbCompleteReminder(deps.db, match.id);
+        await ctx.reply(`✓ Done: ${match.content} (${match.id.slice(0, 8)})`);
+      } else {
+        await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
+      }
+
+    } else if (intent.action === 'update_reminder') {
+      const reminders = await findActiveReminders(deps.db);
+      const search = (intent.taskSearch ?? '').toLowerCase();
+      const match = reminders.find((r) => r.content.toLowerCase().includes(search));
+      if (match) {
+        await updateReminder(deps.db, match.id, {
+          status: intent.status,
+          dueDate: intent.dueDate ? new Date(intent.dueDate) : undefined,
+        });
+        // Handle priority separately since updateReminder doesn't cover it
+        if (intent.priority) {
+          await deps.db.query(`UPDATE reminders SET priority = $1, updated_at = now() WHERE id = $2`, [intent.priority, match.id]);
+        }
+        if (intent.project) {
+          await deps.db.query(`UPDATE reminders SET project = $1, updated_at = now() WHERE id = $2`, [intent.project, match.id]);
+        }
+        const changes = [intent.status, intent.priority, intent.project ? `→ ${intent.project}` : null].filter(Boolean).join(', ');
+        await ctx.reply(`Updated: ${match.content} (${changes})`);
+      } else {
+        await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
+      }
+
+    } else if (intent.action === 'add_comment') {
+      const reminders = await findActiveReminders(deps.db);
+      const search = (intent.taskSearch ?? '').toLowerCase();
+      const match = reminders.find((r) => r.content.toLowerCase().includes(search));
+      if (match && intent.content) {
+        const embedding = await deps.embeddingProvider.embed(intent.content);
+        await insertComment(deps.db, { content: intent.content, embedding, reminderId: match.id, source: 'telegram' });
+        await ctx.reply(`Comment added to "${match.content}" (${match.id.slice(0, 8)})`);
+      } else {
+        await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}".`);
+      }
+
     } else {
-      await ctx.reply(`Skipped: ${result.reason}`);
+      // Default: capture as thought
+      const result = await captureFn({ content: text, files: [], source: 'telegram' });
+      if (result.success) {
+        await ctx.reply(`Captured! (${result.captureId?.slice(0, 8)})`);
+      } else {
+        await ctx.reply(`Skipped: ${result.reason}`);
+      }
     }
   });
 
