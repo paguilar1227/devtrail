@@ -506,6 +506,9 @@ Return ONLY valid JSON.`,
   // (e.g., 500ms) to collect all items before processing as a single capture.
   // Deferred to implementation — requires stateful message buffering.
 
+  // Initialize bot info (required for bot.handleUpdate)
+  bot.init().catch((err) => console.error('[telegram] Bot init failed:', err));
+
   // Dedup guard — track recently processed update IDs to prevent retry loops.
   // Telegram retries if we don't respond within its timeout (~60s).
   // We respond 200 immediately and process in the background, but if a retry
