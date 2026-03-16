@@ -41,25 +41,68 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const text = ctx.message?.text ?? '';
     const content = text.replace(/^\/remind\s+/, '').trim();
     if (!content) {
-      await ctx.reply('Usage: /remind <text>');
+      await ctx.reply('Usage: /remind <text>\nExamples:\n  /remind Buy groceries\n  /remind [project:meals] Research high-protein recipes P1\n  /remind Fix login bug by Friday [project:work, section:backend]');
       return;
     }
 
-    const embedding = await deps.embeddingProvider.embed(content);
+    // Use LLM to parse natural language into structured fields
+    let parsed: { content: string; project: string | null; section: string | null; priority: string | null; category: string | null; dueDate: string | null };
+    try {
+      const parseResponse = await deps.metadataLLM.complete(
+        [{ role: 'user', content }],
+        {
+          systemPrompt: `Parse this reminder text into structured fields. Extract any project, section, priority, category, and due date mentioned naturally or via tags like [project:name].
+
+Return JSON:
+{
+  "content": "the clean task text without tags or metadata",
+  "project": "project name or null",
+  "section": "section name or null",
+  "priority": "P1 or P2 or P3 or null",
+  "category": "work|personal|health|learning|finance|social or null",
+  "dueDate": "ISO 8601 date string or null"
+}
+
+Examples:
+- "[project:meals] Research high-protein recipes P1" → {"content":"Research high-protein recipes","project":"meals","section":null,"priority":"P1","category":"health","dueDate":null}
+- "Fix login bug by 2026-03-20 [project:work, section:backend]" → {"content":"Fix login bug","project":"work","section":"backend","priority":null,"category":"work","dueDate":"2026-03-20T00:00:00Z"}
+- "Buy groceries" → {"content":"Buy groceries","project":null,"section":null,"priority":null,"category":"personal","dueDate":null}
+
+Return ONLY valid JSON.`,
+          responseFormat: 'json',
+          maxTokens: 256,
+        },
+      );
+      parsed = JSON.parse(parseResponse.content);
+    } catch {
+      // Fallback: use raw text, no structured fields
+      parsed = { content, project: null, section: null, priority: null, category: null, dueDate: null };
+    }
+
+    const embedding = await deps.embeddingProvider.embed(parsed.content);
     const result = await insertReminder(deps.db, {
-      content,
+      content: parsed.content,
       embedding,
-      category: null, // Auto-determined later
-      project: null,
-      section: null,
+      category: parsed.category,
+      project: parsed.project,
+      section: parsed.section,
       parentId: null,
       depth: 0,
-      priority: null,
+      priority: parsed.priority,
       source: 'telegram',
       sourceContext: null,
-      dueDate: null,
+      dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
     });
-    await ctx.reply(`Reminder created (${result.id.slice(0, 8)})`);
+
+    // Build confirmation with parsed details
+    const details = [
+      parsed.project ? `project: ${parsed.project}` : null,
+      parsed.section ? `section: ${parsed.section}` : null,
+      parsed.priority ? parsed.priority : null,
+      parsed.dueDate ? `due: ${parsed.dueDate.split('T')[0]}` : null,
+    ].filter(Boolean);
+    const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+    await ctx.reply(`Reminder created${detailStr} (${result.id.slice(0, 8)})`);
   });
 
   bot.command('todos', async (ctx) => {
