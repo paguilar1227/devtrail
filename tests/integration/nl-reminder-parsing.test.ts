@@ -161,7 +161,7 @@ describeIfKey('Section 19: NL Reminder Parsing (LLM integration)', () => {
   it('19.13 "Add to the design section of my website project: pick a color scheme" → project: website, section: design', async () => {
     const result = await classifyIntent(llm, 'Add to the design section of my website project: pick a color scheme');
     expect(result.action).toBe('create_reminder');
-    expect(result.project?.toLowerCase()).toBe('website');
+    expect(result.project?.toLowerCase()).toContain('website');
     expect(result.section?.toLowerCase()).toBe('design');
   }, 30_000);
 

@@ -17,7 +17,7 @@ For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours",
 
 Return JSON with one of these actions:
 
-{"action": "create_reminder", "content": "clean task text", "project": "project or null", "section": "section or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
+{"action": "create_reminder", "content": "clean task text", "project": "project name as a short slug without possessives (e.g. 'fitness' not 'my fitness') or null", "section": "section name as a short slug or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
   Triggers: "add", "remind me", "I need to", "todo", "don't forget", "put on my list", "task:", any mention of a scheduled event, meeting, appointment, deadline, or action with a date/time. If the message describes something the user needs to DO or ATTEND, it's a reminder — not a thought.
 
 {"action": "list_reminders", "project": "filter by project or null", "status": "filter by status or null", "dueFilter": "today|overdue|this_week or null"}
