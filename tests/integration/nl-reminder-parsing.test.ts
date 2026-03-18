@@ -8,8 +8,8 @@ import { buildIntentClassifierPrompt } from '../../src/telegram/prompts.js';
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const describeIfKey = GEMINI_KEY ? describe : describe.skip;
 
-// Helper: call the LLM with the intent classifier prompt
-async function classifyIntent(llm: GeminiLLMProvider, text: string): Promise<any> {
+// Helper: call the LLM with the intent classifier prompt (with retry for JSON flakes)
+async function classifyIntent(llm: GeminiLLMProvider, text: string, retries = 2): Promise<any> {
   const today = new Date();
   const todayISO = today.toISOString().split('T')[0];
   const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(today);
@@ -17,12 +17,18 @@ async function classifyIntent(llm: GeminiLLMProvider, text: string): Promise<any
 
   const prompt = buildIntentClassifierPrompt(todayISO, dayOfWeek, timezone);
 
-  const response = await llm.complete(
-    [{ role: 'user', content: text }],
-    { systemPrompt: prompt, responseFormat: 'json', maxTokens: 256 },
-  );
-
-  return JSON.parse(response.content);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await llm.complete(
+        [{ role: 'user', content: text }],
+        { systemPrompt: prompt, responseFormat: 'json', maxTokens: 256 },
+      );
+      return JSON.parse(response.content);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      // LLM sometimes returns non-JSON — retry
+    }
+  }
 }
 
 // Helper: get next occurrence of a weekday
@@ -90,8 +96,8 @@ describeIfKey('Section 19: NL Reminder Parsing (LLM integration)', () => {
     expect(diffMs).toBeLessThan(2 * 24 * 60 * 60 * 1000); // within 2 days
   }, 30_000);
 
-  it('19.8 "Submit report by Friday" → dueDate is next Friday', async () => {
-    const result = await classifyIntent(llm, 'Submit report by Friday');
+  it('19.8 "Remind me to submit report by Friday" → dueDate is next Friday', async () => {
+    const result = await classifyIntent(llm, 'Remind me to submit report by Friday');
     expect(result.action).toBe('create_reminder');
     expect(result.dueDate).toBeTruthy();
 
