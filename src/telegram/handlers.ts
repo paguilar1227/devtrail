@@ -11,7 +11,7 @@ export interface TelegramPhotoInput {
   chatId: string;
 }
 
-type CaptureFn = (input: { content: string; files: Array<{ data: Buffer; contentType: string; filename: string }>; source: string }) => Promise<{ success: boolean; captureId?: string; reason?: string }>;
+type CaptureFn = (input: { content: string; files: Array<{ data: Buffer; contentType: string; filename: string }>; source: string }) => Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }>;
 type DownloadFn = (fileId: string) => Promise<Buffer>;
 type CreateReminderFn = (content: string, source: string) => Promise<{ id: string }>;
 type ListRemindersFn = () => Promise<Array<{ id: string; content: string; status: string }>>;
@@ -21,7 +21,7 @@ type AddCommentFn = (reminderId: string, content: string, source: string) => Pro
 export async function handleTextMessage(
   input: TelegramTextInput,
   capture: CaptureFn,
-): Promise<{ success: boolean; captureId?: string; reason?: string }> {
+): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
   return capture({
     content: input.text,
     files: [],
@@ -79,7 +79,7 @@ export async function handlePhotoMessage(
   input: TelegramPhotoInput,
   capture: CaptureFn,
   downloadFile: DownloadFn,
-): Promise<{ success: boolean; captureId?: string; reason?: string }> {
+): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
   const photoBuffer = await downloadFile(input.fileId);
 
   return capture({
@@ -94,7 +94,7 @@ export async function handleVoiceMessage(
   capture: CaptureFn,
   downloadFile: DownloadFn,
   transcribe: (audio: Buffer) => Promise<string>,
-): Promise<{ success: boolean; captureId?: string; reason?: string }> {
+): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
   const audioBuffer = await downloadFile(input.fileId);
   const transcription = await transcribe(audioBuffer);
 
@@ -110,7 +110,7 @@ export async function handleDocumentMessage(
   capture: CaptureFn,
   downloadFile: DownloadFn,
   summarize: (content: Buffer, mimeType: string) => Promise<string>,
-): Promise<{ success: boolean; captureId?: string; reason?: string }> {
+): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
   const fileBuffer = await downloadFile(input.fileId);
   const summary = await summarize(fileBuffer, input.mimeType);
 
