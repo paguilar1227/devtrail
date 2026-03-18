@@ -3,7 +3,7 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
@@ -16,7 +16,7 @@ import {
   handleVoiceMessage,
   handleDocumentMessage,
 } from './handlers.js';
-import { formatRemindersMarkdown } from '../notifications/format-reminders.js';
+import { formatRemindersMarkdown, formatSingleReminder } from '../notifications/format-reminders.js';
 import { buildIntentClassifierPrompt, buildReminderParserPrompt } from './prompts.js';
 import { resolveMimeType, getSummarizationRoute } from './mime-utils.js';
 
@@ -47,28 +47,45 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   const todoNumberMaps = new Map<string, Map<number, string>>();
 
   /** Build a numbered todos keyboard + formatted text, storing the number map for the given chat. */
-  function buildTodosMessage(chatId: string, reminders: ReminderRow[]): { text: string; keyboard: InlineKeyboard } {
+  async function buildTodosMessage(chatId: string, reminders: ReminderRow[]): Promise<{ text: string; keyboard: InlineKeyboard }> {
     const numMap = new Map<number, string>();
     todoNumberMaps.set(chatId, numMap);
 
-    // Build numbered text by prepending numbers to top-level tasks
-    const numberedReminders = reminders.map((r) => {
+    // Assign numbers to top-level tasks (the formatter will use them)
+    let n = 0;
+    for (const r of reminders) {
       if (r.depth === 0) {
-        const n = numMap.size + 1;
+        n++;
         numMap.set(n, r.id);
-        return { ...r, content: `${n}. ${r.content}` };
       }
-      return r;
-    });
+    }
 
-    const text = formatRemindersMarkdown(numberedReminders);
+    // Build subtask map: parentId → children
+    const subtasksMap = new Map<string, ReminderRow[]>();
+    for (const r of reminders) {
+      if (r.depth === 0) {
+        const children = await findSubtasks(deps.db, r.id);
+        if (children.length > 0) {
+          subtasksMap.set(r.id, children);
+          // Also fetch grandchildren for each child
+          for (const child of children) {
+            const grandchildren = await findSubtasks(deps.db, child.id);
+            if (grandchildren.length > 0) {
+              subtasksMap.set(child.id, grandchildren);
+            }
+          }
+        }
+      }
+    }
+
+    const text = formatRemindersMarkdown(reminders, subtasksMap);
 
     const keyboard = new InlineKeyboard();
-    for (const [n] of numMap) {
-      const remId = numMap.get(n)!;
+    for (const [num] of numMap) {
+      const remId = numMap.get(num)!;
       const rem = reminders.find((r) => r.id === remId);
       if (!rem || rem.status === 'done' || rem.status === 'cancelled') continue;
-      keyboard.text(`✓ ${n}`, `done:${remId}`).text(`⏸ ${n}`, `pause:${remId}`).row();
+      keyboard.text(`✓ ${num}`, `done:${remId}`).text(`⏸ ${num}`, `pause:${remId}`).row();
     }
 
     return { text, keyboard };
@@ -118,20 +135,30 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
     });
 
-    // Build confirmation with parsed details
-    const details = [
-      parsed.project ? `project: ${parsed.project}` : null,
-      parsed.section ? `section: ${parsed.section}` : null,
-      parsed.priority ? parsed.priority : null,
-      parsed.dueDate ? `due: ${(() => {
-        const d = new Date(parsed.dueDate!);
-        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: deps.config.timezone });
-        const hasTime = !parsed.dueDate!.endsWith('T00:00:00Z') && !parsed.dueDate!.endsWith('T00:00:00.000Z');
-        return hasTime ? `${date} at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone })}` : date;
-      })()}` : null,
-    ].filter(Boolean);
-    const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
-    await ctx.reply(`Reminder created${detailStr} (${result.id.slice(0, 8)})`);
+    // Build formatted confirmation showing the reminder as it will appear
+    const createdReminder: ReminderRow = {
+      id: result.id,
+      content: parsed.content,
+      embedding: [],
+      metadata: null,
+      category: parsed.category,
+      project: parsed.project,
+      section: parsed.section,
+      parent_id: null,
+      depth: 0,
+      status: 'not_started',
+      priority: parsed.priority,
+      source_context: null,
+      source: 'telegram',
+      archived: false,
+      due_date: parsed.dueDate ? new Date(parsed.dueDate) : null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    const projectLine = parsed.project
+      ? `\n  📋 ${parsed.project}${parsed.section ? ` / ${parsed.section}` : ''}`
+      : '';
+    await ctx.reply(`Reminder created.\n  ${formatSingleReminder(createdReminder)}${projectLine}`);
   });
 
   bot.command('todos', async (ctx) => {
@@ -143,7 +170,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     }
 
     const chatId = String(ctx.chat.id);
-    const { text, keyboard } = buildTodosMessage(chatId, reminders);
+    const { text, keyboard } = await buildTodosMessage(chatId, reminders);
     await ctx.reply(text, { reply_markup: keyboard });
   });
 
@@ -166,7 +193,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       if (reminders.length === 0) {
         await ctx.editMessageText('All done! No active reminders.');
       } else {
-        const { text, keyboard } = buildTodosMessage(chatId, reminders);
+        const { text, keyboard } = await buildTodosMessage(chatId, reminders);
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
     } else if (action === 'pause') {
@@ -177,7 +204,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       if (reminders.length === 0) {
         await ctx.editMessageText('No active reminders.');
       } else {
-        const { text, keyboard } = buildTodosMessage(chatId, reminders);
+        const { text, keyboard } = await buildTodosMessage(chatId, reminders);
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
     } else {
@@ -304,24 +331,31 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         sourceContext: null,
         dueDate: intent.dueDate ? new Date(intent.dueDate) : null,
       });
-      const formatDue = (iso: string) => {
-        const d = new Date(iso);
-        const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: deps.config.timezone });
-        const hasTime = !iso.endsWith('T00:00:00Z') && !iso.endsWith('T00:00:00.000Z');
-        if (hasTime) {
-          const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: deps.config.timezone });
-          return `${date} at ${time}`;
-        }
-        return date;
+      // Build formatted confirmation
+      const createdRow: ReminderRow = {
+        id: result.id,
+        content: taskContent,
+        embedding: [],
+        metadata: null,
+        category: intent.category ?? null,
+        project: intent.project ?? null,
+        section: intent.section ?? null,
+        parent_id: null,
+        depth: 0,
+        status: 'not_started',
+        priority: intent.priority ?? null,
+        source_context: null,
+        source: 'telegram',
+        archived: false,
+        due_date: intent.dueDate ? new Date(intent.dueDate) : null,
+        created_at: new Date(),
+        updated_at: new Date(),
       };
-      const details = [
-        intent.project ? `project: ${intent.project}` : null,
-        intent.priority,
-        intent.dueDate ? `due: ${formatDue(intent.dueDate)}` : null,
-      ].filter(Boolean);
-      const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+      const nlProjectLine = intent.project
+        ? `\n  📋 ${intent.project}${intent.section ? ` / ${intent.section}` : ''}`
+        : '';
       lastActions.set(chatId, { action: 'create', reminderId: result.id });
-      await ctx.reply(`${INTENT_PREFIX} new reminder.\nCreated: "${taskContent}"${detailStr} (${result.id.slice(0, 8)})${UNDO_HINT}`);
+      await ctx.reply(`${INTENT_PREFIX} new reminder.\n  ${formatSingleReminder(createdRow)}${nlProjectLine}${UNDO_HINT}`);
 
     } else if (intent.action === 'list_reminders') {
       let reminders;
@@ -346,7 +380,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         await ctx.reply(intent.dueFilter ? `No ${intent.dueFilter === 'overdue' ? 'overdue' : 'due'} reminders.` : 'No active reminders.');
         return;
       }
-      const { text: todosText, keyboard } = buildTodosMessage(chatId, reminders);
+      const { text: todosText, keyboard } = await buildTodosMessage(chatId, reminders);
       const formatted = header + todosText;
       await ctx.reply(formatted, { reply_markup: keyboard });
 
