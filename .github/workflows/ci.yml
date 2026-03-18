@@ -19,3 +19,5 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
