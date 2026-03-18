@@ -314,6 +314,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         let parsedDueDate: Date | null = null;
         let parsedCategory: string | null = null;
         try {
+          console.log(`[subtask-parser] Parsing: "${text}"`);
           const todayISO = new Date().toISOString().split('T')[0];
           const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
           const parseResponse = await deps.metadataLLM.complete(
@@ -325,7 +326,9 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
           parsedPriority = parsed.priority ?? null;
           parsedDueDate = parsed.dueDate ? new Date(parsed.dueDate) : null;
           parsedCategory = parsed.category ?? null;
-        } catch {
+          console.log(`[subtask-parser] Result: content="${parsedContent}", priority=${parsedPriority}, due=${parsedDueDate}`);
+        } catch (err) {
+          console.error(`[subtask-parser] Failed:`, err);
           // Fallback: use raw text
         }
 
