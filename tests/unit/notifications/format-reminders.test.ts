@@ -209,8 +209,8 @@ describe('formatRemindersMarkdown', () => {
     subtasksMap.set('child1-id-aaa', [grandchild]);
 
     const result = formatRemindersMarkdown([parent], subtasksMap);
-    expect(result).toContain('○ Child task');
-    expect(result).toContain('○ Grandchild task');
+    expect(result).toContain('↳ ○ Child task');
+    expect(result).toContain('↳ ○ Grandchild task');
     // Grandchild should have more indentation than child
     const childLine = result.split('\n').find(l => l.includes('Child task'))!;
     const grandchildLine = result.split('\n').find(l => l.includes('Grandchild task'))!;
@@ -305,7 +305,7 @@ describe('formatReminderDetailMarkdown', () => {
     const r = makeReminder({ content: 'Parent' });
     const st = makeReminder({ id: 'st-1', content: 'Child task', status: 'not_started', depth: 1 });
     const result = formatReminderDetailMarkdown(r, [], [st]);
-    expect(result).toMatch(/^\s+○ Child task/m);
+    expect(result).toMatch(/^\s+↳ ○ Child task/m);
   });
 
   it('shows comments with date and content', () => {

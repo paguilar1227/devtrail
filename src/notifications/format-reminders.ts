@@ -176,12 +176,12 @@ function renderSubtasks(
     const pTag = priorityTag(st.priority);
     const due = st.due_date ? ` — due ${formatDueDate(st.due_date)}` : '';
     const id = ` (${st.id.slice(0, 8)})`;
-    lines.push(`${indent}${icon} ${st.content}${pTag}${due}${id}`);
+    lines.push(`${indent}↳ ${icon} ${st.content}${pTag}${due}${id}`);
 
     // Recurse for nested subtasks
     const grandchildren = subtasksMap.get(st.id) ?? [];
     if (grandchildren.length > 0) {
-      renderSubtasks(lines, grandchildren, subtasksMap, indent + '   ');
+      renderSubtasks(lines, grandchildren, subtasksMap, indent + '  ');
     }
   }
 }
@@ -234,7 +234,7 @@ export function formatReminderDetailMarkdown(
     lines.push('');
     lines.push(`  Subtasks (${doneCount}/${subtasks.length} done):`);
     for (const st of subtasks) {
-      lines.push(`    ${statusIcon(st.status)} ${st.content}`);
+      lines.push(`    ↳ ${statusIcon(st.status)} ${st.content}`);
     }
   }
 

@@ -308,19 +308,40 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     if (pendingSub) {
       pendingSubtask.delete(chatId);
       try {
-        const embedding = await deps.embeddingProvider.embed(text);
+        // Parse subtask text through LLM for priority, due date, etc.
+        let parsedContent = text;
+        let parsedPriority: string | null = null;
+        let parsedDueDate: Date | null = null;
+        let parsedCategory: string | null = null;
+        try {
+          const todayISO = new Date().toISOString().split('T')[0];
+          const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
+          const parseResponse = await deps.metadataLLM.complete(
+            [{ role: 'user', content: text }],
+            { systemPrompt: buildReminderParserPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+          );
+          const parsed = JSON.parse(parseResponse.content);
+          parsedContent = parsed.content ?? text;
+          parsedPriority = parsed.priority ?? null;
+          parsedDueDate = parsed.dueDate ? new Date(parsed.dueDate) : null;
+          parsedCategory = parsed.category ?? null;
+        } catch {
+          // Fallback: use raw text
+        }
+
+        const embedding = await deps.embeddingProvider.embed(parsedContent);
         const subtaskResult = await insertReminder(deps.db, {
-          content: text,
+          content: parsedContent,
           embedding,
-          category: null,
+          category: parsedCategory,
           project: pendingSub.parentProject,
           section: pendingSub.parentSection,
           parentId: pendingSub.parentId,
           depth: pendingSub.depth,
-          priority: null,
+          priority: parsedPriority,
           source: 'telegram',
           sourceContext: null,
-          dueDate: null,
+          dueDate: parsedDueDate,
         });
 
         // Show parent with all subtasks including the new one
@@ -334,7 +355,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
           if (allSubtasks.length > 0) {
             for (const st of allSubtasks) {
               const depthIndent = '  '.repeat(st.depth);
-              replyText += `  ${depthIndent}${formatSingleReminder(st)}\n`;
+              replyText += `  ${depthIndent}↳ ${formatSingleReminder(st)}\n`;
             }
           }
         } else {
