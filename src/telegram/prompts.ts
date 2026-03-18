@@ -8,11 +8,12 @@ export function buildIntentClassifierPrompt(todayISO: string, dayOfWeek: string,
   return `You are an intent classifier for a personal assistant. The user sent a message. Determine if it's a task/reminder action or a thought to capture.
 
 TODAY'S DATE: ${todayISO} (${dayOfWeek})
+CURRENT TIME (UTC): ${new Date().toISOString()}
 USER TIMEZONE: ${timezone}
 
 When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year.
 
-For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", compute the exact UTC datetime by adding the offset to today's current time. Return the full ISO 8601 datetime string.
+For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", add the offset to CURRENT TIME above. Return the full ISO 8601 datetime string.
 
 Return JSON with one of these actions:
 
@@ -58,11 +59,12 @@ export function buildReminderParserPrompt(todayISO: string, dayOfWeek: string, t
   return `Parse this reminder text into structured fields. Extract any project, section, priority, category, and due date mentioned naturally or via tags like [project:name].
 
 TODAY'S DATE: ${todayISO} (${dayOfWeek})
+CURRENT TIME (UTC): ${new Date().toISOString()}
 USER TIMEZONE: ${timezone}
 
 When resolving relative dates like "next Wednesday", "tomorrow", "Friday", use TODAY'S DATE above as reference. Always return full ISO 8601 datetime strings with the correct year. If a time is specified, include it. If only a date, use T00:00:00Z.
 
-For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", compute the exact UTC datetime by adding the offset to TODAY'S DATE and current time (assume current time is approximately now). Return the full ISO 8601 datetime string.
+For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours", add the offset to CURRENT TIME above. Return the full ISO 8601 datetime string.
 
 Return JSON:
 {
