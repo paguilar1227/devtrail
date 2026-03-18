@@ -68,6 +68,40 @@ vi.mock('grammy', () => {
     }
 
     async handleUpdate(update: any) {
+      // Handle callback queries (inline keyboard button presses)
+      if (update.callback_query) {
+        if (this.callbackQueryHandler) {
+          const cbq = update.callback_query;
+          const chatId = cbq.message?.chat?.id ?? 42;
+          const chat = cbq.message?.chat ?? { id: chatId, type: 'private' };
+          const ctx: any = {
+            update,
+            callbackQuery: cbq,
+            chat,
+            answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+            editMessageText: vi.fn().mockResolvedValue(undefined),
+            reply: vi.fn(async (text: string, options?: any) => {
+              telegramReplies.push({
+                chat_id: chatId,
+                text,
+                reply_markup: options?.reply_markup,
+              });
+              return { message_id: telegramReplies.length };
+            }),
+          };
+          try {
+            await this.callbackQueryHandler(ctx);
+          } catch (err) {
+            if (this.errorHandler) {
+              this.errorHandler({ error: err, ctx });
+            } else {
+              throw err;
+            }
+          }
+        }
+        return;
+      }
+
       if (!update.message) return;
 
       const message = update.message;
@@ -156,6 +190,23 @@ function textUpdate(updateId: number, text: string, chatId = 42) {
       chat: { id: chatId, type: 'private' },
       date: Math.floor(Date.now() / 1000),
       text,
+    },
+  };
+}
+
+function callbackQueryUpdate(updateId: number, data: string, chatId = 42) {
+  return {
+    update_id: updateId,
+    callback_query: {
+      id: `cbq-${updateId}`,
+      from: { id: chatId, is_bot: false, first_name: 'Tester' },
+      message: {
+        message_id: updateId,
+        chat: { id: chatId, type: 'private' },
+        date: Math.floor(Date.now() / 1000),
+        text: 'Select a reminder',
+      },
+      data,
     },
   };
 }
@@ -638,5 +689,260 @@ describe('Telegram Pipeline — Error Handling', () => {
 
     // No additional replies for the duplicate
     expect(telegramReplies.length).toBe(repliesAfterFirst);
+  });
+});
+
+// ─── Subtasks & Display ──────────────────────────────────────────────────────
+
+describe('Telegram Pipeline — Subtasks & Display', () => {
+  it('T16: /subtask command shows reminders with ➕ buttons', async () => {
+    const deps = makeDeps();
+
+    // DB returns active top-level reminders when /subtask queries findActiveReminders
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('not_started')) {
+        return {
+          rows: [
+            {
+              id: 'rem-work-aabbccdd',
+              content: 'Write project proposal',
+              status: 'not_started',
+              priority: 'P1',
+              project: 'work',
+              section: null,
+              depth: 0,
+              due_date: null,
+              archived: false,
+              parent_id: null,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(2001, '/subtask'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Select a reminder to add a subtask to');
+  });
+
+  it('T17: Pending subtask state — next message creates subtask under parent', async () => {
+    const parentId = 'rem-parent-11223344';
+    const newSubtaskId = 'rem-sub-aabb1122';
+    const deps = makeDeps();
+
+    // Step 1 DB mock — callback_query handler calls getReminderById and findSubtasks
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // insertReminder — must come first because INSERT SQL also contains "parent_id" in column list
+      if (typeof sql === 'string' && sql.includes('INSERT INTO reminders')) {
+        return { rows: [{ id: newSubtaskId }] } as any;
+      }
+      // findSubtasks — SELECT WHERE parent_id = $1
+      if (typeof sql === 'string' && sql.includes('WHERE parent_id')) {
+        return { rows: [] } as any;
+      }
+      // getReminderById — SELECT * FROM reminders WHERE id = $1
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === parentId) {
+        return {
+          rows: [
+            {
+              id: parentId,
+              content: 'Write project proposal',
+              status: 'not_started',
+              priority: 'P1',
+              project: 'work',
+              section: 'backend',
+              depth: 0,
+              due_date: null,
+              archived: false,
+              parent_id: null,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    // Step 1: Press the ➕ button for the parent (callback_query)
+    await sendWebhookUpdate(app, callbackQueryUpdate(2002, `subtask:${parentId}`));
+
+    // Step 2: Type the subtask content (text message)
+    await sendWebhookUpdate(app, textUpdate(2003, 'Write unit tests'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Subtask added');
+
+    // Verify insertReminder was called with the correct parent_id
+    const insertCall = vi.mocked(deps.db.query).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO reminders'),
+    );
+    expect(insertCall).toBeDefined();
+    // The INSERT parameters should include the parentId — check the values array
+    // insertReminder passes values positionally; parent_id is one of the params
+    const insertParams = insertCall![1] as any[];
+    expect(insertParams).toContain(parentId);
+  });
+
+  it('T18: Creation confirmation shows formatted view with ID and project', async () => {
+    const deps = makeDeps();
+
+    // LLM parses the remind command with project and priority
+    vi.mocked(deps.metadataLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        content: 'Deploy new API endpoint',
+        project: 'work',
+        section: 'backend',
+        priority: 'P1',
+        category: 'work',
+        dueDate: null,
+      }),
+      tokensUsed: { input: 10, output: 10, total: 20 },
+    });
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('INSERT INTO reminders')) {
+        return { rows: [{ id: 'rem-deploy-abcdef12' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(2004, '/remind [project:work, section:backend] Deploy new API endpoint P1'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    // Formatted confirmation includes: short ID (8 chars), priority tag, project line
+    expect(reply.text).toContain('rem-depl'); // first 8 chars of 'rem-deploy-abcdef12'
+    expect(reply.text).toContain('P1');
+    expect(reply.text).toContain('work');
+    expect(reply.text).toContain('Reminder created');
+  });
+
+  it('T19: Subtasks inherit project/section from parent', async () => {
+    const parentId = 'rem-inherit-99887766';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // insertReminder — must come first because INSERT SQL also contains "parent_id" in column list
+      if (typeof sql === 'string' && sql.includes('INSERT INTO reminders')) {
+        return { rows: [{ id: 'rem-inherited-sub-001' }] } as any;
+      }
+      // findSubtasks — SELECT WHERE parent_id = $1
+      if (typeof sql === 'string' && sql.includes('WHERE parent_id')) {
+        return { rows: [] } as any;
+      }
+      // getReminderById — SELECT * FROM reminders WHERE id = $1
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === parentId) {
+        return {
+          rows: [
+            {
+              id: parentId,
+              content: 'Build authentication module',
+              status: 'not_started',
+              priority: 'P2',
+              project: 'work',
+              section: 'backend',
+              depth: 0,
+              due_date: null,
+              archived: false,
+              parent_id: null,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    // Press ➕ button to select parent
+    await sendWebhookUpdate(app, callbackQueryUpdate(2005, `subtask:${parentId}`));
+
+    // Type the subtask
+    await sendWebhookUpdate(app, textUpdate(2006, 'Add JWT token validation'));
+
+    // Verify the INSERT call included project='work' and section='backend'
+    const insertCall = vi.mocked(deps.db.query).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO reminders'),
+    );
+    expect(insertCall).toBeDefined();
+    const insertParams = insertCall![1] as any[];
+    expect(insertParams).toContain('work');
+    expect(insertParams).toContain('backend');
+    expect(insertParams).toContain(parentId);
+  });
+
+  it('T20: Max depth enforcement — reject subtask at depth >= 3', async () => {
+    const deepParentId = 'rem-deep-depth3-aabb';
+    const deps = makeDeps();
+
+    // Parent is at depth 3 — should be rejected
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // getReminderById — SELECT * FROM reminders WHERE id = $1
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === deepParentId) {
+        return {
+          rows: [
+            {
+              id: deepParentId,
+              content: 'Deeply nested task',
+              status: 'not_started',
+              priority: null,
+              project: 'work',
+              section: null,
+              depth: 3,
+              due_date: null,
+              archived: false,
+              parent_id: 'some-grandparent',
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    // Attempt to add subtask to a depth-3 parent via callback
+    await sendWebhookUpdate(app, callbackQueryUpdate(2007, `subtask:${deepParentId}`));
+
+    // The answerCallbackQuery will have been called with the max-depth error,
+    // but since it's on ctx (not ctx.reply), we check that NO reply text
+    // was sent (the handler uses answerCallbackQuery, not reply, for this error).
+    // The important thing is no subtask state is set — verify via no telegramReplies
+    // from the callback handler itself, and that a subsequent text message does NOT
+    // get treated as a subtask (it should fall through to the intent classifier).
+    vi.mocked(deps.metadataLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ action: 'capture_thought' }),
+      tokensUsed: { input: 10, output: 10, total: 20 },
+    });
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('similarity')) return { rows: [] } as any;
+      if (typeof sql === 'string' && sql.includes('INSERT INTO captures')) {
+        return { rows: [{ id: 'cap-not-subtask-1234' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await sendWebhookUpdate(app, textUpdate(2008, 'This should be captured, not a subtask'));
+
+    // The last reply should be a capture confirmation, not a subtask reply
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const lastReply = telegramReplies[telegramReplies.length - 1];
+    expect(lastReply.text).toContain('Captured!');
+    expect(lastReply.text).not.toContain('Subtask added');
   });
 });
