@@ -131,7 +131,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const parsed = await llmJsonParse<{ content: string; project: string | null; section: string | null; priority: string | null; category: string | null; dueDate: string | null }>(
       deps.metadataLLM,
       [{ role: 'user', content }],
-      { systemPrompt: buildReminderParserPrompt(remindTodayISO, remindDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+      { systemPrompt: buildReminderParserPrompt(remindTodayISO, remindDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 1024 },
       'remind-parser',
     ) ?? { content, project: null, section: null, priority: null, category: null, dueDate: null };
 
@@ -331,7 +331,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         const subParsed = await llmJsonParse<{ content: string; priority: string | null; dueDate: string | null; category: string | null }>(
           deps.metadataLLM,
           [{ role: 'user', content: text }],
-          { systemPrompt: buildReminderParserPrompt(subTodayISO, subDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+          { systemPrompt: buildReminderParserPrompt(subTodayISO, subDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 1024 },
           'subtask-parser',
         );
         if (subParsed) {
@@ -445,7 +445,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const intent = await llmJsonParse<{ action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string }>(
       deps.metadataLLM,
       [{ role: 'user', content: text }],
-      { systemPrompt: buildIntentClassifierPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+      { systemPrompt: buildIntentClassifierPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 1024 },
       'intent-classifier',
     ) ?? { action: 'capture_thought' as const };
     console.log(`[intent-classifier] Result: ${JSON.stringify(intent)}`);
