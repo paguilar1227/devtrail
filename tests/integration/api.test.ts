@@ -293,6 +293,7 @@ describe('Section 4: Capture Endpoint', () => {
   });
 
   it('4.5 File hash duplicate returns 409', async () => {
+    // Don't send file_urls — the pipeline handles hash dedup internally
     mockRunCapturePipeline.mockResolvedValueOnce({
       success: false,
       reason: 'Duplicate file(s) detected (exact hash match). Already captured.',
@@ -304,7 +305,7 @@ describe('Section 4: Capture Endpoint', () => {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer test-key-123',
       },
-      body: JSON.stringify({ content: 'photo note', file_urls: ['https://example.com/photo.jpg'] }),
+      body: JSON.stringify({ content: 'photo note' }),
     });
     expect(res.status).toBe(409);
   });
