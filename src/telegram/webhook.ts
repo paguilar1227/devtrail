@@ -46,6 +46,9 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   // Todo number maps — stores number → reminder ID per chat for inline keyboard navigation
   const todoNumberMaps = new Map<string, Map<number, string>>();
 
+  // Pending subtask state — tracks when user should next type a subtask for a parent
+  const pendingSubtask = new Map<string, { parentId: string; parentContent: string; parentProject: string | null; parentSection: string | null; depth: number }>();
+
   /** Build a numbered todos keyboard + formatted text, storing the number map for the given chat. */
   async function buildTodosMessage(chatId: string, reminders: ReminderRow[]): Promise<{ text: string; keyboard: InlineKeyboard }> {
     const numMap = new Map<number, string>();
@@ -207,6 +210,37 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         const { text, keyboard } = await buildTodosMessage(chatId, reminders);
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
+    } else if (action === 'subtask') {
+      // Subtask selection — show parent + existing subtasks, prompt for new subtask text
+      const parent = await getReminderById(deps.db, reminderId);
+      if (!parent) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
+      if (parent.depth >= 3) { await ctx.answerCallbackQuery({ text: 'Max subtask depth reached (4 levels)' }); return; }
+
+      const existingSubtasks = await findSubtasks(deps.db, reminderId);
+      let text = `Adding subtask to:\n  ${formatSingleReminder(parent)}\n`;
+      if (existingSubtasks.length > 0) {
+        text += '\nExisting subtasks:\n';
+        for (const st of existingSubtasks) {
+          text += `    ${formatSingleReminder(st)}\n`;
+        }
+      }
+      text += '\nType your subtask below:';
+
+      // Track pending subtask state
+      pendingSubtask.set(chatId, { parentId: reminderId, parentContent: parent.content, parentProject: parent.project, parentSection: parent.section, depth: parent.depth + 1 });
+
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(text);
+
+      // Show buttons for existing subtasks (for sub-subtask creation)
+      if (existingSubtasks.length > 0 && existingSubtasks[0].depth < 3) {
+        const subKeyboard = new InlineKeyboard();
+        for (const st of existingSubtasks) {
+          const label = st.content.length > 30 ? st.content.slice(0, 27) + '...' : st.content;
+          subKeyboard.text(`➕ ${label}`, `subtask:${st.id}`).row();
+        }
+        await ctx.reply('Or add a sub-subtask:', { reply_markup: subKeyboard });
+      }
     } else {
       await ctx.answerCallbackQuery({ text: 'Unknown action' });
     }
@@ -246,12 +280,92 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     await ctx.reply('Review feature coming soon.');
   });
 
+  bot.command('subtask', async (ctx) => {
+    const reminders = await findActiveReminders(deps.db);
+    const topLevel = reminders.filter(r => r.depth === 0);
+    if (topLevel.length === 0) {
+      await ctx.reply('No reminders to add subtasks to.');
+      return;
+    }
+
+    const keyboard = new InlineKeyboard();
+    for (const r of topLevel) {
+      const label = r.content.length > 35 ? r.content.slice(0, 32) + '...' : r.content;
+      keyboard.text(`➕ ${label}`, `subtask:${r.id}`).row();
+    }
+    await ctx.reply('Select a reminder to add a subtask to:', { reply_markup: keyboard });
+  });
+
   // Natural language router — classify intent before acting
   bot.on('message:text', async (ctx) => {
     console.log(`[telegram] message:text handler hit: "${ctx.message.text}"`);
     if (ctx.message.text.startsWith('/')) return; // Skip unhandled commands
     const text = ctx.message.text;
     const chatId = String(ctx.chat.id);
+
+    // Check for pending subtask creation (must be FIRST — before undo/intent classifier)
+    const pendingSub = pendingSubtask.get(chatId);
+    if (pendingSub) {
+      pendingSubtask.delete(chatId);
+      try {
+        const embedding = await deps.embeddingProvider.embed(text);
+        const subtaskResult = await insertReminder(deps.db, {
+          content: text,
+          embedding,
+          category: null,
+          project: pendingSub.parentProject,
+          section: pendingSub.parentSection,
+          parentId: pendingSub.parentId,
+          depth: pendingSub.depth,
+          priority: null,
+          source: 'telegram',
+          sourceContext: null,
+          dueDate: null,
+        });
+
+        // Show parent with all subtasks including the new one
+        const parentReminder = await getReminderById(deps.db, pendingSub.parentId);
+        const allSubtasks = await findSubtasks(deps.db, pendingSub.parentId);
+        const newSubtask = allSubtasks.find(st => st.id === subtaskResult.id);
+
+        let replyText = `Subtask added to "${pendingSub.parentContent}":\n`;
+        if (parentReminder) {
+          replyText = `Subtask added!\n  ${formatSingleReminder(parentReminder)}\n`;
+          if (allSubtasks.length > 0) {
+            for (const st of allSubtasks) {
+              const depthIndent = '  '.repeat(st.depth);
+              replyText += `  ${depthIndent}${formatSingleReminder(st)}\n`;
+            }
+          }
+        } else {
+          replyText += `  ${formatSingleReminder(newSubtask ?? { id: subtaskResult.id, content: text, status: 'not_started', priority: null, due_date: null } as ReminderRow)}\n`;
+        }
+
+        // Offer buttons for drilling deeper if depth allows
+        if (pendingSub.depth < 3) {
+          const subKeyboard = new InlineKeyboard();
+          for (const st of allSubtasks) {
+            if (st.depth < 3) {
+              const label = st.content.length > 30 ? st.content.slice(0, 27) + '...' : st.content;
+              subKeyboard.text(`➕ ${label}`, `subtask:${st.id}`).row();
+            }
+          }
+          if (allSubtasks.length > 0) {
+            await ctx.reply(replyText.trim(), { reply_markup: subKeyboard });
+          } else {
+            await ctx.reply(replyText.trim());
+          }
+        } else {
+          await ctx.reply(replyText.trim());
+        }
+
+        lastActions.set(chatId, { action: 'create', reminderId: subtaskResult.id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        await ctx.reply(`Failed to create subtask: ${msg}`);
+      }
+      return;
+    }
 
     // Fast-path: undo last action without hitting the LLM
     if (text.toLowerCase().trim() === 'undo') {
