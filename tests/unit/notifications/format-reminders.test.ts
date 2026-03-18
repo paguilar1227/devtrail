@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatRemindersMarkdown,
   formatReminderDetailMarkdown,
-  type SubtaskCount,
+  formatSingleReminder,
 } from '../../../src/notifications/format-reminders.js';
 import type { ReminderRow } from '../../../src/db/reminders.js';
 import type { ReminderCommentRow } from '../../../src/db/reminder-comments.js';
@@ -14,7 +14,7 @@ import type { ReminderCommentRow } from '../../../src/db/reminder-comments.js';
 
 function makeReminder(overrides: Partial<ReminderRow> = {}): ReminderRow {
   return {
-    id: 'rem-001',
+    id: 'rem-001aa',
     content: 'Test task',
     embedding: [],
     metadata: null,
@@ -40,12 +40,45 @@ function makeComment(overrides: Partial<ReminderCommentRow> = {}): ReminderComme
     id: 'cmt-001',
     content: 'A comment',
     embedding: [],
-    reminder_id: 'rem-001',
+    reminder_id: 'rem-001aa',
     source: 'mcp',
     created_at: new Date('2026-03-15T12:00:00Z'),
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// formatSingleReminder
+// ---------------------------------------------------------------------------
+
+describe('formatSingleReminder', () => {
+  it('shows icon, content, and short ID', () => {
+    const r = makeReminder({ id: '4e0bd1b2-aaaa-bbbb-cccc-dddddddddddd', content: 'Fix auth bug' });
+    const result = formatSingleReminder(r);
+    expect(result).toBe('○ Fix auth bug (4e0bd1b2)');
+  });
+
+  it('shows priority tag', () => {
+    const r = makeReminder({ id: '4e0bd1b2-aaaa-bbbb-cccc-dddddddddddd', content: 'Fix auth bug', priority: 'P1' });
+    const result = formatSingleReminder(r);
+    expect(result).toContain('[P1]');
+    expect(result).toContain('(4e0bd1b2)');
+  });
+
+  it('shows due date with weekday', () => {
+    const r = makeReminder({ id: '4e0bd1b2-aaaa-bbbb-cccc-dddddddddddd', content: 'Fix auth bug', due_date: new Date('2026-03-20T12:00:00Z') });
+    const result = formatSingleReminder(r);
+    expect(result).toContain('— due');
+    expect(result).toContain('Mar');
+    expect(result).toContain('20');
+  });
+
+  it('shows in_progress icon', () => {
+    const r = makeReminder({ content: 'Task', status: 'in_progress' });
+    const result = formatSingleReminder(r);
+    expect(result).toMatch(/^● Task/);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // formatRemindersMarkdown
@@ -60,24 +93,33 @@ describe('formatRemindersMarkdown', () => {
   it('shows ungrouped header for reminders with no project', () => {
     const r = makeReminder({ content: 'Buy groceries' });
     const result = formatRemindersMarkdown([r]);
-    expect(result).toContain('📌 Ungrouped (1 task)');
+    expect(result).toContain('📌 Ungrouped');
     expect(result).toContain('○ Buy groceries');
   });
 
-  it('uses plural "tasks" for multiple items', () => {
-    const reminders = [
-      makeReminder({ id: 'r1', content: 'Task one' }),
-      makeReminder({ id: 'r2', content: 'Task two' }),
-    ];
-    const result = formatRemindersMarkdown(reminders);
-    expect(result).toContain('2 tasks');
+  it('shows short ID for each reminder', () => {
+    const r = makeReminder({ id: '4e0bd1b2-aaaa-bbbb-cccc-dddddddddddd', content: 'Buy groceries' });
+    const result = formatRemindersMarkdown([r]);
+    expect(result).toContain('(4e0bd1b2)');
   });
 
   it('groups reminders by project with 📋 icon', () => {
     const r = makeReminder({ content: 'Build feature', project: 'my-project' });
     const result = formatRemindersMarkdown([r]);
-    expect(result).toContain('📋 my-project (1 task)');
+    expect(result).toContain('📋 my-project');
     expect(result).toContain('○ Build feature');
+  });
+
+  it('groups by section within project', () => {
+    const reminders = [
+      makeReminder({ id: 'r1', content: 'Fix auth bug', project: 'work', section: 'backend' }),
+      makeReminder({ id: 'r2', content: 'Deploy new API', project: 'work', section: 'backend' }),
+      makeReminder({ id: 'r3', content: 'Update CSS', project: 'work', section: 'frontend' }),
+    ];
+    const result = formatRemindersMarkdown(reminders);
+    expect(result).toContain('📋 work');
+    expect(result).toContain('backend:');
+    expect(result).toContain('frontend:');
   });
 
   it('shows correct status icons', () => {
@@ -141,25 +183,69 @@ describe('formatRemindersMarkdown', () => {
     expect(projectPos).toBeLessThan(ungroupedPos);
   });
 
-  it('includes subtask count when provided', () => {
-    const r = makeReminder({ id: 'rem-123', content: 'Parent task' });
-    const counts: SubtaskCount[] = [{ reminderId: 'rem-123', total: 3, done: 1 }];
-    const result = formatRemindersMarkdown([r], counts);
-    expect(result).toContain('1/3 subtasks done');
+  it('shows subtasks indented under parent with IDs', () => {
+    const parent = makeReminder({ id: 'parent-id-aaaa', content: 'Fix auth bug', project: 'work', section: 'backend' });
+    const children = [
+      makeReminder({ id: 'child1-id-aaa', content: 'Write tests', depth: 1, parent_id: 'parent-id-aaaa' }),
+      makeReminder({ id: 'child2-id-aaa', content: 'Deploy fix', depth: 1, parent_id: 'parent-id-aaaa' }),
+    ];
+    const subtasksMap = new Map<string, ReminderRow[]>();
+    subtasksMap.set('parent-id-aaaa', children);
+
+    const result = formatRemindersMarkdown([parent], subtasksMap);
+    expect(result).toContain('○ Write tests');
+    expect(result).toContain('(child1-i');
+    expect(result).toContain('○ Deploy fix');
+    expect(result).toContain('(child2-i');
   });
 
-  it('omits subtask count when total is 0', () => {
-    const r = makeReminder({ id: 'rem-123', content: 'Leaf task' });
-    const counts: SubtaskCount[] = [{ reminderId: 'rem-123', total: 0, done: 0 }];
-    const result = formatRemindersMarkdown([r], counts);
-    expect(result).not.toContain('subtasks');
+  it('shows nested subtasks with increasing indentation', () => {
+    const parent = makeReminder({ id: 'parent-id-aaaa', content: 'Parent task' });
+    const child = makeReminder({ id: 'child1-id-aaa', content: 'Child task', depth: 1, parent_id: 'parent-id-aaaa' });
+    const grandchild = makeReminder({ id: 'grand1-id-aaa', content: 'Grandchild task', depth: 2, parent_id: 'child1-id-aaa' });
+
+    const subtasksMap = new Map<string, ReminderRow[]>();
+    subtasksMap.set('parent-id-aaaa', [child]);
+    subtasksMap.set('child1-id-aaa', [grandchild]);
+
+    const result = formatRemindersMarkdown([parent], subtasksMap);
+    expect(result).toContain('○ Child task');
+    expect(result).toContain('○ Grandchild task');
+    // Grandchild should have more indentation than child
+    const childLine = result.split('\n').find(l => l.includes('Child task'))!;
+    const grandchildLine = result.split('\n').find(l => l.includes('Grandchild task'))!;
+    const childIndent = childLine.match(/^\s*/)![0].length;
+    const grandchildIndent = grandchildLine.match(/^\s*/)![0].length;
+    expect(grandchildIndent).toBeGreaterThan(childIndent);
+  });
+
+  it('numbers top-level tasks sequentially across projects', () => {
+    const reminders = [
+      makeReminder({ id: 'r1', content: 'Task A', project: 'alpha' }),
+      makeReminder({ id: 'r2', content: 'Task B', project: 'alpha' }),
+      makeReminder({ id: 'r3', content: 'Task C', project: 'beta' }),
+    ];
+    const result = formatRemindersMarkdown(reminders);
+    expect(result).toContain('1. ○ Task A');
+    expect(result).toContain('2. ○ Task B');
+    expect(result).toContain('3. ○ Task C');
   });
 
   it('indents task content under project header', () => {
     const r = makeReminder({ content: 'Some task', project: 'proj' });
     const result = formatRemindersMarkdown([r]);
-    // Task line must start with two spaces of indentation
-    expect(result).toMatch(/^\s+[○●🔍⏸🚫✓✗]/m);
+    // Task line must start with spaces of indentation
+    expect(result).toMatch(/^\s+\d+\.\s+[○●🔍⏸🚫✓✗]/m);
+  });
+
+  it('only shows depth-0 reminders as primary items', () => {
+    const reminders = [
+      makeReminder({ id: 'r1', content: 'Parent', depth: 0 }),
+      makeReminder({ id: 'r2', content: 'Subtask', depth: 1, parent_id: 'r1' }),
+    ];
+    const result = formatRemindersMarkdown(reminders);
+    // Subtask should not appear as a numbered item
+    expect(result).not.toMatch(/\d+\.\s+○ Subtask/);
   });
 });
 

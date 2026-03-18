@@ -16,7 +16,6 @@ import { insertComment } from '../db/reminder-comments.js';
 import {
   formatRemindersMarkdown,
   formatReminderDetailMarkdown,
-  type SubtaskCount,
 } from '../notifications/format-reminders.js';
 
 export function registerReminderTools(server: McpServer, deps: AppDeps): void {
@@ -96,23 +95,25 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
         limit,
       });
 
-      let subtaskCounts: SubtaskCount[] = [];
+      // Build subtask map for display
+      const subtasksMap = new Map<string, import('../db/reminders.js').ReminderRow[]>();
       if (reminders.length > 0) {
         const ids = reminders.map((r) => r.id);
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
         const result = await deps.db.query(
-          `SELECT parent_id AS "reminderId",
-                  COUNT(*)::int AS total,
-                  COUNT(*) FILTER (WHERE status = 'done')::int AS done
-           FROM reminders
+          `SELECT * FROM reminders
            WHERE parent_id IN (${placeholders}) AND archived = false
-           GROUP BY parent_id`,
+           ORDER BY created_at ASC`,
           ids,
         );
-        subtaskCounts = result.rows;
+        for (const row of result.rows) {
+          const parentId = row.parent_id as string;
+          if (!subtasksMap.has(parentId)) subtasksMap.set(parentId, []);
+          subtasksMap.get(parentId)!.push(row);
+        }
       }
 
-      const text = formatRemindersMarkdown(reminders, subtaskCounts);
+      const text = formatRemindersMarkdown(reminders, subtasksMap);
       return { content: [{ type: 'text' as const, text }] };
     },
   );

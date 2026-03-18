@@ -30,10 +30,24 @@ function priorityTag(priority: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Due date display — "Mar 20", "Mar 15 2025" (includes year when not current)
+// Due date display — "Fri, Mar 20, 2026" or "Mar 20" (short, no weekday)
 // ---------------------------------------------------------------------------
 
 function formatDueDate(date: Date | null): string {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+// Short variant without weekday — used by detail view
+function formatDueDateShort(date: Date | null): string {
   if (!date) return '';
   const d = date instanceof Date ? date : new Date(date);
   const now = new Date();
@@ -46,7 +60,7 @@ function formatDueDate(date: Date | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Subtask count helper
+// Subtask count helper (kept for backward compatibility)
 // ---------------------------------------------------------------------------
 
 export interface SubtaskCount {
@@ -56,59 +70,89 @@ export interface SubtaskCount {
 }
 
 // ---------------------------------------------------------------------------
+// formatSingleReminder
+// Format a single reminder row as a one-liner: icon + content + priority + due + id
+// ---------------------------------------------------------------------------
+
+export function formatSingleReminder(r: ReminderRow): string {
+  const icon = statusIcon(r.status);
+  const pTag = priorityTag(r.priority);
+  const due = r.due_date ? ` — due ${formatDueDate(r.due_date)}` : '';
+  const id = ` (${r.id.slice(0, 8)})`;
+  return `${icon} ${r.content}${pTag}${due}${id}`;
+}
+
+// ---------------------------------------------------------------------------
 // formatRemindersMarkdown
-// Groups by project (null → "Ungrouped"), emits emoji + markdown.
+// Groups by project → section, shows short IDs, subtasks indented.
+// Accepts subtasks map (parent_id → children) for inline subtask display.
 // ---------------------------------------------------------------------------
 
 export function formatRemindersMarkdown(
   reminders: ReminderRow[],
-  subtaskCounts: SubtaskCount[] = [],
+  subtasks: Map<string, ReminderRow[]> = new Map(),
 ): string {
   if (reminders.length === 0) {
     return 'No active reminders.';
   }
 
-  // Build a lookup: reminderId → SubtaskCount
-  const countMap = new Map<string, SubtaskCount>();
-  for (const sc of subtaskCounts) {
-    countMap.set(sc.reminderId, sc);
-  }
+  // Only show top-level reminders (depth 0) as primary items
+  const topLevel = reminders.filter(r => r.depth === 0);
 
-  // Group by project
-  const groups = new Map<string | null, ReminderRow[]>();
-  for (const r of reminders) {
-    const key = r.project ?? null;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(r);
+  // Group by project → section
+  const groups = new Map<string | null, Map<string | null, ReminderRow[]>>();
+  for (const r of topLevel) {
+    const projKey = r.project ?? null;
+    if (!groups.has(projKey)) groups.set(projKey, new Map());
+    const sectionMap = groups.get(projKey)!;
+    const secKey = r.section ?? null;
+    if (!sectionMap.has(secKey)) sectionMap.set(secKey, []);
+    sectionMap.get(secKey)!.push(r);
   }
 
   const lines: string[] = [];
+  let globalNum = 0;
 
   // Sort: named projects first (alphabetically), then null/Ungrouped
-  const sortedKeys = [...groups.keys()].sort((a, b) => {
+  const sortedProjKeys = [...groups.keys()].sort((a, b) => {
     if (a === null) return 1;
     if (b === null) return -1;
     return a.localeCompare(b);
   });
 
-  for (const key of sortedKeys) {
-    const group = groups.get(key)!;
-    const icon = key === null ? '📌' : '📋';
-    const label = key ?? 'Ungrouped';
-    const taskWord = group.length === 1 ? 'task' : 'tasks';
-    lines.push(`${icon} ${label} (${group.length} ${taskWord})`);
+  for (const projKey of sortedProjKeys) {
+    const sectionMap = groups.get(projKey)!;
+    const projIcon = projKey === null ? '📌' : '📋';
+    const projLabel = projKey ?? 'Ungrouped';
+    lines.push(`${projIcon} ${projLabel}`);
 
-    for (const r of group) {
-      const icon = statusIcon(r.status);
-      const pTag = priorityTag(r.priority);
-      const due = r.due_date ? ` — due ${formatDueDate(r.due_date)}` : '';
-      lines.push(`  ${icon} ${r.content}${pTag}${due}`);
+    // Sort sections: named first (alphabetically), then null (no section)
+    const sortedSecKeys = [...sectionMap.keys()].sort((a, b) => {
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a.localeCompare(b);
+    });
 
-      // Subtask summary line
-      const sc = countMap.get(r.id);
-      if (sc && sc.total > 0) {
-        // We don't have individual subtask rows here — just show count summary
-        lines.push(`    (${sc.done}/${sc.total} subtasks done)`);
+    for (const secKey of sortedSecKeys) {
+      const sectionReminders = sectionMap.get(secKey)!;
+
+      if (secKey !== null) {
+        lines.push(`  ${secKey}:`);
+      }
+
+      const indent = secKey !== null ? '    ' : '    ';
+
+      for (const r of sectionReminders) {
+        globalNum++;
+        const icon = statusIcon(r.status);
+        const pTag = priorityTag(r.priority);
+        const due = r.due_date ? ` — due ${formatDueDate(r.due_date)}` : '';
+        const id = ` (${r.id.slice(0, 8)})`;
+        lines.push(`${indent}${globalNum}. ${icon} ${r.content}${pTag}${due}${id}`);
+
+        // Show subtasks indented under parent
+        const children = subtasks.get(r.id) ?? [];
+        renderSubtasks(lines, children, subtasks, indent + '   ');
       }
     }
 
@@ -121,60 +165,37 @@ export function formatRemindersMarkdown(
   return lines.join('\n');
 }
 
+function renderSubtasks(
+  lines: string[],
+  children: ReminderRow[],
+  subtasksMap: Map<string, ReminderRow[]>,
+  indent: string,
+): void {
+  for (const st of children) {
+    const icon = statusIcon(st.status);
+    const pTag = priorityTag(st.priority);
+    const due = st.due_date ? ` — due ${formatDueDate(st.due_date)}` : '';
+    const id = ` (${st.id.slice(0, 8)})`;
+    lines.push(`${indent}${icon} ${st.content}${pTag}${due}${id}`);
+
+    // Recurse for nested subtasks
+    const grandchildren = subtasksMap.get(st.id) ?? [];
+    if (grandchildren.length > 0) {
+      renderSubtasks(lines, grandchildren, subtasksMap, indent + '   ');
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // formatRemindersMarkdownWithSubtasks
-// Variant that accepts subtask rows directly (used when the caller already
-// has them, e.g. for the detail view list).
+// Kept for backward compat — delegates to the updated formatRemindersMarkdown.
 // ---------------------------------------------------------------------------
 
 export function formatRemindersMarkdownWithSubtasks(
   reminders: ReminderRow[],
   subtasksByParent: Map<string, ReminderRow[]>,
 ): string {
-  if (reminders.length === 0) {
-    return 'No active reminders.';
-  }
-
-  const groups = new Map<string | null, ReminderRow[]>();
-  for (const r of reminders) {
-    const key = r.project ?? null;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(r);
-  }
-
-  const lines: string[] = [];
-
-  const sortedKeys = [...groups.keys()].sort((a, b) => {
-    if (a === null) return 1;
-    if (b === null) return -1;
-    return a.localeCompare(b);
-  });
-
-  for (const key of sortedKeys) {
-    const group = groups.get(key)!;
-    const icon = key === null ? '📌' : '📋';
-    const label = key ?? 'Ungrouped';
-    const taskWord = group.length === 1 ? 'task' : 'tasks';
-    lines.push(`${icon} ${label} (${group.length} ${taskWord})`);
-
-    for (const r of group) {
-      const sIcon = statusIcon(r.status);
-      const pTag = priorityTag(r.priority);
-      const due = r.due_date ? ` — due ${formatDueDate(r.due_date)}` : '';
-      lines.push(`  ${sIcon} ${r.content}${pTag}${due}`);
-
-      const subtasks = subtasksByParent.get(r.id) ?? [];
-      for (const st of subtasks) {
-        lines.push(`    ${statusIcon(st.status)} ${st.content}`);
-      }
-    }
-
-    lines.push('');
-  }
-
-  if (lines[lines.length - 1] === '') lines.pop();
-
-  return lines.join('\n');
+  return formatRemindersMarkdown(reminders, subtasksByParent);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +219,7 @@ export function formatReminderDetailMarkdown(
   const meta: string[] = [];
   if (reminder.project) meta.push(`Project: ${reminder.project}`);
   if (reminder.section) meta.push(`Section: ${reminder.section}`);
-  if (reminder.due_date) meta.push(`Due: ${formatDueDate(reminder.due_date)}`);
+  if (reminder.due_date) meta.push(`Due: ${formatDueDateShort(reminder.due_date)}`);
   if (meta.length > 0) {
     lines.push(`  ${meta.join(' | ')}`);
   }
