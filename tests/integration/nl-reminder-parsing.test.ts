@@ -9,7 +9,7 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const describeIfKey = GEMINI_KEY ? describe : describe.skip;
 
 // Helper: call the LLM with the intent classifier prompt (with retry for JSON flakes)
-async function classifyIntent(llm: GeminiLLMProvider, text: string, retries = 2): Promise<any> {
+async function classifyIntent(llm: GeminiLLMProvider, text: string, retries = 4): Promise<any> {
   const today = new Date();
   const todayISO = today.toISOString().split('T')[0];
   const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(today);
