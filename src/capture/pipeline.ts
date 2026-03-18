@@ -44,7 +44,9 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   // If only SOME match, reuse existing URLs for those and upload the new ones.
   let existingUrls = new Map<string, string>();
   if (fileHashes.length > 0) {
+    console.log(`[pipeline] File hashes: ${fileHashes.join(', ')}`);
     existingUrls = await checkFileHashDedup(db, fileHashes);
+    console.log(`[pipeline] Existing hash matches: ${existingUrls.size} of ${fileHashes.length}`);
     const allFilesExist = fileHashes.every((h) => existingUrls.has(h));
     if (allFilesExist) {
       return {
