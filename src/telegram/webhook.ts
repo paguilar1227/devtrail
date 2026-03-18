@@ -20,6 +20,28 @@ import { formatRemindersMarkdown, formatSingleReminder } from '../notifications/
 import { buildIntentClassifierPrompt, buildReminderParserPrompt } from './prompts.js';
 import { resolveMimeType, getSummarizationRoute } from './mime-utils.js';
 
+/** Call LLM and parse JSON response with retry on non-JSON flakes */
+async function llmJsonParse<T>(
+  llm: AppDeps['metadataLLM'],
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  options: { systemPrompt: string; responseFormat: 'json'; maxTokens: number },
+  label: string,
+  retries = 3,
+): Promise<T | null> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await llm.complete(messages, options);
+      return JSON.parse(response.content) as T;
+    } catch (err) {
+      if (attempt === retries - 1) {
+        console.error(`[${label}] Failed after ${retries} attempts:`, err);
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   const bot = new Bot(deps.config.telegramBotToken);
 
@@ -103,25 +125,15 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       return;
     }
 
-    // Use LLM to parse natural language into structured fields
-    let parsed: { content: string; project: string | null; section: string | null; priority: string | null; category: string | null; dueDate: string | null };
-    try {
-      const remindTodayISO = new Date().toISOString().split('T')[0];
-      const remindDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
-      const parseResponse = await deps.metadataLLM.complete(
-        [{ role: 'user', content }],
-        {
-          systemPrompt: buildReminderParserPrompt(remindTodayISO, remindDayOfWeek, deps.config.timezone),
-          responseFormat: 'json',
-          maxTokens: 256,
-        },
-      );
-      parsed = JSON.parse(parseResponse.content);
-    } catch (err) {
-      // Fallback: use raw text, no structured fields
-      console.error('[remind-parser] LLM parse failed:', err);
-      parsed = { content, project: null, section: null, priority: null, category: null, dueDate: null };
-    }
+    // Use LLM to parse natural language into structured fields (with retry)
+    const remindTodayISO = new Date().toISOString().split('T')[0];
+    const remindDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
+    const parsed = await llmJsonParse<{ content: string; project: string | null; section: string | null; priority: string | null; category: string | null; dueDate: string | null }>(
+      deps.metadataLLM,
+      [{ role: 'user', content }],
+      { systemPrompt: buildReminderParserPrompt(remindTodayISO, remindDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+      'remind-parser',
+    ) ?? { content, project: null, section: null, priority: null, category: null, dueDate: null };
 
     const embedding = await deps.embeddingProvider.embed(parsed.content);
     const result = await insertReminder(deps.db, {
@@ -313,23 +325,21 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         let parsedPriority: string | null = null;
         let parsedDueDate: Date | null = null;
         let parsedCategory: string | null = null;
-        try {
-          console.log(`[subtask-parser] Parsing: "${text}"`);
-          const todayISO = new Date().toISOString().split('T')[0];
-          const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
-          const parseResponse = await deps.metadataLLM.complete(
-            [{ role: 'user', content: text }],
-            { systemPrompt: buildReminderParserPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
-          );
-          const parsed = JSON.parse(parseResponse.content);
-          parsedContent = parsed.content ?? text;
-          parsedPriority = parsed.priority ?? null;
-          parsedDueDate = parsed.dueDate ? new Date(parsed.dueDate) : null;
-          parsedCategory = parsed.category ?? null;
+        console.log(`[subtask-parser] Parsing: "${text}"`);
+        const subTodayISO = new Date().toISOString().split('T')[0];
+        const subDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
+        const subParsed = await llmJsonParse<{ content: string; priority: string | null; dueDate: string | null; category: string | null }>(
+          deps.metadataLLM,
+          [{ role: 'user', content: text }],
+          { systemPrompt: buildReminderParserPrompt(subTodayISO, subDayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+          'subtask-parser',
+        );
+        if (subParsed) {
+          parsedContent = subParsed.content ?? text;
+          parsedPriority = subParsed.priority ?? null;
+          parsedDueDate = subParsed.dueDate ? new Date(subParsed.dueDate) : null;
+          parsedCategory = subParsed.category ?? null;
           console.log(`[subtask-parser] Result: content="${parsedContent}", priority=${parsedPriority}, due=${parsedDueDate}`);
-        } catch (err) {
-          console.error(`[subtask-parser] Failed:`, err);
-          // Fallback: use raw text
         }
 
         const embedding = await deps.embeddingProvider.embed(parsedContent);
@@ -428,27 +438,17 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       return;
     }
 
-    // Use LLM to classify intent
-    let intent: { action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string };
-    try {
-      console.log(`[intent-classifier] Input: "${text}"`);
-      const todayISO = new Date().toISOString().split('T')[0];
-      const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
-      const classifyResponse = await deps.metadataLLM.complete(
-        [{ role: 'user', content: text }],
-        {
-          systemPrompt: buildIntentClassifierPrompt(todayISO, dayOfWeek, deps.config.timezone),
-          responseFormat: 'json',
-          maxTokens: 256,
-        },
-      );
-      intent = JSON.parse(classifyResponse.content);
-      console.log(`[intent-classifier] Result: ${JSON.stringify(intent)}`);
-    } catch (err) {
-      // If classification fails, default to capture
-      console.error(`[intent-classifier] Failed:`, err);
-      intent = { action: 'capture_thought' };
-    }
+    // Use LLM to classify intent (with retry)
+    console.log(`[intent-classifier] Input: "${text}"`);
+    const todayISO = new Date().toISOString().split('T')[0];
+    const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
+    const intent = await llmJsonParse<{ action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string }>(
+      deps.metadataLLM,
+      [{ role: 'user', content: text }],
+      { systemPrompt: buildIntentClassifierPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 256 },
+      'intent-classifier',
+    ) ?? { action: 'capture_thought' as const };
+    console.log(`[intent-classifier] Result: ${JSON.stringify(intent)}`);
 
     const INTENT_PREFIX = '🤖 Interpreted as';
     const UNDO_HINT = '\n↩️ Wrong? Say "undo" or reply with what you meant.';
