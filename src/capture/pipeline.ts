@@ -39,10 +39,19 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     ? files.map((f) => f.contentType.split('/')[0]) // 'image/jpeg' → 'image'
     : ['text'];
 
-  // Step 2: File hash check (storage optimization — reuse existing URLs)
+  // Step 2: File hash check — if ALL files already exist with the same hashes,
+  // this is a duplicate upload. Block it. (Same file bytes = same document.)
+  // If only SOME match, reuse existing URLs for those and upload the new ones.
   let existingUrls = new Map<string, string>();
   if (fileHashes.length > 0) {
     existingUrls = await checkFileHashDedup(db, fileHashes);
+    const allFilesExist = fileHashes.every((h) => existingUrls.has(h));
+    if (allFilesExist) {
+      return {
+        success: false,
+        reason: `Duplicate file(s) detected (exact hash match). Already captured.`,
+      };
+    }
   }
 
   // Step 3: Convert files to Gemini-supported MIME types, then generate embedding
