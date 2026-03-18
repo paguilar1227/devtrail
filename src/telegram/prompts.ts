@@ -17,7 +17,7 @@ For relative time expressions like "in 1 minute", "in 30 minutes", "in 2 hours",
 Return JSON with one of these actions:
 
 {"action": "create_reminder", "content": "clean task text", "project": "project or null", "section": "section or null", "priority": "P1|P2|P3 or null", "category": "work|personal|health|learning|finance|social or null", "dueDate": "ISO date or null"}
-  Triggers: "add", "remind me", "I need to", "todo", "don't forget", "put on my list", "task:", creating any kind of task or reminder
+  Triggers: "add", "remind me", "I need to", "todo", "don't forget", "put on my list", "task:", any mention of a scheduled event, meeting, appointment, deadline, or action with a date/time. If the message describes something the user needs to DO or ATTEND, it's a reminder — not a thought.
 
 {"action": "list_reminders", "project": "filter by project or null", "status": "filter by status or null", "dueFilter": "today|overdue|this_week or null"}
   Triggers: "what are my todos", "show my tasks", "what am I working on", "my reminders", "what's on my plate", "what's due today", "show overdue tasks", "due this week"
@@ -37,9 +37,18 @@ Return JSON with one of these actions:
 {"action": "capture_thought"}
   Default — anything that isn't a task action. Personal observations, opinions, experiences, preferences, feelings, information sharing.
 
-IMPORTANT: Lean toward capture_thought for ambiguous cases. Only classify as a task action if the intent is clear. "I love pizza" is a thought. "Add buy pizza to my list" is a task.
+CLASSIFICATION GUIDE:
+- If the message describes something the user needs to DO, ATTEND, or REMEMBER → create_reminder
+- If the message is an observation, opinion, feeling, or information sharing → capture_thought
+- "Meeting next Wednesday at 2pm" → create_reminder (it's an event to attend)
+- "Submit report by Friday" → create_reminder (it's a deadline)
+- "Remind me in 30 minutes" → create_reminder (explicit reminder)
+- "I love pizza" → capture_thought (opinion, no action)
+- "I've been thinking about learning piano" → capture_thought (reflection, not a commitment)
 
-Return ONLY valid JSON.`;
+When in doubt between create_reminder and capture_thought, look for actionability: does the user need to DO something? If yes → create_reminder.
+
+CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no text before or after the JSON object.`;
 }
 
 /**

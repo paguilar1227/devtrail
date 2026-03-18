@@ -96,8 +96,8 @@ describeIfKey('Section 19: NL Reminder Parsing (LLM integration)', () => {
     expect(diffMs).toBeLessThan(2 * 24 * 60 * 60 * 1000); // within 2 days
   }, 30_000);
 
-  it('19.8 "Remind me to submit report by Friday" → dueDate is next Friday', async () => {
-    const result = await classifyIntent(llm, 'Remind me to submit report by Friday');
+  it('19.8 "Submit report by Friday" → dueDate is next Friday', async () => {
+    const result = await classifyIntent(llm, 'Submit report by Friday');
     expect(result.action).toBe('create_reminder');
     expect(result.dueDate).toBeTruthy();
 
