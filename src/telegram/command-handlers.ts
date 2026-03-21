@@ -10,6 +10,7 @@ import {
   deleteReminder,
   findSubtasks,
   resolveReminderId,
+  reparentReminder,
 } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment } from '../db/reminder-comments.js';
@@ -174,8 +175,10 @@ export function registerCommandHandlers(
     const chatId = String(ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id ?? '');
 
     if (action === 'done') {
-      await dbCompleteReminder(deps.db, reminderId);
-      await ctx.answerCallbackQuery({ text: 'Marked as done ✓' });
+      const doneResult = await dbCompleteReminder(deps.db, reminderId);
+      const doneSubCount = doneResult.completed.length - 1;
+      const doneSubText = doneSubCount > 0 ? ` + ${doneSubCount} subtask${doneSubCount > 1 ? 's' : ''}` : '';
+      await ctx.answerCallbackQuery({ text: `Marked as done ✓${doneSubText}` });
       // Re-render the full list with updated statuses
       const reminders = await findActiveReminders(deps.db);
       if (reminders.length === 0) {
@@ -259,8 +262,41 @@ export function registerCommandHandlers(
       await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
       return;
     }
-    await dbCompleteReminder(deps.db, fullId);
-    await ctx.reply(`✓ Reminder completed! (${fullId.slice(0, 8)})`);
+    const chatId = String(ctx.chat.id);
+    const result = await dbCompleteReminder(deps.db, fullId);
+    const subtaskCount = result.completed.length - 1;
+    const subtaskMsg = subtaskCount > 0 ? ` (+ ${subtaskCount} subtask${subtaskCount > 1 ? 's' : ''})` : '';
+    stateRefs.lastActions.set(chatId, { action: 'complete', reminderId: fullId, previousState: { status: 'not_started' } });
+    await ctx.reply(`✓ Reminder completed${subtaskMsg}! (${fullId.slice(0, 8)})`);
+  });
+
+  bot.command('move', async (ctx) => {
+    const text = (ctx.message?.text ?? '').replace(/^\/move\s+/, '').trim();
+    const parts = text.split(/\s+/);
+    if (parts.length < 2) {
+      await ctx.reply('Usage: /move <task-id> root  OR  /move <task-id> <parent-id>');
+      return;
+    }
+    const rawTaskId = parts[0];
+    const target = parts.slice(1).join(' ');
+    const fullTaskId = await resolveReminderId(deps.db, rawTaskId);
+    if (!fullTaskId) {
+      await ctx.reply(`No reminder found matching "${rawTaskId}". Use /todos to see IDs.`);
+      return;
+    }
+    if (target.toLowerCase() === 'root') {
+      await reparentReminder(deps.db, fullTaskId, null);
+      await ctx.reply(`Moved (${fullTaskId.slice(0, 8)}) to root level.`);
+    } else {
+      const fullParentId = await resolveReminderId(deps.db, target);
+      if (!fullParentId) {
+        await ctx.reply(`No reminder found matching "${target}" for the new parent.`);
+        return;
+      }
+      await reparentReminder(deps.db, fullTaskId, fullParentId);
+      const parent = await getReminderById(deps.db, fullParentId);
+      await ctx.reply(`Moved (${fullTaskId.slice(0, 8)}) under "${parent?.content ?? fullParentId}".`);
+    }
   });
 
   bot.command('delete', async (ctx) => {

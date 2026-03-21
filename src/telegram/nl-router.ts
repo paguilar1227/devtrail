@@ -13,6 +13,7 @@ import {
   findSubtasks,
   findRemindersDueOnDate,
   findOverdueReminders,
+  reparentReminder,
 } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
@@ -262,8 +263,10 @@ export function registerNlRouter(
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
         stateRefs.lastActions.set(chatId, { action: 'complete', reminderId: match.id, previousState: { status: match.status } });
-        await dbCompleteReminder(deps.db, match.id);
-        await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
+        const nlDoneResult = await dbCompleteReminder(deps.db, match.id);
+        const nlSubCount = nlDoneResult.completed.length - 1;
+        const nlSubMsg = nlSubCount > 0 ? ` (+ ${nlSubCount} subtask${nlSubCount > 1 ? 's' : ''})` : '';
+        await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done${nlSubMsg}: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
       }
@@ -343,6 +346,26 @@ export function registerNlRouter(
           await ctx.reply(`Undo failed: ${msg}`);
         }
         stateRefs.lastActions.delete(chatId);
+      }
+
+    } else if (intent.action === 'move_reminder') {
+      const reminders = await findAllReminders(deps.db);
+      const taskSearch = ((intent as any).taskSearch ?? '').toLowerCase();
+      const targetSearch = ((intent as any).targetSearch ?? '').toLowerCase();
+      const task = reminders.find((r) => r.content.toLowerCase().includes(taskSearch));
+      if (!task) {
+        await ctx.reply(`Couldn't find a matching task for "${(intent as any).taskSearch}".`);
+      } else if (targetSearch === 'root' || targetSearch === 'top level') {
+        await reparentReminder(deps.db, task.id, null);
+        await ctx.reply(`${INTENT_PREFIX} move.\nMoved: "${task.content}" to root level (${task.id.slice(0, 8)})${UNDO_HINT}`);
+      } else {
+        const target = reminders.find((r) => r.content.toLowerCase().includes(targetSearch) && r.id !== task.id);
+        if (!target) {
+          await ctx.reply(`Couldn't find a matching task for "${(intent as any).targetSearch}" to move under.`);
+        } else {
+          await reparentReminder(deps.db, task.id, target.id);
+          await ctx.reply(`${INTENT_PREFIX} move.\nMoved: "${task.content}" under "${target.content}" (${task.id.slice(0, 8)})${UNDO_HINT}`);
+        }
       }
 
     } else {
