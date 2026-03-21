@@ -1172,4 +1172,106 @@ describe('MCP Tool E2E', () => {
     expect(beta).toBeDefined();
     expect(beta!.total).toBe(1);
   });
+
+  // ── edit reminder ───────────────────────────────────────────────────────
+  it('MCP — update_reminder: edit content and verify in DB', async () => {
+    const { insertReminder, getReminderById, updateReminder } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const { id } = await insertReminder(db, {
+      content: 'Call Nike',
+      embedding,
+      category: 'personal',
+      project: null,
+      section: null,
+      parentId: null,
+      depth: 0,
+      priority: 'P3',
+      source: 'telegram',
+      sourceContext: null,
+      dueDate: null,
+    });
+
+    // Edit the content
+    await updateReminder(db, id, { content: 'Call Adidas instead' });
+
+    const updated = await getReminderById(db, id);
+    expect(updated).toBeDefined();
+    expect(updated!.content).toBe('Call Adidas instead');
+    // Other fields unchanged
+    expect(updated!.priority).toBe('P3');
+    expect(updated!.status).toBe('not_started');
+  });
+
+  // ── cycle status ────────────────────────────────────────────────────────
+  it('MCP — update_reminder: cycle through statuses', async () => {
+    const { insertReminder, getReminderById, updateReminder } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const { id } = await insertReminder(db, {
+      content: 'Status cycle test',
+      embedding,
+      category: null,
+      project: null,
+      section: null,
+      parentId: null,
+      depth: 0,
+      priority: null,
+      source: 'test',
+      sourceContext: null,
+      dueDate: null,
+    });
+
+    // not_started → in_progress
+    await updateReminder(db, id, { status: 'in_progress' });
+    let r = await getReminderById(db, id);
+    expect(r!.status).toBe('in_progress');
+
+    // in_progress → paused
+    await updateReminder(db, id, { status: 'paused' });
+    r = await getReminderById(db, id);
+    expect(r!.status).toBe('paused');
+
+    // paused → blocked
+    await updateReminder(db, id, { status: 'blocked' });
+    r = await getReminderById(db, id);
+    expect(r!.status).toBe('blocked');
+
+    // blocked → done
+    await updateReminder(db, id, { status: 'done' });
+    r = await getReminderById(db, id);
+    expect(r!.status).toBe('done');
+  });
+
+  // ── resolve short ID ────────────────────────────────────────────────────
+  it('MCP — resolveReminderId: short prefix resolves to full UUID', async () => {
+    const { insertReminder, resolveReminderId } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const { id: fullId } = await insertReminder(db, {
+      content: 'Short ID test',
+      embedding,
+      category: null,
+      project: null,
+      section: null,
+      parentId: null,
+      depth: 0,
+      priority: null,
+      source: 'test',
+      sourceContext: null,
+      dueDate: null,
+    });
+
+    const shortId = fullId.slice(0, 8);
+    const resolved = await resolveReminderId(db, shortId);
+    expect(resolved).toBe(fullId);
+
+    // Full UUID also resolves
+    const resolvedFull = await resolveReminderId(db, fullId);
+    expect(resolvedFull).toBe(fullId);
+
+    // Invalid short ID returns null
+    const resolvedBad = await resolveReminderId(db, 'zzzzzzzz');
+    expect(resolvedBad).toBeNull();
+  });
 });
