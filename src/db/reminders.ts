@@ -167,12 +167,33 @@ export async function updateReminder(
   );
 }
 
-export async function completeReminder(db: DbClient, id: string): Promise<void> {
-  // Does NOT cascade to subtasks — each is completed independently per spec
+export async function completeReminder(db: DbClient, id: string): Promise<{ completed: string[] }> {
   await db.query(
     `UPDATE reminders SET status = 'done', updated_at = now() WHERE id = $1`,
     [id],
   );
+
+  const completed = [id];
+
+  async function completeChildren(parentId: string) {
+    const children = await db.query(
+      `SELECT id, status FROM reminders WHERE parent_id = $1 AND archived = false`,
+      [parentId],
+    );
+    for (const child of children.rows) {
+      if (child.status !== 'done' && child.status !== 'cancelled') {
+        await db.query(
+          `UPDATE reminders SET status = 'done', updated_at = now() WHERE id = $1`,
+          [child.id],
+        );
+        completed.push(child.id);
+      }
+      await completeChildren(child.id);
+    }
+  }
+  await completeChildren(id);
+
+  return { completed };
 }
 
 export async function deleteReminder(db: DbClient, id: string): Promise<void> {

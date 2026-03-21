@@ -1180,4 +1180,48 @@ describe('Telegram Pipeline — Subtasks & Display', () => {
     const reply = telegramReplies[telegramReplies.length - 1];
     expect(reply.text).toContain('No reminder found');
   });
+
+  it('T26: /done with subtasks shows subtask count in reply', async () => {
+    const remId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+    const child1Id = 'c1111111-0000-0000-0000-000000000001';
+    const child2Id = 'c2222222-0000-0000-0000-000000000002';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // resolveReminderId — full UUID passes through (no LIKE needed)
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: remId }] } as any;
+      }
+      // completeReminder UPDATE parent
+      if (typeof sql === 'string' && sql.includes("status = 'done'") && params?.[0] === remId) {
+        return { rows: [] } as any;
+      }
+      // SELECT children of parent
+      if (typeof sql === 'string' && sql.includes('SELECT id, status') && sql.includes('parent_id = $1') && params?.[0] === remId) {
+        return {
+          rows: [
+            { id: child1Id, status: 'not_started' },
+            { id: child2Id, status: 'in_progress' },
+          ],
+        } as any;
+      }
+      // UPDATE child1 / child2
+      if (typeof sql === 'string' && sql.includes("status = 'done'") && (params?.[0] === child1Id || params?.[0] === child2Id)) {
+        return { rows: [] } as any;
+      }
+      // SELECT children of child1 / child2 (none)
+      if (typeof sql === 'string' && sql.includes('SELECT id, status') && sql.includes('parent_id = $1')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(4001, `/done ${remId}`));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Reminder completed');
+    expect(reply.text).toContain('+ 2 subtasks');
+  });
 });

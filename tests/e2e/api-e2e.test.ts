@@ -569,6 +569,41 @@ describe('Reminder E2E', () => {
     expect(reminders[0].content).toBe('Task B');
   });
 
+  it('R5. Cascade done: complete parent auto-completes open subtasks', async () => {
+    const { insertReminder, completeReminder, getReminderById } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    // Create parent
+    const parent = await insertReminder(db, {
+      content: 'Parent task', embedding, category: null, project: null, section: null,
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+    // Create two subtasks
+    const child1 = await insertReminder(db, {
+      content: 'Subtask 1', embedding, category: null, project: null, section: null,
+      parentId: parent.id, depth: 1, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+    const child2 = await insertReminder(db, {
+      content: 'Subtask 2', embedding, category: null, project: null, section: null,
+      parentId: parent.id, depth: 1, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    // Complete parent — should cascade to both subtasks
+    const result = await completeReminder(db, parent.id);
+    expect(result.completed).toHaveLength(3);
+    expect(result.completed).toContain(parent.id);
+    expect(result.completed).toContain(child1.id);
+    expect(result.completed).toContain(child2.id);
+
+    // Verify all three are done in DB
+    const parentRow = await getReminderById(db, parent.id);
+    const child1Row = await getReminderById(db, child1.id);
+    const child2Row = await getReminderById(db, child2.id);
+    expect(parentRow?.status).toBe('done');
+    expect(child1Row?.status).toBe('done');
+    expect(child2Row?.status).toBe('done');
+  });
+
   it('R4. GET /api/v1/reminders?project=fitness → filtered by project', async () => {
     const { insertReminder } = await import('../../src/db/reminders.js');
     const embedding = new Array(EMBEDDING_DIM).fill(0.1);

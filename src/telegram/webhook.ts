@@ -216,8 +216,10 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const chatId = String(ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id ?? '');
 
     if (action === 'done') {
-      await dbCompleteReminder(deps.db, reminderId);
-      await ctx.answerCallbackQuery({ text: 'Marked as done ✓' });
+      const { completed } = await dbCompleteReminder(deps.db, reminderId);
+      const subtaskCount = completed.length - 1;
+      const doneText = subtaskCount > 0 ? `Marked as done ✓ (+ ${subtaskCount} subtask${subtaskCount === 1 ? '' : 's'})` : 'Marked as done ✓';
+      await ctx.answerCallbackQuery({ text: doneText });
       // Re-render the full list with updated statuses
       const reminders = await findActiveReminders(deps.db);
       if (reminders.length === 0) {
@@ -301,8 +303,10 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
       return;
     }
-    await dbCompleteReminder(deps.db, fullId);
-    await ctx.reply(`✓ Reminder completed! (${fullId.slice(0, 8)})`);
+    const { completed } = await dbCompleteReminder(deps.db, fullId);
+    const subtaskCount = completed.length - 1;
+    const subtaskSuffix = subtaskCount > 0 ? ` (+ ${subtaskCount} subtask${subtaskCount === 1 ? '' : 's'})` : '';
+    await ctx.reply(`✓ Reminder completed!${subtaskSuffix} (${fullId.slice(0, 8)})`);
   });
 
   bot.command('delete', async (ctx) => {
@@ -614,8 +618,10 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
         lastActions.set(chatId, { action: 'complete', reminderId: match.id, previousState: { status: match.status } });
-        await dbCompleteReminder(deps.db, match.id);
-        await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
+        const { completed } = await dbCompleteReminder(deps.db, match.id);
+        const nlSubtaskCount = completed.length - 1;
+        const nlSubtaskSuffix = nlSubtaskCount > 0 ? ` (+ ${nlSubtaskCount} subtask${nlSubtaskCount === 1 ? '' : 's'})` : '';
+        await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done: "${match.content}"${nlSubtaskSuffix} (${match.id.slice(0, 8)})${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
       }

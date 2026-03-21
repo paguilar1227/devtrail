@@ -153,27 +153,50 @@ describe('reminders', () => {
 
   it('marks reminder as done', async () => {
     const db = mockDb();
+    // UPDATE parent
     vi.mocked(db.query).mockResolvedValueOnce({
-      rows: [{ id: 'rem-1', status: 'done' }],
-      command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+      rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    // SELECT children (none)
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [],
     });
     const { completeReminder } = await import('../../../src/db/reminders.js');
-    await completeReminder(db, 'rem-1');
+    const result = await completeReminder(db, 'rem-1');
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining("status = 'done'"),
       ['rem-1'],
     );
+    expect(result.completed).toEqual(['rem-1']);
   });
 
-  it('completeReminder does NOT touch subtasks (single row update)', async () => {
+  it('completeReminder cascades to open subtasks and returns completed array', async () => {
     const db = mockDb();
+    // UPDATE parent
     vi.mocked(db.query).mockResolvedValueOnce({
       rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
     });
+    // SELECT children of parent — returns two children
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ id: 'child-1', status: 'not_started' }, { id: 'child-2', status: 'done' }],
+      command: 'SELECT', rowCount: 2, oid: 0, fields: [],
+    });
+    // UPDATE child-1 (not_started → done)
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    // SELECT children of child-1 (none)
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [],
+    });
+    // child-2 is already 'done' — no UPDATE issued; SELECT its children
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [],
+    });
     const { completeReminder } = await import('../../../src/db/reminders.js');
-    await completeReminder(db, 'rem-1');
-    // Only one query should be issued — no cascade
-    expect(db.query).toHaveBeenCalledTimes(1);
+    const result = await completeReminder(db, 'rem-parent');
+    // parent + child-1 completed; child-2 skipped (already done)
+    expect(result.completed).toEqual(['rem-parent', 'child-1']);
   });
 
   it('deleteReminder cascades to subtasks and comments', async () => {
