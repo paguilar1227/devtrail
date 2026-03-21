@@ -3,7 +3,7 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks, resolveReminderId } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
@@ -259,13 +259,18 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   });
 
   bot.command('done', async (ctx) => {
-    const id = (ctx.message?.text ?? '').replace(/^\/done\s+/, '').trim();
-    if (!id) {
+    const rawId = (ctx.message?.text ?? '').replace(/^\/done\s+/, '').trim();
+    if (!rawId) {
       await ctx.reply('Usage: /done <reminder-id>');
       return;
     }
-    await dbCompleteReminder(deps.db, id);
-    await ctx.reply('Reminder completed!');
+    const fullId = await resolveReminderId(deps.db, rawId);
+    if (!fullId) {
+      await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
+      return;
+    }
+    await dbCompleteReminder(deps.db, fullId);
+    await ctx.reply(`✓ Reminder completed! (${fullId.slice(0, 8)})`);
   });
 
   bot.command('comment', async (ctx) => {
@@ -273,11 +278,11 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     try {
       const result = await handleCommentCommand(
         { text, chatId: String(ctx.chat.id) },
-        async (reminderId, content, source) => {
-          const reminder = await getReminderById(deps.db, reminderId);
-          if (!reminder) throw new Error(`Reminder ${reminderId} not found`);
+        async (rawReminderId, content, source) => {
+          const fullId = await resolveReminderId(deps.db, rawReminderId);
+          if (!fullId) throw new Error(`No reminder found matching "${rawReminderId}". Use /todos to see IDs.`);
           const embedding = await deps.embeddingProvider.embed(content);
-          return insertComment(deps.db, { content, embedding, reminderId, source });
+          return insertComment(deps.db, { content, embedding, reminderId: fullId, source });
         },
       );
       await ctx.reply(`Comment added to ${result.reminderId.slice(0, 8)} (${result.id.slice(0, 8)})`);

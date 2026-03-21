@@ -332,6 +332,20 @@ export async function getReminderById(db: DbClient, id: string): Promise<Reminde
   return result.rows[0] ?? null;
 }
 
+/** Resolve a short ID prefix (e.g. "4e0bd1b2") to a full UUID. Returns null if no match or ambiguous. */
+export async function resolveReminderId(db: DbClient, shortId: string): Promise<string | null> {
+  // If it's already a full UUID, use it directly
+  if (shortId.length === 36 && shortId.includes('-')) {
+    return shortId;
+  }
+  const result = await db.query(
+    `SELECT id FROM reminders WHERE id::text LIKE $1 || '%' LIMIT 2`,
+    [shortId],
+  );
+  if (result.rows.length === 1) return result.rows[0].id;
+  return null; // No match or ambiguous (multiple matches)
+}
+
 export async function listProjects(db: DbClient): Promise<Array<{
   project: string;
   total: number;

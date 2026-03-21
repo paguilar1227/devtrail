@@ -416,23 +416,71 @@ describe('Telegram Pipeline — Slash Commands', () => {
     expect(reply.text).toContain('fitness');
   });
 
-  it('T6: "/done <id>" → bot replies "Reminder completed!"', async () => {
+  it('T6: "/done <full-uuid>" → bot replies "Reminder completed!"', async () => {
     const deps = makeDeps();
-    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // resolveReminderId: full UUID passes through (length 36 with dashes)
+      if (typeof sql === 'string' && sql.includes('status')) {
+        return { rows: [{ id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
 
     const app = await createTestApp(deps);
-    await sendWebhookUpdate(app, textUpdate(1006, '/done rem-1'));
+    await sendWebhookUpdate(app, textUpdate(1006, '/done a1b2c3d4-e5f6-7890-abcd-ef1234567890'));
 
     expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
     const reply = telegramReplies[telegramReplies.length - 1];
-    expect(reply.text).toContain('Reminder completed!');
+    expect(reply.text).toContain('Reminder completed');
   });
 
-  it('T7: "/comment <id> Found a race" → bot replies "Comment added..."', async () => {
+  it('T6b: "/done <short-id>" → resolves short ID prefix and completes', async () => {
     const deps = makeDeps();
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
-      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('reminders') && sql.includes('id = $1')) {
-        return { rows: [{ id: 'rem-1', content: 'Buy shoes', status: 'not_started' }] } as any;
+      // resolveReminderId: LIKE query for short prefix
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' }] } as any;
+      }
+      // completeReminder
+      if (typeof sql === 'string' && sql.includes('status')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(1061, '/done a1b2c3d4'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Reminder completed');
+    expect(reply.text).toContain('a1b2c3d4');
+  });
+
+  it('T6c: "/done <invalid-id>" → replies with error message', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // resolveReminderId: no match
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(1062, '/done badid123'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('No reminder found');
+  });
+
+  it('T7: "/comment <short-id> Found a race" → resolves ID and adds comment', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // resolveReminderId: LIKE query
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: 'rem-11111-2222-3333-444455556666' }] } as any;
       }
       if (typeof sql === 'string' && sql.includes('INSERT INTO reminder_comments')) {
         return { rows: [{ id: 'comment-abc-12345678' }] } as any;
@@ -441,7 +489,7 @@ describe('Telegram Pipeline — Slash Commands', () => {
     });
 
     const app = await createTestApp(deps);
-    await sendWebhookUpdate(app, textUpdate(1007, '/comment rem-1 Found a race'));
+    await sendWebhookUpdate(app, textUpdate(1007, '/comment rem-1111 Found a race'));
 
     expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
     const reply = telegramReplies[telegramReplies.length - 1];
