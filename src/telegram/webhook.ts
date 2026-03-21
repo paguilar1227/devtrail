@@ -106,11 +106,24 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const text = formatRemindersMarkdown(reminders, subtasksMap);
 
     const keyboard = new InlineKeyboard();
+    // Status cycle: not_started → in_progress → paused → blocked → done
+    // The cycle button label shows the NEXT state the task will move to.
+    const cycleNextStatus: Record<string, { label: string; next: string }> = {
+      not_started: { label: '●', next: 'in_progress' },
+      in_progress:  { label: '⏸', next: 'paused' },
+      paused:       { label: '🚫', next: 'blocked' },
+      blocked:      { label: '✓', next: 'done' },
+    };
     for (const [num] of numMap) {
       const remId = numMap.get(num)!;
       const rem = reminders.find((r) => r.id === remId);
       if (!rem || rem.status === 'done' || rem.status === 'cancelled') continue;
-      keyboard.text(`✓ ${num}`, `done:${remId}`).text(`⏸ ${num}`, `pause:${remId}`).row();
+      const cycle = cycleNextStatus[rem.status];
+      if (cycle) {
+        keyboard.text(`✓ ${num}`, `done:${remId}`).text(`${cycle.label} ${num}`, `cycle:${remId}`).row();
+      } else {
+        keyboard.text(`✓ ${num}`, `done:${remId}`).row();
+      }
     }
 
     return { text, keyboard };
@@ -213,15 +226,32 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         const { text, keyboard } = await buildTodosMessage(chatId, reminders);
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
-    } else if (action === 'pause') {
-      await updateReminder(deps.db, reminderId, { status: 'paused' });
-      await ctx.answerCallbackQuery({ text: 'Paused ⏸' });
+    } else if (action === 'cycle') {
+      // Advance to next status in the cycle: not_started → in_progress → paused → blocked → done
+      const cycleMap: Record<string, string> = {
+        not_started: 'in_progress',
+        in_progress: 'paused',
+        paused: 'blocked',
+        blocked: 'done',
+      };
+      const cycleLabels: Record<string, string> = {
+        in_progress: 'In progress ●',
+        paused: 'Paused ⏸',
+        blocked: 'Blocked 🚫',
+        done: 'Done ✓',
+      };
+      const current = await getReminderById(deps.db, reminderId);
+      if (!current) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
+      const nextStatus = cycleMap[current.status];
+      if (!nextStatus) { await ctx.answerCallbackQuery({ text: 'Already done' }); return; }
+      await updateReminder(deps.db, reminderId, { status: nextStatus });
+      await ctx.answerCallbackQuery({ text: cycleLabels[nextStatus] ?? nextStatus });
       // Re-render the full list with updated statuses
-      const reminders = await findActiveReminders(deps.db);
-      if (reminders.length === 0) {
+      const cycleReminders = await findActiveReminders(deps.db);
+      if (cycleReminders.length === 0) {
         await ctx.editMessageText('No active reminders.');
       } else {
-        const { text, keyboard } = await buildTodosMessage(chatId, reminders);
+        const { text, keyboard } = await buildTodosMessage(chatId, cycleReminders);
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
     } else if (action === 'subtask') {
@@ -273,6 +303,35 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     }
     await dbCompleteReminder(deps.db, fullId);
     await ctx.reply(`✓ Reminder completed! (${fullId.slice(0, 8)})`);
+  });
+
+  bot.command('edit', async (ctx) => {
+    const text = (ctx.message?.text ?? '').replace(/^\/edit\s+/, '').trim();
+    const spaceIdx = text.indexOf(' ');
+    if (spaceIdx === -1) {
+      await ctx.reply('Usage: /edit <id> <new text>');
+      return;
+    }
+    const rawId = text.slice(0, spaceIdx).trim();
+    const newContent = text.slice(spaceIdx + 1).trim();
+
+    const fullId = await resolveReminderId(deps.db, rawId);
+    if (!fullId) {
+      await ctx.reply(`No reminder found matching "${rawId}".`);
+      return;
+    }
+
+    // Store previous state for undo
+    const chatId = String(ctx.chat.id);
+    const old = await getReminderById(deps.db, fullId);
+    lastActions.set(chatId, { action: 'update', reminderId: fullId, previousState: { content: old?.content, status: old?.status, priority: old?.priority, project: old?.project } });
+
+    // Update content and re-embed
+    await updateReminder(deps.db, fullId, { content: newContent });
+    const embedding = await deps.embeddingProvider.embed(newContent);
+    await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(embedding), fullId]);
+
+    await ctx.reply(`Updated (${fullId.slice(0, 8)}): "${newContent}"`);
   });
 
   bot.command('comment', async (ctx) => {
@@ -429,6 +488,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
             status: prev.status as string | undefined,
             priority: prev.priority as string | null | undefined,
             project: prev.project as string | null | undefined,
+            content: prev.content as string | undefined,
           });
           await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
         } else if (last.action === 'comment') {
@@ -547,14 +607,24 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
-        lastActions.set(chatId, { action: 'update', reminderId: match.id, previousState: { status: match.status, priority: match.priority, project: match.project } });
+        lastActions.set(chatId, { action: 'update', reminderId: match.id, previousState: { content: match.content, status: match.status, priority: match.priority, project: match.project } });
         await updateReminder(deps.db, match.id, {
           status: intent.status,
           priority: intent.priority ?? undefined,
           project: intent.project ?? undefined,
           dueDate: intent.dueDate ? new Date(intent.dueDate) : undefined,
+          content: intent.content ?? undefined,
         });
-        const changes = [intent.status, intent.priority, intent.project ? `→ ${intent.project}` : null].filter(Boolean).join(', ');
+        if (intent.content) {
+          const embedding = await deps.embeddingProvider.embed(intent.content);
+          await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(embedding), match.id]);
+        }
+        const changes = [
+          intent.content ? `content → "${intent.content}"` : null,
+          intent.status,
+          intent.priority,
+          intent.project ? `→ ${intent.project}` : null,
+        ].filter(Boolean).join(', ');
         await ctx.reply(`${INTENT_PREFIX} task update.\nUpdated: "${match.content}" (${changes})${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}". Try /todos to see your list.`);
@@ -593,6 +663,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
               status: prev.status as string | undefined,
               priority: prev.priority as string | null | undefined,
               project: prev.project as string | null | undefined,
+              content: prev.content as string | undefined,
             });
             await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
           } else if (last.action === 'comment') {

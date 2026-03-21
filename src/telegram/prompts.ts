@@ -26,8 +26,8 @@ Return JSON with one of these actions:
 {"action": "complete_reminder", "taskSearch": "description of which task to complete"}
   Triggers: "mark X as done", "finished X", "completed X", "done with X", "X is done"
 
-{"action": "update_reminder", "taskSearch": "description of which task", "status": "new status or null", "priority": "new priority or null", "project": "move to project or null"}
-  Triggers: "change X to", "pause X", "block X", "move X to", "set priority of X"
+{"action": "update_reminder", "taskSearch": "description of which task", "status": "new status or null", "priority": "new priority or null", "project": "move to project or null", "content": "new content text or null"}
+  Triggers: "change X to", "pause X", "block X", "move X to", "set priority of X", "rename X to", "edit X to", "update X text to"
 
 {"action": "add_comment", "taskSearch": "description of which task", "content": "the comment text"}
   Triggers: "update on X:", "note on X:", "progress on X:", "regarding X:"

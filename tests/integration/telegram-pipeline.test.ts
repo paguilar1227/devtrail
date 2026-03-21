@@ -967,6 +967,100 @@ describe('Telegram Pipeline — Subtasks & Display', () => {
     expect(insertParams).toContain(parentId);
   });
 
+  it('T21: Cycle button advances task status from not_started to in_progress', async () => {
+    const remId = 'rem-cycle-aabb1122';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // getReminderById — called by cycle handler to get current status
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
+        return {
+          rows: [{ id: remId, content: 'Call Nike', status: 'not_started', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      // findActiveReminders — re-render after cycle
+      if (typeof sql === 'string' && sql.includes('not_started')) {
+        return {
+          rows: [{ id: remId, content: 'Call Nike', status: 'in_progress', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, callbackQueryUpdate(3001, `cycle:${remId}`));
+
+    // Verify updateReminder was called with status = 'in_progress'
+    const updateCall = vi.mocked(deps.db.query).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE reminders SET') && sql.includes('status'),
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![1]).toContain('in_progress');
+  });
+
+  it('T22: /edit command updates reminder content', async () => {
+    const remId = 'rem-edit-ccdd3344';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // resolveReminderId — LIKE prefix match
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: remId }] } as any;
+      }
+      // getReminderById — for undo state
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
+        return {
+          rows: [{ id: remId, content: 'Call Nike', status: 'not_started', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(3002, `/edit rem-edit New content here`));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Updated');
+    expect(reply.text).toContain('New content here');
+  });
+
+  it('T23: NL edit "Change the nike task to Call Adidas" updates content', async () => {
+    const remId = 'rem-nl-edit-eeff5566';
+    const deps = makeDeps();
+
+    vi.mocked(deps.metadataLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ action: 'update_reminder', taskSearch: 'nike', content: 'Call Adidas' }),
+      tokensUsed: { input: 10, output: 10, total: 20 },
+    });
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // findAllReminders
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('archived = false') && !sql.includes('parent_id') && !sql.includes('WHERE id')) {
+        return {
+          rows: [{ id: remId, content: 'Call Nike', status: 'not_started', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(3003, 'Change the nike task to Call Adidas'));
+
+    // Verify updateReminder was called with content = 'Call Adidas'
+    const updateCall = vi.mocked(deps.db.query).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE reminders SET') && sql.includes('content'),
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![1]).toContain('Call Adidas');
+
+    // Also check the embedding update was triggered
+    const embeddingUpdate = vi.mocked(deps.db.query).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE reminders SET embedding'),
+    );
+    expect(embeddingUpdate).toBeDefined();
+  });
+
   it('T20: Max depth enforcement — reject subtask at depth >= 3', async () => {
     const deepParentId = 'rem-deep-depth3-aabb';
     const deps = makeDeps();
