@@ -559,7 +559,7 @@ describe('Telegram Pipeline — Natural Language', () => {
     });
 
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
-      if (typeof sql === 'string' && sql.includes('not_started')) {
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('reminders') && sql.includes('archived = false') && !sql.includes('parent_id')) {
         return {
           rows: [
             { id: 'rem-shoes-aa112233', content: 'Buy running shoes', status: 'not_started', priority: 'P1', project: 'fitness', section: null, depth: 0, due_date: null, archived: false, created_at: new Date(), updated_at: new Date() },
@@ -587,7 +587,7 @@ describe('Telegram Pipeline — Natural Language', () => {
     });
 
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
-      if (typeof sql === 'string' && sql.includes('not_started')) {
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('reminders') && sql.includes('archived = false') && !sql.includes('parent_id')) {
         return {
           rows: [
             { id: 'rem-5k-bb112233', content: 'Sign up for a 5K race', status: 'not_started', priority: 'P2', project: 'fitness', section: null, depth: 0, due_date: null, archived: false, created_at: new Date(), updated_at: new Date() },

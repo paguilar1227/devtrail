@@ -270,6 +270,15 @@ export async function findActiveReminders(db: DbClient): Promise<ReminderRow[]> 
   return result.rows;
 }
 
+/** Find all non-archived reminders (any status) for search-by-description flows */
+export async function findAllReminders(db: DbClient): Promise<ReminderRow[]> {
+  const result = await db.query(
+    `SELECT * FROM reminders WHERE archived = false ORDER BY created_at DESC`,
+    [],
+  );
+  return result.rows;
+}
+
 export async function findRemindersDueOnDate(
   db: DbClient,
   date: Date,

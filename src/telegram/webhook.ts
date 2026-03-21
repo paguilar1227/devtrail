@@ -3,7 +3,7 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks, resolveReminderId } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, findAllReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks, resolveReminderId } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
@@ -530,8 +530,8 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       await ctx.reply(formatted, { reply_markup: keyboard });
 
     } else if (intent.action === 'complete_reminder') {
-      // Search for the task by description
-      const reminders = await findActiveReminders(deps.db);
+      // Search all reminders (including done/subtasks) by description
+      const reminders = await findAllReminders(deps.db);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
@@ -543,7 +543,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       }
 
     } else if (intent.action === 'update_reminder') {
-      const reminders = await findActiveReminders(deps.db);
+      const reminders = await findAllReminders(deps.db);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
@@ -561,7 +561,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
       }
 
     } else if (intent.action === 'add_comment') {
-      const reminders = await findActiveReminders(deps.db);
+      const reminders = await findAllReminders(deps.db);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match && intent.content) {
