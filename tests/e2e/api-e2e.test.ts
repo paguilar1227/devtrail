@@ -26,10 +26,10 @@ vi.mock('applicationinsights', () => ({
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const DB_URL = process.env.E2E_DATABASE_URL ?? 'postgresql://openbrain:openbrain@localhost:5432/openbrain_test';
+const DB_URL = process.env.E2E_DATABASE_URL ?? 'postgresql://openbrain:openbrain@localhost:5434/openbrain_test';
 const ADMIN_DB_URL = process.env.E2E_DATABASE_URL
   ? process.env.E2E_DATABASE_URL.replace(/\/[^/]+$/, '/openbrain')
-  : 'postgresql://openbrain:openbrain@localhost:5432/openbrain';
+  : 'postgresql://openbrain:openbrain@localhost:5434/openbrain';
 const API_KEY = 'test-e2e-key';
 const AUTH_HEADER = `Bearer ${API_KEY}`;
 const EMBEDDING_DIM = 3072;
