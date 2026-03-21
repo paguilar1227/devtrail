@@ -1274,4 +1274,63 @@ describe('MCP Tool E2E', () => {
     const resolvedBad = await resolveReminderId(db, 'zzzzzzzz');
     expect(resolvedBad).toBeNull();
   });
+
+  // ── delete reminder with cascade ────────────────────────────────────────
+  it('E2E — delete_reminder: cascade-deletes subtasks and comments', async () => {
+    const { insertReminder, getReminderById, deleteReminder } = await import('../../src/db/reminders.js');
+    const { insertComment, findCommentsByReminderId } = await import('../../src/db/reminder-comments.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    // Create parent
+    const { id: parentId } = await insertReminder(db, {
+      content: 'Parent task', embedding, category: null, project: null, section: null,
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    // Create subtask
+    const { id: subtaskId } = await insertReminder(db, {
+      content: 'Subtask', embedding, category: null, project: null, section: null,
+      parentId: parentId, depth: 1, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    // Add comment to parent
+    await insertComment(db, { content: 'Progress note', embedding, reminderId: parentId, source: 'test' });
+
+    // Verify everything exists
+    expect(await getReminderById(db, parentId)).toBeDefined();
+    expect(await getReminderById(db, subtaskId)).toBeDefined();
+    const comments = await findCommentsByReminderId(db, parentId);
+    expect(comments.length).toBe(1);
+
+    // Delete parent — should cascade
+    await deleteReminder(db, parentId);
+
+    // Verify everything is gone
+    expect(await getReminderById(db, parentId)).toBeNull();
+    expect(await getReminderById(db, subtaskId)).toBeNull();
+    const commentsAfter = await findCommentsByReminderId(db, parentId);
+    expect(commentsAfter.length).toBe(0);
+  });
+
+  // ── cycle status loops back ─────────────────────────────────────────────
+  it('E2E — status cycle loops: not_started → in_progress → paused → blocked → not_started', async () => {
+    const { insertReminder, getReminderById, updateReminder } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const { id } = await insertReminder(db, {
+      content: 'Cycle loop test', embedding, category: null, project: null, section: null,
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    const cycle = ['in_progress', 'paused', 'blocked', 'not_started'];
+    for (const nextStatus of cycle) {
+      await updateReminder(db, id, { status: nextStatus });
+      const r = await getReminderById(db, id);
+      expect(r!.status).toBe(nextStatus);
+    }
+
+    // Back to not_started — full loop complete
+    const final = await getReminderById(db, id);
+    expect(final!.status).toBe('not_started');
+  });
 });

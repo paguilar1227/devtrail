@@ -305,6 +305,24 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     await ctx.reply(`✓ Reminder completed! (${fullId.slice(0, 8)})`);
   });
 
+  bot.command('delete', async (ctx) => {
+    const rawId = (ctx.message?.text ?? '').replace(/^\/delete\s+/, '').trim();
+    if (!rawId) {
+      await ctx.reply('Usage: /delete <reminder-id>');
+      return;
+    }
+    const fullId = await resolveReminderId(deps.db, rawId);
+    if (!fullId) {
+      await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
+      return;
+    }
+    const reminder = await getReminderById(deps.db, fullId);
+    const chatId = String(ctx.chat.id);
+    lastActions.set(chatId, { action: 'create', reminderId: fullId }); // undo will try to re-create, but delete is destructive — undo just notifies
+    await deleteReminder(deps.db, fullId);
+    await ctx.reply(`🗑 Deleted: "${reminder?.content ?? fullId}" (${fullId.slice(0, 8)}) and all subtasks/comments.`);
+  });
+
   bot.command('edit', async (ctx) => {
     const text = (ctx.message?.text ?? '').replace(/^\/edit\s+/, '').trim();
     const spaceIdx = text.indexOf(' ');

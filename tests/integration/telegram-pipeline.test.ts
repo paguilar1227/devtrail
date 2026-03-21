@@ -967,35 +967,46 @@ describe('Telegram Pipeline — Subtasks & Display', () => {
     expect(insertParams).toContain(parentId);
   });
 
-  it('T21: Cycle button advances task status from not_started to in_progress', async () => {
+  it('T21: Cycle button loops through all statuses and back to not_started', async () => {
     const remId = 'rem-cycle-aabb1122';
     const deps = makeDeps();
 
-    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
-      // getReminderById — called by cycle handler to get current status
-      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
-        return {
-          rows: [{ id: remId, content: 'Call Nike', status: 'not_started', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
-        } as any;
-      }
-      // findActiveReminders — re-render after cycle
-      if (typeof sql === 'string' && sql.includes('not_started')) {
-        return {
-          rows: [{ id: remId, content: 'Call Nike', status: 'in_progress', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
-        } as any;
-      }
-      return { rows: [] } as any;
-    });
+    // Track current status as it cycles
+    let currentStatus = 'not_started';
+    const expectedCycle = ['in_progress', 'paused', 'blocked', 'not_started'];
 
-    const app = await createTestApp(deps);
-    await sendWebhookUpdate(app, callbackQueryUpdate(3001, `cycle:${remId}`));
+    for (const expectedNext of expectedCycle) {
+      vi.mocked(deps.db.query).mockReset();
+      vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+        if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
+          return {
+            rows: [{ id: remId, content: 'Call Nike', status: currentStatus, priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+          } as any;
+        }
+        if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('reminders') && sql.includes('archived = false') && !sql.includes('parent_id')) {
+          return {
+            rows: [{ id: remId, content: 'Call Nike', status: expectedNext, priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() }],
+          } as any;
+        }
+        return { rows: [] } as any;
+      });
 
-    // Verify updateReminder was called with status = 'in_progress'
-    const updateCall = vi.mocked(deps.db.query).mock.calls.find(
-      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE reminders SET') && sql.includes('status'),
-    );
-    expect(updateCall).toBeDefined();
-    expect(updateCall![1]).toContain('in_progress');
+      const app = await createTestApp(deps);
+      telegramReplies.length = 0;
+      await sendWebhookUpdate(app, callbackQueryUpdate(3000 + expectedCycle.indexOf(expectedNext), `cycle:${remId}`));
+
+      // Verify updateReminder was called with the expected next status
+      const updateCall = vi.mocked(deps.db.query).mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('UPDATE reminders SET') && sql.includes('status'),
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall![1]).toContain(expectedNext);
+
+      currentStatus = expectedNext;
+    }
+
+    // After full cycle, we're back to not_started
+    expect(currentStatus).toBe('not_started');
   });
 
   it('T22: /edit command updates reminder content', async () => {
@@ -1121,5 +1132,52 @@ describe('Telegram Pipeline — Subtasks & Display', () => {
     const lastReply = telegramReplies[telegramReplies.length - 1];
     expect(lastReply.text).toContain('Captured!');
     expect(lastReply.text).not.toContain('Subtask added');
+  });
+
+  it('T24: /delete command removes reminder and replies with confirmation', async () => {
+    const remId = 'rem-delete-ff001122-3344-5566-7788-99aabbccddee';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // resolveReminderId — LIKE query
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: remId }] } as any;
+      }
+      // getReminderById
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1')) {
+        return { rows: [{ id: remId, content: 'Task to delete', status: 'not_started' }] } as any;
+      }
+      // findSubtasks (cascade)
+      if (typeof sql === 'string' && sql.includes('parent_id')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(1090, '/delete rem-dele'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Deleted');
+    expect(reply.text).toContain('Task to delete');
+  });
+
+  it('T25: /delete with invalid ID replies with error', async () => {
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(1091, '/delete nonexistent'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('No reminder found');
   });
 });
