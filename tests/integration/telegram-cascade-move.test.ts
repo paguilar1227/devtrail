@@ -213,6 +213,106 @@ describe('Telegram Pipeline — Cascade Done & Move', () => {
     expect(reply.text).toContain('root level');
   });
 
+  it('T29: ⚙ button shows action menu with task content', async () => {
+    const remId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
+        return {
+          rows: [{ id: remId, content: 'Buy running shoes', status: 'not_started', priority: null, project: null, section: null, depth: 0, parent_id: null, due_date: null, archived: false, created_at: new Date(), updated_at: new Date(), source: 'telegram', source_context: null, embedding: [], metadata: null }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    const callbackUpdate = {
+      update_id: 5001,
+      callback_query: {
+        id: 'cbq-5001',
+        from: { id: 42, is_bot: false, first_name: 'Tester' },
+        message: { message_id: 1, chat: { id: 42, type: 'private' }, date: Math.floor(Date.now() / 1000), text: 'todos' },
+        data: `actions:${remId}`,
+      },
+    };
+
+    await sendWebhookUpdate(app, callbackUpdate);
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Actions for:');
+    expect(reply.text).toContain('Buy running shoes');
+    expect(reply.text).toContain('aaaaaaaa');
+  });
+
+  it('T30: action-edit sets pending state, next text edits the task', async () => {
+    const remId = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async () => ({ rows: [] } as any));
+
+    const app = await createTestApp(deps);
+
+    // Step 1: tap action-edit button
+    const callbackUpdate = {
+      update_id: 5002,
+      callback_query: {
+        id: 'cbq-5002',
+        from: { id: 42, is_bot: false, first_name: 'Tester' },
+        message: { message_id: 1, chat: { id: 42, type: 'private' }, date: Math.floor(Date.now() / 1000), text: 'actions' },
+        data: `action-edit:${remId}`,
+      },
+    };
+
+    await sendWebhookUpdate(app, callbackUpdate);
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const promptReply = telegramReplies[telegramReplies.length - 1];
+    expect(promptReply.text).toContain('Type the new text');
+
+    // Step 2: send new content
+    await sendWebhookUpdate(app, textUpdate(5003, 'Buy Adidas running shoes'));
+
+    const editReply = telegramReplies[telegramReplies.length - 1];
+    expect(editReply.text).toContain('Updated');
+    expect(editReply.text).toContain('Buy Adidas running shoes');
+  });
+
+  it('T31: action-delete executes immediately and confirms deletion', async () => {
+    const remId = 'cccccccc-dddd-eeee-ffff-000000000000';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === remId) {
+        return {
+          rows: [{ id: remId, content: 'Buy protein powder', status: 'not_started', priority: null, project: null, section: null, depth: 0, parent_id: null, due_date: null, archived: false, created_at: new Date(), updated_at: new Date(), source: 'telegram', source_context: null, embedding: [], metadata: null }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    const callbackUpdate = {
+      update_id: 5004,
+      callback_query: {
+        id: 'cbq-5004',
+        from: { id: 42, is_bot: false, first_name: 'Tester' },
+        message: { message_id: 1, chat: { id: 42, type: 'private' }, date: Math.floor(Date.now() / 1000), text: 'actions' },
+        data: `action-delete:${remId}`,
+      },
+    };
+
+    await sendWebhookUpdate(app, callbackUpdate);
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Deleted');
+    expect(reply.text).toContain('Buy protein powder');
+  });
+
   it('T28: NL "move X under Y" reparents task correctly', async () => {
     const taskId = 'rem-task-aabbccdd-1111-2222-3333-444455556666';
     const parentId = 'rem-parent-11223344-5566-7788-99aa-bbccddeeff00';

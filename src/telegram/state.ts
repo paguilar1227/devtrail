@@ -15,8 +15,14 @@ export type PendingSubtaskEntry = {
   depth: number;
 };
 
+export type PendingActionEntry = {
+  action: 'edit' | 'comment' | 'move';
+  reminderId: string;
+};
+
 export interface StateRefs {
   lastActions: Map<string, LastActionEntry>;
   todoNumberMaps: Map<string, Map<number, string>>;
   pendingSubtask: Map<string, PendingSubtaskEntry>;
+  pendingAction: Map<string, PendingActionEntry>;
 }

@@ -14,6 +14,7 @@ import {
   findRemindersDueOnDate,
   findOverdueReminders,
   reparentReminder,
+  resolveReminderId,
 } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
@@ -130,6 +131,40 @@ export function registerNlRouter(
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
         await ctx.reply(`Failed to create subtask: ${msg}`);
+      }
+      return;
+    }
+
+    // Check for pending action (edit/comment/move) set by the ⚙ action menu
+    const pendingAct = stateRefs.pendingAction.get(chatId);
+    if (pendingAct) {
+      stateRefs.pendingAction.delete(chatId);
+      if (pendingAct.action === 'edit') {
+        await updateReminder(deps.db, pendingAct.reminderId, { content: text });
+        const editEmbedding = await deps.embeddingProvider.embed(text);
+        await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(editEmbedding), pendingAct.reminderId]);
+        stateRefs.lastActions.set(chatId, { action: 'update', reminderId: pendingAct.reminderId });
+        await ctx.reply(`Updated (${pendingAct.reminderId.slice(0, 8)}): "${text}"`);
+      } else if (pendingAct.action === 'comment') {
+        const commentEmbedding = await deps.embeddingProvider.embed(text);
+        const commentResult = await insertComment(deps.db, { content: text, embedding: commentEmbedding, reminderId: pendingAct.reminderId, source: 'telegram' });
+        stateRefs.lastActions.set(chatId, { action: 'comment', reminderId: commentResult.id });
+        await ctx.reply(`Comment added to (${pendingAct.reminderId.slice(0, 8)}): "${text}"`);
+      } else if (pendingAct.action === 'move') {
+        if (text.toLowerCase().trim() === 'root') {
+          await reparentReminder(deps.db, pendingAct.reminderId, null);
+          await ctx.reply(`Moved (${pendingAct.reminderId.slice(0, 8)}) to root level.`);
+        } else {
+          const targetId = await resolveReminderId(deps.db, text.trim());
+          if (!targetId) {
+            // Re-set the pending action so the user can try again
+            stateRefs.pendingAction.set(chatId, pendingAct);
+            await ctx.reply(`No reminder found matching "${text}". Try again with a valid ID or short ID, or type "root".`);
+            return;
+          }
+          await reparentReminder(deps.db, pendingAct.reminderId, targetId);
+          await ctx.reply(`Moved (${pendingAct.reminderId.slice(0, 8)}) under (${targetId.slice(0, 8)}).`);
+        }
       }
       return;
     }

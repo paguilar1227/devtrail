@@ -35,6 +35,8 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     todoNumberMaps: new Map<string, Map<number, string>>(),
     // Pending subtask state — tracks when user should next type a subtask for a parent
     pendingSubtask: new Map<string, { parentId: string; parentContent: string; parentProject: string | null; parentSection: string | null; depth: number }>(),
+    // Pending action state — tracks when user should next type the argument for an action menu action
+    pendingAction: new Map<string, { action: 'edit' | 'comment' | 'move'; reminderId: string }>(),
   };
 
   // Register all /command handlers and the callback_query handler

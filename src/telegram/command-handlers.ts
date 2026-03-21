@@ -74,9 +74,9 @@ export async function buildTodosMessage(
     if (!rem || rem.status === 'done' || rem.status === 'cancelled') continue;
     const cycle = cycleNextStatus[rem.status];
     if (cycle) {
-      keyboard.text(`✓ ${num}`, `done:${remId}`).text(`${cycle.label} ${num}`, `cycle:${remId}`).row();
+      keyboard.text(`✓ ${num}`, `done:${remId}`).text(`${cycle.label} ${num}`, `cycle:${remId}`).text(`⚙ ${num}`, `actions:${remId}`).row();
     } else {
-      keyboard.text(`✓ ${num}`, `done:${remId}`).row();
+      keyboard.text(`✓ ${num}`, `done:${remId}`).text(`⚙ ${num}`, `actions:${remId}`).row();
     }
   }
 
@@ -241,6 +241,66 @@ export function registerCommandHandlers(
       if (existingSubtasks.length > 0 && existingSubtasks[0].depth < 3) {
         const subKeyboard = new InlineKeyboard();
         for (const st of existingSubtasks) {
+          const label = st.content.length > 30 ? st.content.slice(0, 27) + '...' : st.content;
+          subKeyboard.text(`➕ ${label}`, `subtask:${st.id}`).row();
+        }
+        await ctx.reply('Or add a sub-subtask:', { reply_markup: subKeyboard });
+      }
+    } else if (action === 'actions') {
+      // Action menu — send a new message with action buttons for the specific task
+      const reminder = await getReminderById(deps.db, reminderId);
+      if (!reminder) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
+      const shortId = reminderId.slice(0, 8);
+      const actionKeyboard = new InlineKeyboard()
+        .text('✏ Edit', `action-edit:${reminderId}`)
+        .text('💬 Comment', `action-comment:${reminderId}`)
+        .text('↕ Move', `action-move:${reminderId}`)
+        .row()
+        .text('🗑 Delete', `action-delete:${reminderId}`)
+        .text('➕ Subtask', `action-subtask:${reminderId}`);
+      await ctx.answerCallbackQuery();
+      await ctx.reply(`Actions for: ${reminder.content} (${shortId})`, { reply_markup: actionKeyboard });
+    } else if (action === 'action-edit') {
+      stateRefs.pendingAction.set(chatId, { action: 'edit', reminderId });
+      await ctx.answerCallbackQuery();
+      await ctx.reply('Type the new text for this reminder:');
+    } else if (action === 'action-comment') {
+      stateRefs.pendingAction.set(chatId, { action: 'comment', reminderId });
+      await ctx.answerCallbackQuery();
+      await ctx.reply('Type your comment:');
+    } else if (action === 'action-move') {
+      stateRefs.pendingAction.set(chatId, { action: 'move', reminderId });
+      await ctx.answerCallbackQuery();
+      await ctx.reply('Type the target task ID or short ID (or "root" to move to top level):');
+    } else if (action === 'action-delete') {
+      const delReminder = await getReminderById(deps.db, reminderId);
+      await deleteReminder(deps.db, reminderId);
+      await ctx.answerCallbackQuery({ text: 'Deleted' });
+      await ctx.reply(`🗑 Deleted: "${delReminder?.content ?? reminderId}" (${reminderId.slice(0, 8)}) and all subtasks/comments.`);
+    } else if (action === 'action-subtask') {
+      // Reuse subtask flow: treat same as tapping subtask:<reminderId>
+      const subtaskParent = await getReminderById(deps.db, reminderId);
+      if (!subtaskParent) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
+      if (subtaskParent.depth >= 3) { await ctx.answerCallbackQuery({ text: 'Max subtask depth reached (4 levels)' }); return; }
+
+      const existingSubs = await findSubtasks(deps.db, reminderId);
+      let subtaskText = `Adding subtask to:\n  ${formatSingleReminder(subtaskParent)}\n`;
+      if (existingSubs.length > 0) {
+        subtaskText += '\nExisting subtasks:\n';
+        for (const st of existingSubs) {
+          subtaskText += `    ${formatSingleReminder(st)}\n`;
+        }
+      }
+      subtaskText += '\nType your subtask below:';
+
+      stateRefs.pendingSubtask.set(chatId, { parentId: reminderId, parentContent: subtaskParent.content, parentProject: subtaskParent.project, parentSection: subtaskParent.section, depth: subtaskParent.depth + 1 });
+
+      await ctx.answerCallbackQuery();
+      await ctx.reply(subtaskText);
+
+      if (existingSubs.length > 0 && existingSubs[0].depth < 3) {
+        const subKeyboard = new InlineKeyboard();
+        for (const st of existingSubs) {
           const label = st.content.length > 30 ? st.content.slice(0, 27) + '...' : st.content;
           subKeyboard.text(`➕ ${label}`, `subtask:${st.id}`).row();
         }
