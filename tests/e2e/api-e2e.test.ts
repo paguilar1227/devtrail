@@ -896,6 +896,60 @@ describe('MCP Tool E2E', () => {
     expect(logs.rows.length).toBeGreaterThanOrEqual(1);
   });
 
+  // ── completed reminders flow into consolidation ─────────────────────────
+  it('MCP — consolidation includes completed reminders as profile signal', async () => {
+    // Insert a reminder, mark it done
+    const { insertReminder, completeReminder } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.3);
+    const { id: reminderId } = await insertReminder(db, {
+      content: 'Learn Rust programming',
+      embedding,
+      category: 'learning',
+      project: 'skills',
+      section: null,
+      parentId: null,
+      depth: 0,
+      priority: 'P2',
+      source: 'telegram',
+      sourceContext: null,
+      dueDate: null,
+    });
+    await completeReminder(db, reminderId);
+
+    // Verify it's done
+    const { getReminderById } = await import('../../src/db/reminders.js');
+    const reminder = await getReminderById(db, reminderId);
+    expect(reminder!.status).toBe('done');
+
+    // Run consolidation — completed reminders should be included
+    const { runConsolidation } = await import('../../src/consolidation/runner.js');
+    await runConsolidation({
+      db,
+      consolidationLLM: deps.consolidationLLM,
+      embeddingProvider: deps.embeddingProvider,
+      reviewMode: 'autonomous',
+    });
+
+    // Verify consolidation processed it — check the log
+    const logs = await db.query(
+      `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT 1`,
+    );
+    expect(logs.rows.length).toBe(1);
+    const log = logs.rows[0];
+    // Should not be a no-op — the completed reminder is new input
+    expect(log.status).not.toBe('no-op');
+
+    // Verify a fact was created (the mock LLM creates "Test fact from consolidation"
+    // for any Phase 1 input that includes CAPTURES + EXISTING FACTS)
+    const facts = await db.query(`SELECT * FROM facts WHERE archived = false`);
+    expect(facts.rows.length).toBeGreaterThanOrEqual(1);
+    // The fact's source_capture_ids should include the reminder ID
+    const factWithReminder = facts.rows.find((f: any) =>
+      f.source_capture_ids?.includes(reminderId),
+    );
+    expect(factWithReminder).toBeDefined();
+  });
+
   // ── create_reminder ─────────────────────────────────────────────────────
   it('MCP — create_reminder: insert with all fields, verify in DB', async () => {
     const { insertReminder, getReminderById } = await import('../../src/db/reminders.js');
