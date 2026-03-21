@@ -173,6 +173,8 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const projectLine = parsed.project
       ? `\n  📋 ${parsed.project}${parsed.section ? ` / ${parsed.section}` : ''}`
       : '';
+    const chatId = String(ctx.chat.id);
+    lastActions.set(chatId, { action: 'create', reminderId: result.id });
     await ctx.reply(`Reminder created.\n  ${formatSingleReminder(createdReminder)}${projectLine}`);
   });
 

@@ -678,6 +678,41 @@ describe('Telegram Pipeline — Undo', () => {
     expect(undoReply.text).toContain('Undone');
     expect(undoReply.text).toContain('deleted the reminder');
   });
+
+  it('T13b: Create via /remind slash command, then "undo" → deletes the reminder', async () => {
+    const deps = makeDeps();
+    const insertedId = 'rem-slash-undo-12345678';
+
+    // Mock LLM for /remind parser
+    vi.mocked(deps.metadataLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ content: 'Buy shoes', project: null, section: null, priority: null, category: 'personal', dueDate: null }),
+      tokensUsed: { input: 10, output: 10, total: 20 },
+    });
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('INSERT INTO reminders')) {
+        return { rows: [{ id: insertedId }] } as any;
+      }
+      if (typeof sql === 'string' && sql.includes('SELECT id FROM reminders WHERE parent_id')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+
+    // Step 1: Create via /remind
+    await sendWebhookUpdate(app, textUpdate(1080, '/remind Buy shoes', 42));
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    expect(telegramReplies[telegramReplies.length - 1].text).toContain('Reminder created');
+
+    // Step 2: Undo
+    await sendWebhookUpdate(app, textUpdate(1081, 'undo', 42));
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(2);
+    const undoReply = telegramReplies[telegramReplies.length - 1];
+    expect(undoReply.text).toContain('Undone');
+    expect(undoReply.text).toContain('deleted the reminder');
+  });
 });
 
 // ─── Error Handling ─────────────────────────────────────────────────────────
