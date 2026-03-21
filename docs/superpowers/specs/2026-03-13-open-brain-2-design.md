@@ -329,7 +329,7 @@ Low-confidence response includes `evidence` array with source items and a `note`
 
 ## MCP Tool Surface
 
-17 tools exposed via JSON-RPC 2.0 (9 profiler + 8 reminders):
+19 tools exposed via JSON-RPC 2.0 (11 profiler + 8 reminders):
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
@@ -342,6 +342,8 @@ Low-confidence response includes `evidence` array with source items and a `note`
 | `update_fact` | Edit/refine a fact directly (marks as `user_edited`, confidence → 1.0, preserves source links) | `id` (required), `content` (required) |
 | `review_pending` | List items with `review_status = 'pending_review'` | `limit` (optional), `type` (optional: 'fact' \| 'insight', defaults to both) |
 | `approve_reject` | Act on items in `pending_review` status — approve, reject, or edit | `id` (required), `action` ('approve' \| 'reject' \| 'edit'), `content` (required if action='edit'). Looks up by UUID across facts and insights tables (UUIDs are globally unique). Only operates on items with `review_status = 'pending_review'`. Use `update_fact` to edit already-approved facts. |
+| `run_consolidation` | Manually trigger the consolidation pipeline | none |
+| `brain_help` | Returns AI usage guide — when/how to capture, format, categories | none |
 
 ### Archive Behavior
 
@@ -460,17 +462,26 @@ Comments get embeddings for cross-type semantic search — "What progress have I
 
 ### Telegram Support
 
-- `/remind <text>` — creates a reminder (in default project if none specified)
-- `/todos` — lists active reminders (not_started + in_progress + researching + paused + blocked)
-- `/done <id>` — marks a reminder complete
+**Slash commands:**
+- `/remind <text>` — creates a reminder (parsed via LLM for project/priority/due date)
+- `/todos` — lists active reminders with inline keyboard (done/cycle/action buttons)
+- `/done <id>` — marks a reminder complete (cascade-completes subtasks, supports short IDs)
+- `/delete <id>` — deletes a reminder and all subtasks/comments
+- `/edit <id> <new text>` — edits a reminder's content
+- `/move <id> <parent-id|root>` — moves a task under another task or to root level
 - `/comment <id> <text>` — adds a progress comment to a task
+- `/subtask` — select a reminder and add a subtask (inline keyboard flow)
+
+**Natural language interface:** All plain text messages are routed through an LLM-powered intent classifier that can create, list, complete, update, comment, move, or undo tasks without slash commands. Each interpreted action shows a confirmation with undo hint.
+
+**Action menu:** Per-task inline keyboard (gear button) with edit, comment, move, delete, and subtask actions.
 
 ### Subtask Behavior
 
 - **Creating:** `create_reminder` with `parent_id` creates a subtask. Validates parent exists and depth < 4.
-- **Completing:** `complete_reminder` on a parent does NOT auto-complete children. Each subtask is completed independently. (If you want to complete a parent with open subtasks, that's a conscious choice.)
-- **Deleting:** `delete_reminder` cascade-deletes all subtasks and their comments.
-- **Moving:** Updating a parent's project/section moves its subtasks with it.
+- **Completing (cascade done):** Completing a parent auto-completes all descendant subtasks recursively. `completeReminder()` walks the subtask tree and marks every non-done, non-cancelled child as done. Returns `{ completed: string[] }` with all affected IDs.
+- **Deleting (cascade delete):** `delete_reminder` cascade-deletes all descendant subtasks and their comments.
+- **Moving (reparent):** `reparentReminder()` moves a task under a new parent (or to root with `null`). Updates depth, project, and section to match the new parent, and recursively updates all children. `resolveReminderId()` accepts short ID prefixes (e.g., "4e0bd1b2") for ergonomic Telegram/CLI usage.
 - **Listing:** `list_reminders` with `top_level_only=true` (default) shows only depth-0 tasks. Set `top_level_only=false` to see subtasks. `get_reminder_detail` always returns the full subtask tree.
 
 ### Integration with the Profiler
@@ -484,7 +495,7 @@ Reminders feed back into the consolidation pipeline:
 
 ### v3 Expansion
 
-- Due date notifications (Telegram push at specified time)
+- ~~Due date notifications (Telegram push at specified time)~~ -- **Implemented in v2:** per-reminder alerts when due + daily report at configured time (`DAILY_REPORT_TIME` in `TIMEZONE`)
 - Recurring reminders
 - Webapp/mobile app reminder management UI
 - Calendar integration (reminders with dates show as calendar events)
@@ -587,7 +598,7 @@ Future providers can be added without modifying any business logic.
 | Component | Technology |
 |-----------|-----------|
 | Runtime | Node.js / TypeScript |
-| API Framework | TBD (Express, Fastify, or Hono) |
+| API Framework | Hono |
 | Database | PostgreSQL + pgvector (Azure Flexible Server) |
 | File Storage | Azure Blob Storage |
 | Compute (API) | Azure Container Apps |
@@ -684,7 +695,7 @@ Cross-cutting tools (like `brain_stats`, `get_user_profile`) span all domains an
 
 Each feature domain gets a small set of Telegram commands:
 - Profiler: message in chat (implicit capture), `/review`
-- Reminders: `/remind`, `/todos`, `/done`, `/comment`
+- Reminders: `/remind`, `/todos`, `/done`, `/delete`, `/edit`, `/move`, `/comment`, `/subtask`
 - Future: `/schedule`, `/mood`, `/reflect`, etc.
 
 Keep commands short and intuitive. Use inline keyboard buttons for multi-step interactions (approve/reject, status changes).

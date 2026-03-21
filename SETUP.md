@@ -314,9 +314,41 @@ After the initial setup, GitHub Actions handles all subsequent deploys automatic
 | Consolidation schedule | `CONSOLIDATION_SCHEDULE` (Azure Function app setting) | `0 */30 * * * *` (every 30 min) |
 | Review mode | `REVIEW_MODE` | `hybrid` |
 | Daily digest | `DAILY_DIGEST_ENABLED` | `true` |
+| Timezone | `TIMEZONE` | `America/Chicago` |
+| Daily report time | `DAILY_REPORT_TIME` | `09:00` |
 | Server port | `PORT` | `3000` |
 
 The consolidation schedule uses Azure Functions CRON format (6 fields, seconds first). Common values:
 - Every 30 minutes: `0 */30 * * * *`
 - Every hour: `0 0 * * * *`
 - Daily at 6 AM UTC: `0 0 6 * * *`
+
+---
+
+## Provider Gotchas
+
+### Gemini 2.5 Flash
+
+- **`maxTokens` must be >= 1024:** Gemini 2.5 Flash's thinking tokens consume the output token budget. If `maxTokens` is too low, the model may exhaust the budget on thinking before producing any output. All LLM calls in the codebase use at least `maxTokens: 1024`.
+- **`extractJson` for markdown wrapping:** Setting `responseMimeType: 'application/json'` does not guarantee clean JSON. Gemini often wraps JSON responses in markdown code blocks. The `extractJson()` function in `src/providers/gemini-llm.ts` strips this wrapping as a post-processing step.
+- **`llmJsonParse` retry helper:** Gemini's JSON output is non-deterministic. The `llmJsonParse<T>()` function (3 retry attempts) wraps all critical LLM JSON parsing paths.
+
+### Container App
+
+- **minReplicas: 1 (always-on):** The Container App is configured with `minReplicas: 1` to eliminate cold start latency for Telegram webhooks and due date notifications. It does not scale to zero.
+
+---
+
+## E2E Tests
+
+E2E tests require a running PostgreSQL instance with pgvector. The docker compose file maps port 5434 on the host to 5432 in the container:
+
+```bash
+# Start the database
+docker compose up -d
+
+# Run E2E tests (uses E2E_DATABASE_URL)
+E2E_DATABASE_URL=postgresql://openbrain:openbrain@localhost:5434/openbrain npm run test:e2e
+```
+
+In CI, the GitHub Actions workflow uses a PostgreSQL service container on the default port 5432. See `.github/workflows/ci.yml`.

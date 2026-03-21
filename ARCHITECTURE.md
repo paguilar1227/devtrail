@@ -304,9 +304,10 @@ Auto-determined from content: `work` | `personal` | `health` | `learning` | `fin
 ### Subtask Behavior
 
 - **Creating:** `parent_id` references parent. Validates depth < 4.
-- **Completing:** Does NOT auto-complete children. Each subtask is completed independently.
-- **Deleting:** Cascade-deletes all descendant subtasks and their comments.
-- **Moving:** Updating a parent's project/section does NOT currently cascade to subtasks (implementation note: the spec says it should, but the code updates only the specified reminder).
+- **Completing (cascade done):** Completing a parent auto-completes all descendant subtasks recursively. `completeReminder()` marks the parent as done, then walks the subtask tree and marks every non-done, non-cancelled child as done. Returns `{ completed: string[] }` with all affected IDs.
+- **Deleting (cascade delete):** `deleteReminder()` cascade-deletes all descendant subtasks and their comments. Collects all descendant IDs recursively, deletes comments for all, then deletes reminders deepest-first.
+- **Moving (reparent):** `reparentReminder()` moves a task under a new parent (or to root with `null`). Updates depth, project, and section to match the new parent. Recursively updates all children depths and project/section to stay consistent.
+- **resolveReminderId:** Accepts short ID prefixes (e.g., "4e0bd1b2") and resolves to full UUID via `LIKE` prefix match. Returns `null` if no match or ambiguous (multiple matches). Full UUIDs are passed through directly.
 
 ### Due Date Notifications
 
@@ -321,7 +322,15 @@ Completed reminders are treated as profile signal during consolidation. The runn
 
 ## 8. Telegram Bot
 
-**Implementation:** `src/telegram/webhook.ts`, `src/telegram/handlers.ts`, `src/telegram/prompts.ts`, `src/telegram/mime-utils.ts`
+**Implementation:** Split across multiple modules for testability:
+- `src/telegram/webhook.ts` — Bot setup, webhook route, shared state initialization
+- `src/telegram/command-handlers.ts` — All slash commands + callback_query handler (inline buttons + action menu)
+- `src/telegram/nl-router.ts` — Natural language intent classifier + NL handlers + media handlers
+- `src/telegram/handlers.ts` — Pure handler functions (testable without bot instance): text, photo, voice, document
+- `src/telegram/prompts.ts` — Intent classifier and reminder parser system prompts (date-aware, timezone-aware)
+- `src/telegram/llm-parse.ts` — `llmJsonParse<T>()` retry helper (3 attempts, returns null on failure)
+- `src/telegram/state.ts` — Shared state types (LastActionEntry, PendingSubtaskEntry, PendingActionEntry, StateRefs)
+- `src/telegram/mime-utils.ts` — Extension-to-MIME map (25 types), `resolveMimeType()`, `getSummarizationRoute()`
 
 **Framework:** grammY
 
@@ -335,15 +344,22 @@ Completed reminders are treated as profile signal during consolidation. The runn
 
 ### Natural Language Intent Classifier
 
-Every plain text message (not a slash command) goes through Gemini Flash intent classification with retry (3 attempts via `llmJsonParse`). The classifier returns one of:
+Every plain text message (not a slash command) goes through Gemini Flash intent classification with retry (3 attempts via `llmJsonParse`). Before hitting the LLM, two fast-paths are checked:
+
+1. **Pending subtask** — if the chat has a `pendingSubtask` entry, the message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). Cleared after creation.
+2. **Pending action** — if the chat has a `pendingAction` entry (from the action menu), the message is treated as the argument for that action (edit text, comment text, or move target ID). Cleared after execution.
+3. **Undo** — if the message is literally "undo" (case-insensitive), it bypasses the LLM entirely.
+
+Otherwise, the classifier returns one of:
 
 | Intent | Action |
 |--------|--------|
 | `create_reminder` | Creates a new reminder with parsed project/section/priority/due date |
 | `list_reminders` | Shows active reminders, optionally filtered (today, overdue, this_week) |
 | `complete_reminder` | Finds and completes a task by description match |
-| `update_reminder` | Updates status/priority/project of a task |
+| `update_reminder` | Updates status/priority/project/content of a task |
 | `add_comment` | Adds a progress comment to a matched task |
+| `move_reminder` | Moves a task under another task or to root level by description match |
 | `undo` | Reverses the last action for this chat |
 | `capture_thought` | Default fallback — captures as a thought |
 
@@ -355,25 +371,52 @@ Each classified action shows `"Interpreted as [type]"` prefix and an `"undo"` hi
 |---------|--------|
 | `/remind <text>` | Create reminder (parsed via LLM for project/priority/due date) |
 | `/todos` | List active reminders with inline keyboard buttons |
-| `/done <id>` | Mark a reminder complete by UUID |
+| `/done <id>` | Mark a reminder complete (supports short IDs, cascade-completes subtasks) |
+| `/delete <id>` | Delete a reminder and all subtasks/comments (supports short IDs) |
+| `/edit <id> <new text>` | Edit a reminder's content (re-embeds, stores previous state for undo) |
+| `/move <id> <parent-id\|root>` | Move a task under another task or to root level |
 | `/comment <id> <text>` | Add a progress comment |
 | `/subtask` | Select a reminder and add a subtask (inline keyboard flow) |
 | `/review` | Placeholder — not yet implemented |
 
 ### Inline Keyboard Buttons
 
-`/todos` renders numbered tasks with buttons:
-- `done:{id}` — marks task complete, re-renders the full list
-- `pause:{id}` — pauses the task, re-renders
-- `subtask:{id}` — enters subtask creation flow (pending subtask state machine)
+`/todos` renders numbered tasks with three buttons per task:
 
-### Pending Subtask State Machine
+- `done:{id}` (checkmark + number) — marks task complete (cascade to subtasks), re-renders the full list
+- `cycle:{id}` (status icon + number) — cycles status: not_started -> in_progress -> paused -> blocked -> not_started (done excluded from cycle)
+- `actions:{id}` (gear + number) — opens the action menu for that task
 
-When a user clicks a subtask button, the chat enters a pending state (`pendingSubtask` Map keyed by chatId). The next plain text message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). The state is cleared after creation or if another action takes precedence.
+### Action Menu
+
+Triggered by the gear button on any task. Sends a new message with five action buttons:
+
+| Button | Callback Data | Behavior |
+|--------|---------------|----------|
+| Edit | `action-edit:{id}` | Sets `pendingAction` to `edit`, prompts for new text |
+| Comment | `action-comment:{id}` | Sets `pendingAction` to `comment`, prompts for comment text |
+| Move | `action-move:{id}` | Sets `pendingAction` to `move`, prompts for target ID or "root" |
+| Delete | `action-delete:{id}` | Immediately deletes the task + subtasks + comments |
+| Subtask | `action-subtask:{id}` | Enters subtask creation flow (same as `subtask:{id}`) |
+
+### Pending State Machines
+
+Two state machines maintain conversational context per chat (keyed by `chatId`):
+
+**`pendingSubtask`** — When a user clicks a subtask button, the chat enters a pending state. The next plain text message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). The state stores: `parentId`, `parentContent`, `parentProject`, `parentSection`, `depth`. Cleared after creation.
+
+**`pendingAction`** — When a user clicks an action menu button (edit/comment/move), the chat enters a pending state. The next plain text message is treated as the argument for that action. For `move`, if the target is invalid, the pending state is re-set so the user can try again. Stores: `action` ('edit' | 'comment' | 'move'), `reminderId`.
 
 ### Undo Support
 
-Per-chat state tracking (`lastActions` Map). Stores the last action type, reminder ID, and previous state. Supports undoing: `create` (deletes), `complete` (restores status), `update` (restores previous state), `comment` (deletes comment).
+Per-chat state tracking (`lastActions` Map). Stores the last action type, reminder ID, and previous state. Supports undoing:
+
+| Action | Undo Behavior |
+|--------|---------------|
+| `create` | Deletes the created reminder |
+| `complete` | Restores previous status (default: not_started) |
+| `update` | Restores previous content, status, priority, project |
+| `comment` | Deletes the comment |
 
 ### Media Handlers
 
@@ -384,12 +427,12 @@ Per-chat state tracking (`lastActions` Map). Stores the last action type, remind
 | Voice | AI transcription + summary (Gemini Flash) | Downloads .ogg via Bot API |
 | Document | AI summary (Gemini Flash) | Downloads via Bot API, MIME resolved from extension |
 
-**MIME type inference** (`src/telegram/mime-utils.ts`): When Telegram reports `application/octet-stream`, the extension-to-MIME map resolves the actual type. Covers 25 common extensions.
+**MIME type inference** (`src/telegram/mime-utils.ts`): When Telegram reports `application/octet-stream`, the extension-to-MIME map resolves the actual type. Covers 25 common extensions (pdf, png, jpg, gif, webp, mp4, mp3, wav, ogg, txt, csv, json, doc, docx, html, htm, xml, md, rtf, xls, xlsx, ppt, pptx, zip).
 
-**Summarization routing:** Three paths based on MIME type:
+**Summarization routing** (`getSummarizationRoute()`): Three paths based on MIME type:
 - `inline_data` — binary sent to Gemini (PDF, images, audio, video)
-- `text_extraction` — read as UTF-8, summarize as text (HTML, CSV, JSON, etc.)
-- `unsupported` — stored but not summarized, user warned
+- `text_extraction` — read as UTF-8 (max 30K chars), summarize as text (HTML, CSV, JSON, RTF, XML, Markdown, plain text)
+- `unsupported` — stored but not summarized, user warned with the unsupported MIME type
 
 ---
 
@@ -513,7 +556,7 @@ interface LLMProvider {
 
 **Problem:** Gemini's JSON output is non-deterministic — the same prompt can produce valid JSON, markdown-wrapped JSON, or occasionally malformed output.
 
-**Solution:** `llmJsonParse<T>()` in `src/telegram/webhook.ts` wraps LLM calls with 3 retry attempts. On each attempt it calls `llm.complete()` and `JSON.parse()`. Returns `null` after all retries fail.
+**Solution:** `llmJsonParse<T>()` in `src/telegram/llm-parse.ts` wraps LLM calls with 3 retry attempts. On each attempt it calls `llm.complete()` and `JSON.parse()`. Returns `null` after all retries fail.
 
 ---
 
@@ -540,7 +583,7 @@ interface LLMProvider {
 
 ### CI/CD
 
-**CI** (`.github/workflows/ci.yml`): Runs on PR and push to main. Steps: `npm ci`, `tsc --noEmit`, `npm test`. CI passes `GEMINI_API_KEY` secret for LLM integration tests.
+**CI** (`.github/workflows/ci.yml`): Runs on PR and push to main. Steps: `npm ci`, `tsc --noEmit`, `npm test` (unit tests with `GEMINI_API_KEY` secret), `npm run test:e2e` (E2E tests against PostgreSQL service container). The CI uses a `pgvector/pgvector:pg16` service container for E2E tests.
 
 **CD** (`.github/workflows/deploy.yml`): Runs on push to main. OIDC auth to Azure. Steps: build Docker image with git SHA tag, push to ACR, update Container App revision, deploy Function App.
 
@@ -600,7 +643,12 @@ Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW ind
 ### Consolidation
 
 - **Completed reminders as signal:** Only `done` status is read. The spec mentions cancelled and blocked as signal, but the current implementation filters on `status = 'done'` only.
-- **Subtask project cascade:** The spec says updating a parent's project/section should move subtasks. The current `updateReminder` function only updates the specified reminder.
+- **Subtask project cascade on update:** `updateReminder()` only updates the specified reminder's project/section. However, `reparentReminder()` does cascade project/section to all children.
+
+### Testing
+
+- **OOM with default pool:** Integration tests that create many full app instances can exceed default Node heap. Fixed with `pool: 'forks'` and `--max-old-space-size=4096` in vitest config.
+- **Test file splitting:** Some test files were split (e.g., `reminders.test.ts` + `reminders-features.test.ts`) to avoid OOM within a single fork.
 
 ---
 
@@ -608,12 +656,12 @@ Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW ind
 
 **Framework:** Vitest
 
-**284 tests across 41 files.** All tests pass (264 passed, 20 skipped — skipped tests are LLM integration tests requiring `GEMINI_API_KEY`).
+**345 tests across 44 files.** Test suite uses `pool: 'forks'` with `--max-old-space-size=4096` to avoid OOM when integration tests create many full app instances.
 
 ### Test Categories
 
 **Unit tests (36 files):**
-- DB modules: captures, facts, insights, reminders, reminder-comments, consolidation-log, client
+- DB modules: captures, facts, insights, reminders, reminders-features, reminder-comments, consolidation-log, client
 - Providers: gemini-embedding, gemini-llm, anthropic-llm, provider-errors
 - Capture pipeline: dedup, metadata, media-convert, pipeline, pipeline-regression
 - Consolidation: clustering, phase1, phase2, phase3
@@ -623,19 +671,41 @@ Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW ind
 - Telegram: handlers, intent-classification, mime-types
 - Other: app, config, server-migration, blob storage
 
-**Integration tests (5 files):**
+**Integration tests (7 files):**
 - `api.test.ts` — REST API endpoint tests
 - `mcp-auth.test.ts` — MCP authentication tests
 - `nl-reminder-parsing.test.ts` — Real Gemini Flash calls for NL parsing quality (20 tests, retry-tolerant)
 - `telegram-pipeline.test.ts` — Full webhook -> intent -> action -> reply with mocked bot, real handlers
 - `telegram-webhook.test.ts` — Webhook handler integration tests
+- `telegram-nl.test.ts` — NL router integration tests
+- `telegram-cascade-move.test.ts` — Cascade done and reparent/move integration tests
+
+**E2E tests (1 file):**
+- `api-e2e.test.ts` — Full cycle E2E tests against real PostgreSQL (requires docker compose)
+
+### Test Configuration
+
+| Config File | Scope | Pool | Notes |
+|-------------|-------|------|-------|
+| `vitest.config.ts` | Unit + integration tests | `forks` | `execArgv: ['--max-old-space-size=4096']` to avoid OOM |
+| `vitest.e2e.config.ts` | E2E tests | default | 30s timeout, requires `E2E_DATABASE_URL` |
 
 ### Running Tests
 
 ```bash
-npm test                    # Unit tests (no external deps)
-npm run test:integration    # Integration tests (requires database + API keys)
+npm test                    # Unit + integration tests (no external deps except GEMINI_API_KEY for LLM tests)
+npm run test:e2e            # E2E tests (requires docker compose PostgreSQL on port 5434)
+npm run test:integration    # Integration tests only
 ```
+
+### CI
+
+`.github/workflows/ci.yml` runs on PR and push to main:
+1. `npm ci` + `tsc --noEmit` (type check)
+2. `npm test` (unit tests, passes `GEMINI_API_KEY` secret for LLM integration tests)
+3. `npm run test:e2e` (E2E tests against PostgreSQL service container on port 5432)
+
+The CI workflow uses a `pgvector/pgvector:pg16` service container for E2E tests.
 
 ### Test Helpers
 
@@ -690,9 +760,13 @@ open-brain-v2/
       reminder-tools.ts               8 reminder tools: CRUD, comments, projects.
 
     telegram/
-      webhook.ts                      Bot setup, webhook route, intent classifier, slash commands, inline keyboards, undo, subtask state machine, media handlers.
+      webhook.ts                      Bot setup, webhook route, shared state initialization, dedup guard, registers handler modules.
+      command-handlers.ts             All /slash command handlers + callback_query handler (inline buttons, action menu, status cycle).
+      nl-router.ts                    NL intent classifier + NL action handlers + pending state machines + media handlers.
       handlers.ts                     Pure handler functions (testable without bot instance): text, photo, voice, document.
       prompts.ts                      Intent classifier and reminder parser system prompts (date-aware, timezone-aware).
+      llm-parse.ts                    llmJsonParse<T>() retry helper (3 attempts, returns null on failure).
+      state.ts                        Shared state types: LastActionEntry, PendingSubtaskEntry, PendingActionEntry, StateRefs.
       mime-utils.ts                   Extension-to-MIME map (25 types), resolveMimeType(), getSummarizationRoute().
 
     notifications/
@@ -731,7 +805,9 @@ open-brain-v2/
     helpers/
       mocks.ts                        Shared mock factories for all dependencies.
     unit/                             36 test files covering all source modules.
-    integration/                      5 test files (API, MCP auth, NL parsing, Telegram pipeline/webhook).
+    integration/                      7 test files (API, MCP auth, NL parsing, Telegram pipeline/webhook/NL/cascade-move).
+    e2e/
+      api-e2e.test.ts                 Full cycle E2E tests against real PostgreSQL.
 
   .github/workflows/
     ci.yml                            CI: typecheck + unit tests on PR/push.
@@ -741,7 +817,8 @@ open-brain-v2/
   Dockerfile                          Multi-stage build (node:20-alpine, ffmpeg).
   package.json                        Dependencies and scripts.
   tsconfig.json                       TypeScript config.
-  vitest.config.ts                    Vitest configuration.
+  vitest.config.ts                    Vitest config (unit + integration, forks pool, 4GB heap).
+  vitest.e2e.config.ts                Vitest config (E2E tests, 30s timeout).
   README.md                           Project overview and local dev setup.
   SETUP.md                            First-time Azure deployment guide with gotchas.
 ```
