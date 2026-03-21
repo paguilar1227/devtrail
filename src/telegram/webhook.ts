@@ -106,13 +106,13 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     const text = formatRemindersMarkdown(reminders, subtasksMap);
 
     const keyboard = new InlineKeyboard();
-    // Status cycle: not_started → in_progress → paused → blocked → done
-    // The cycle button label shows the NEXT state the task will move to.
+    // Status cycle: not_started → in_progress → paused → blocked → not_started (loops)
+    // Done is excluded — use the dedicated ✓ button for that.
     const cycleNextStatus: Record<string, { label: string; next: string }> = {
       not_started: { label: '●', next: 'in_progress' },
       in_progress:  { label: '⏸', next: 'paused' },
       paused:       { label: '🚫', next: 'blocked' },
-      blocked:      { label: '✓', next: 'done' },
+      blocked:      { label: '○', next: 'not_started' },
     };
     for (const [num] of numMap) {
       const remId = numMap.get(num)!;
@@ -227,18 +227,18 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         await ctx.editMessageText(text, { reply_markup: keyboard });
       }
     } else if (action === 'cycle') {
-      // Advance to next status in the cycle: not_started → in_progress → paused → blocked → done
+      // Advance to next status in the cycle (loops, done excluded)
       const cycleMap: Record<string, string> = {
         not_started: 'in_progress',
         in_progress: 'paused',
         paused: 'blocked',
-        blocked: 'done',
+        blocked: 'not_started',
       };
       const cycleLabels: Record<string, string> = {
         in_progress: 'In progress ●',
         paused: 'Paused ⏸',
         blocked: 'Blocked 🚫',
-        done: 'Done ✓',
+        not_started: 'Not started ○',
       };
       const current = await getReminderById(deps.db, reminderId);
       if (!current) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
