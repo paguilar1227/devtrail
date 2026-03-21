@@ -604,6 +604,48 @@ describe('Reminder E2E', () => {
     expect(child2Row?.status).toBe('done');
   });
 
+  it('R6. Reparent to root: move subtask to top level', async () => {
+    const { insertReminder, reparentReminder, getReminderById } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const parent = await insertReminder(db, {
+      content: 'Parent', embedding, category: null, project: 'work', section: 'backend',
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+    const child = await insertReminder(db, {
+      content: 'Child', embedding, category: null, project: 'work', section: 'backend',
+      parentId: parent.id, depth: 1, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    await reparentReminder(db, child.id, null);
+
+    const childRow = await getReminderById(db, child.id);
+    expect(childRow?.depth).toBe(0);
+    expect(childRow?.parent_id).toBeNull();
+  });
+
+  it('R7. Reparent under new parent: move task, verify depth and inherited project/section', async () => {
+    const { insertReminder, reparentReminder, getReminderById } = await import('../../src/db/reminders.js');
+    const embedding = new Array(EMBEDDING_DIM).fill(0.1);
+
+    const newParent = await insertReminder(db, {
+      content: 'New parent', embedding, category: null, project: 'fitness', section: 'training',
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+    const task = await insertReminder(db, {
+      content: 'Orphan task', embedding, category: null, project: null, section: null,
+      parentId: null, depth: 0, priority: null, source: 'test', sourceContext: null, dueDate: null,
+    });
+
+    await reparentReminder(db, task.id, newParent.id);
+
+    const taskRow = await getReminderById(db, task.id);
+    expect(taskRow?.depth).toBe(1);
+    expect(taskRow?.parent_id).toBe(newParent.id);
+    expect(taskRow?.project).toBe('fitness');
+    expect(taskRow?.section).toBe('training');
+  });
+
   it('R4. GET /api/v1/reminders?project=fitness → filtered by project', async () => {
     const { insertReminder } = await import('../../src/db/reminders.js');
     const embedding = new Array(EMBEDDING_DIM).fill(0.1);

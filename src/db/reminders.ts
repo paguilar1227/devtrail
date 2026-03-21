@@ -196,6 +196,44 @@ export async function completeReminder(db: DbClient, id: string): Promise<{ comp
   return { completed };
 }
 
+export async function reparentReminder(
+  db: DbClient, id: string, newParentId: string | null,
+): Promise<void> {
+  let newDepth = 0;
+  let newProject: string | null = null;
+  let newSection: string | null = null;
+
+  if (newParentId) {
+    const parent = await getReminderById(db, newParentId);
+    if (!parent) throw new Error(`Parent ${newParentId} not found`);
+    if (parent.depth >= 3) throw new Error('Max subtask depth reached (4 levels)');
+    newDepth = parent.depth + 1;
+    newProject = parent.project;
+    newSection = parent.section;
+  }
+
+  await db.query(
+    `UPDATE reminders SET parent_id = $1, depth = $2, project = $3, section = $4, updated_at = now() WHERE id = $5`,
+    [newParentId, newDepth, newProject, newSection, id],
+  );
+
+  // Recursively update children depths
+  async function updateChildDepths(parentId: string, parentDepth: number) {
+    const children = await db.query(
+      `SELECT id FROM reminders WHERE parent_id = $1 AND archived = false`,
+      [parentId],
+    );
+    for (const child of children.rows) {
+      await db.query(
+        `UPDATE reminders SET depth = $1, project = $2, section = $3, updated_at = now() WHERE id = $4`,
+        [parentDepth + 1, newProject, newSection, child.id],
+      );
+      await updateChildDepths(child.id, parentDepth + 1);
+    }
+  }
+  await updateChildDepths(id, newDepth);
+}
+
 export async function deleteReminder(db: DbClient, id: string): Promise<void> {
   // Cascade-delete all subtasks (and their comments) first, then this reminder and its comments.
   // We collect all descendant IDs recursively, then delete comments for all, then delete all reminders.

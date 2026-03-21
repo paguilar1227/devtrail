@@ -3,7 +3,7 @@ import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
 import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
-import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, findAllReminders, getReminderById, updateReminder, deleteReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks, resolveReminderId } from '../db/reminders.js';
+import { insertReminder, completeReminder as dbCompleteReminder, findActiveReminders, findAllReminders, getReminderById, updateReminder, deleteReminder, reparentReminder, findRemindersDueOnDate, findOverdueReminders, findSubtasks, resolveReminderId } from '../db/reminders.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
@@ -356,6 +356,48 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     await ctx.reply(`Updated (${fullId.slice(0, 8)}): "${newContent}"`);
   });
 
+  bot.command('move', async (ctx) => {
+    const text = (ctx.message?.text ?? '').replace(/^\/move\s+/, '').trim();
+    const parts = text.split(/\s+/);
+    if (parts.length < 2) {
+      await ctx.reply('Usage:\n  /move <task-id> root — move to top level\n  /move <task-id> <parent-id> — move under another task');
+      return;
+    }
+    const [rawId, rawTarget, ...rest] = parts;
+    if (rest.length > 0) {
+      await ctx.reply('Usage:\n  /move <task-id> root — move to top level\n  /move <task-id> <parent-id> — move under another task');
+      return;
+    }
+
+    const fullId = await resolveReminderId(deps.db, rawId);
+    if (!fullId) {
+      await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
+      return;
+    }
+
+    let newParentId: string | null = null;
+    if (rawTarget.toLowerCase() !== 'root') {
+      newParentId = await resolveReminderId(deps.db, rawTarget);
+      if (!newParentId) {
+        await ctx.reply(`No reminder found matching "${rawTarget}". Use /todos to see IDs.`);
+        return;
+      }
+    }
+
+    try {
+      await reparentReminder(deps.db, fullId, newParentId);
+      if (newParentId) {
+        const parent = await getReminderById(deps.db, newParentId);
+        await ctx.reply(`↪ Moved (${fullId.slice(0, 8)}) under "${parent?.content ?? newParentId.slice(0, 8)}"`);
+      } else {
+        await ctx.reply(`↪ Moved (${fullId.slice(0, 8)}) to root level`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      await ctx.reply(`Move failed: ${msg}`);
+    }
+  });
+
   bot.command('comment', async (ctx) => {
     const text = ctx.message?.text ?? '';
     try {
@@ -531,7 +573,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     console.log(`[intent-classifier] Input: "${text}"`);
     const todayISO = new Date().toISOString().split('T')[0];
     const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: deps.config.timezone }).format(new Date());
-    const intent = await llmJsonParse<{ action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; status?: string; dueFilter?: string }>(
+    const intent = await llmJsonParse<{ action: string; content?: string; project?: string; section?: string; priority?: string; category?: string; dueDate?: string; taskSearch?: string; targetSearch?: string; status?: string; dueFilter?: string }>(
       deps.metadataLLM,
       [{ role: 'user', content: text }],
       { systemPrompt: buildIntentClassifierPrompt(todayISO, dayOfWeek, deps.config.timezone), responseFormat: 'json', maxTokens: 1024 },
@@ -665,6 +707,38 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
         await ctx.reply(`${INTENT_PREFIX} comment on task.\nAdded to "${match.content}": "${intent.content}"${UNDO_HINT}`);
       } else {
         await ctx.reply(`Couldn't find a matching task for "${intent.taskSearch}".`);
+      }
+
+    } else if (intent.action === 'move_reminder') {
+      const allReminders = await findAllReminders(deps.db);
+      const taskSearch = (intent.taskSearch ?? '').toLowerCase();
+      const taskMatch = allReminders.find((r) => r.content.toLowerCase().includes(taskSearch));
+      if (!taskMatch) {
+        await ctx.reply(`Couldn't find a task matching "${intent.taskSearch}". Try /todos to see your list.`);
+      } else {
+        const targetSearch = (intent.targetSearch ?? '').toLowerCase();
+        if (targetSearch === 'root' || targetSearch === 'top level') {
+          try {
+            await reparentReminder(deps.db, taskMatch.id, null);
+            await ctx.reply(`${INTENT_PREFIX} move to root.\n↪ Moved "${taskMatch.content}" to root level (${taskMatch.id.slice(0, 8)})${UNDO_HINT}`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            await ctx.reply(`Move failed: ${msg}`);
+          }
+        } else {
+          const targetMatch = allReminders.find((r) => r.id !== taskMatch.id && r.content.toLowerCase().includes(targetSearch));
+          if (!targetMatch) {
+            await ctx.reply(`Couldn't find a parent task matching "${intent.targetSearch}". Try /todos to see your list.`);
+          } else {
+            try {
+              await reparentReminder(deps.db, taskMatch.id, targetMatch.id);
+              await ctx.reply(`${INTENT_PREFIX} reparent.\n↪ Moved "${taskMatch.content}" under "${targetMatch.content}" (${taskMatch.id.slice(0, 8)})${UNDO_HINT}`);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Unknown error';
+              await ctx.reply(`Move failed: ${msg}`);
+            }
+          }
+        }
       }
 
     } else if (intent.action === 'undo') {

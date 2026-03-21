@@ -32,6 +32,9 @@ Return JSON with one of these actions:
 {"action": "add_comment", "taskSearch": "description of which task", "content": "the comment text"}
   Triggers: "update on X:", "note on X:", "progress on X:", "regarding X:"
 
+{"action": "move_reminder", "taskSearch": "task to move", "targetSearch": "parent task description or 'root'"}
+  Triggers: "move X under Y", "make X a subtask of Y", "move X to root", "promote X to top level", "nest X under Y"
+
 {"action": "undo"}
   Triggers: "undo", "undo that", "take that back", "reverse that", "nevermind"
 

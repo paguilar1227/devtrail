@@ -199,6 +199,57 @@ describe('reminders', () => {
     expect(result.completed).toEqual(['rem-parent', 'child-1']);
   });
 
+  it('reparentReminder moves task to root (null parent)', async () => {
+    const db = mockDb();
+    // UPDATE to set parent_id=null, depth=0
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    // SELECT children of task (none)
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [],
+    });
+    const { reparentReminder } = await import('../../../src/db/reminders.js');
+    await reparentReminder(db, 'rem-1', null);
+    const updateCall = vi.mocked(db.query).mock.calls[0];
+    expect(updateCall[0]).toContain('parent_id = $1');
+    expect(updateCall[0]).toContain('depth = $2');
+    // newParentId=null, newDepth=0, newProject=null, newSection=null, id='rem-1'
+    expect(updateCall[1]).toEqual([null, 0, null, null, 'rem-1']);
+  });
+
+  it('reparentReminder moves task under a new parent, inheriting project/section', async () => {
+    const db = mockDb();
+    // getReminderById for the new parent
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ id: 'parent-id', depth: 0, project: 'work', section: 'backend', status: 'not_started', content: 'parent task', parent_id: null, archived: false, created_at: new Date(), updated_at: new Date(), priority: null, source: 'test', source_context: null, embedding: [], metadata: null, due_date: null }],
+      command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+    });
+    // UPDATE the task
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    // SELECT children of the task (none)
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [],
+    });
+    const { reparentReminder } = await import('../../../src/db/reminders.js');
+    await reparentReminder(db, 'child-id', 'parent-id');
+    const updateCall = vi.mocked(db.query).mock.calls[1]; // second call is the UPDATE
+    expect(updateCall[1]).toEqual(['parent-id', 1, 'work', 'backend', 'child-id']);
+  });
+
+  it('reparentReminder throws if new parent depth >= 3', async () => {
+    const db = mockDb();
+    // getReminderById returns parent at depth 3
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ id: 'deep-parent', depth: 3, project: null, section: null, status: 'not_started', content: 'deep', parent_id: 'x', archived: false, created_at: new Date(), updated_at: new Date(), priority: null, source: 'test', source_context: null, embedding: [], metadata: null, due_date: null }],
+      command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+    });
+    const { reparentReminder } = await import('../../../src/db/reminders.js');
+    await expect(reparentReminder(db, 'task-id', 'deep-parent')).rejects.toThrow('Max subtask depth reached');
+  });
+
   it('deleteReminder cascades to subtasks and comments', async () => {
     const db = mockDb();
     // collectDescendantIds -> finds one child

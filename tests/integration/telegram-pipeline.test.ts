@@ -1224,4 +1224,79 @@ describe('Telegram Pipeline — Subtasks & Display', () => {
     expect(reply.text).toContain('Reminder completed');
     expect(reply.text).toContain('+ 2 subtasks');
   });
+
+  it('T27: /move <id> root moves task to root level', async () => {
+    const taskId = 'rem-move-aabb1122-3344-5566-7788-99aabbccddee';
+    const deps = makeDeps();
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // resolveReminderId for task — LIKE query
+      if (typeof sql === 'string' && sql.includes('LIKE')) {
+        return { rows: [{ id: taskId }] } as any;
+      }
+      // reparentReminder UPDATE (parent_id = $1 ... WHERE id = $5)
+      if (typeof sql === 'string' && sql.includes('parent_id = $1') && sql.includes('depth = $2')) {
+        return { rows: [] } as any;
+      }
+      // updateChildDepths SELECT children
+      if (typeof sql === 'string' && sql.includes('WHERE parent_id = $1') && !sql.includes('status')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(4002, '/move rem-move root'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Moved');
+    expect(reply.text).toContain('root level');
+  });
+
+  it('T28: NL "move X under Y" reparents task correctly', async () => {
+    const taskId = 'rem-task-aabbccdd-1111-2222-3333-444455556666';
+    const parentId = 'rem-parent-11223344-5566-7788-99aa-bbccddeeff00';
+    const deps = makeDeps();
+
+    vi.mocked(deps.metadataLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ action: 'move_reminder', taskSearch: 'buy shoes', targetSearch: 'fitness project' }),
+      tokensUsed: { input: 10, output: 10, total: 20 },
+    });
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      // findAllReminders
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('archived = false') && !sql.includes('WHERE id') && !sql.includes('parent_id') && !sql.includes('not_started')) {
+        return {
+          rows: [
+            { id: taskId, content: 'Buy shoes', status: 'not_started', priority: null, project: null, section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() },
+            { id: parentId, content: 'Fitness project tasks', status: 'not_started', priority: null, project: 'fitness', section: null, depth: 0, due_date: null, archived: false, parent_id: null, created_at: new Date(), updated_at: new Date() },
+          ],
+        } as any;
+      }
+      // getReminderById for new parent (reparentReminder)
+      if (typeof sql === 'string' && sql.includes('WHERE id = $1') && params?.[0] === parentId) {
+        return {
+          rows: [{ id: parentId, content: 'Fitness project tasks', depth: 0, project: 'fitness', section: null, status: 'not_started', priority: null, parent_id: null, archived: false, created_at: new Date(), updated_at: new Date(), source: 'test', source_context: null, embedding: [], metadata: null, due_date: null }],
+        } as any;
+      }
+      // UPDATE reminders SET parent_id
+      if (typeof sql === 'string' && sql.includes('parent_id = $1') && sql.includes('depth = $2')) {
+        return { rows: [] } as any;
+      }
+      // SELECT children for updateChildDepths
+      if (typeof sql === 'string' && sql.includes('WHERE parent_id = $1') && !sql.includes('status')) {
+        return { rows: [] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const app = await createTestApp(deps);
+    await sendWebhookUpdate(app, textUpdate(4003, 'move buy shoes under fitness project'));
+
+    expect(telegramReplies.length).toBeGreaterThanOrEqual(1);
+    const reply = telegramReplies[telegramReplies.length - 1];
+    expect(reply.text).toContain('Moved');
+    expect(reply.text).toContain('Buy shoes');
+  });
 });
