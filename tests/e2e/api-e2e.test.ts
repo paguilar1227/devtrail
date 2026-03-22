@@ -36,7 +36,8 @@ const EMBEDDING_DIM = 3072;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const MIGRATION_PATH = join(__dirname, '../../migrations/001_initial_schema.sql');
+const MIGRATION_001_PATH = join(__dirname, '../../migrations/001_initial_schema.sql');
+const MIGRATION_002_PATH = join(__dirname, '../../migrations/002_tags_and_source_array.sql');
 
 // ---------------------------------------------------------------------------
 // Mock providers
@@ -84,7 +85,7 @@ function mockLLMProvider() {
               actions: [{
                 action: 'create_fact',
                 content: 'Test fact from consolidation',
-                category: 'preference',
+                tags: ['preference'],
                 confidence: 0.8,
                 source_capture_ids: captureIds,
               }],
@@ -100,7 +101,7 @@ function mockLLMProvider() {
             content: JSON.stringify({
               insights: factIds.length >= 2 ? [{
                 content: 'Test insight from consolidation',
-                category: 'pattern',
+                tags: ['pattern'],
                 confidence: 0.75,
                 source_fact_ids: factIds.slice(0, 2),
               }] : [],
@@ -205,8 +206,10 @@ beforeAll(async () => {
 
   // Connect to test database and run migrations
   db = createDbClient(DB_URL);
-  const migrationSql = readFileSync(MIGRATION_PATH, 'utf-8');
-  await db.pool.query(migrationSql);
+  const migration001 = readFileSync(MIGRATION_001_PATH, 'utf-8');
+  await db.pool.query(migration001);
+  const migration002 = readFileSync(MIGRATION_002_PATH, 'utf-8');
+  await db.pool.query(migration002);
 
   // Build app with real DB + mock providers
   const embeddingProvider = mockEmbeddingProvider();
@@ -288,7 +291,7 @@ describe('REST API E2E', () => {
       const dbResult = await db.query('SELECT * FROM captures WHERE id = $1', [body.captureId]);
       expect(dbResult.rows.length).toBe(1);
       expect(dbResult.rows[0].content).toBe('Pedro prefers TypeScript over JavaScript');
-      expect(dbResult.rows[0].source).toBe('api');
+      expect(dbResult.rows[0].source).toEqual(['api']);
       expect(dbResult.rows[0].status).toBe('pending');
       expect(dbResult.rows[0].embedding).toBeDefined();
     });
@@ -703,7 +706,7 @@ describe('MCP Tool E2E', () => {
       blobStorage: deps.blobStorage,
       content: 'Pedro values clean code architecture',
       files: [],
-      source: 'mcp',
+      source: ['mcp'],
     });
 
     expect(result.success).toBe(true);
@@ -711,7 +714,7 @@ describe('MCP Tool E2E', () => {
 
     const dbResult = await db.query('SELECT * FROM captures WHERE id = $1', [result.captureId]);
     expect(dbResult.rows.length).toBe(1);
-    expect(dbResult.rows[0].source).toBe('mcp');
+    expect(dbResult.rows[0].source).toEqual(['mcp']);
     expect(dbResult.rows[0].embedding).toBeDefined();
   });
 
@@ -732,12 +735,14 @@ describe('MCP Tool E2E', () => {
       fileHashes: null,
       embedding,
       metadata: {},
-      source: 'test',
+      source: ['test'],
+      tags: [],
     });
 
     await insertFact(db, {
       content: 'stats test fact',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.8,
       sourceCaptureIds: [],
@@ -747,7 +752,8 @@ describe('MCP Tool E2E', () => {
 
     await insertInsight(db, {
       content: 'stats test insight',
-      category: 'pattern',
+      tags: ['pattern'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.7,
       sourceFactIds: [],
@@ -796,7 +802,8 @@ describe('MCP Tool E2E', () => {
       fileHashes: null,
       embedding,
       metadata: {},
-      source: 'test',
+      source: ['test'],
+      tags: [],
     });
 
     const { searchThoughts } = await import('../../src/retrieval/search.js');
@@ -816,7 +823,8 @@ describe('MCP Tool E2E', () => {
 
     await insertFact(db, {
       content: 'Prefers TypeScript',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.9,
       sourceCaptureIds: [],
@@ -841,7 +849,8 @@ describe('MCP Tool E2E', () => {
       fileHashes: null,
       embedding,
       metadata: {},
-      source: 'test',
+      source: ['test'],
+      tags: [],
     });
 
     // Archive
@@ -874,7 +883,8 @@ describe('MCP Tool E2E', () => {
 
     const { id } = await insertFact(db, {
       content: 'Original fact content',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.6,
       sourceCaptureIds: [],
@@ -900,7 +910,8 @@ describe('MCP Tool E2E', () => {
 
     await insertFact(db, {
       content: 'Pending fact 1',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.5,
       sourceCaptureIds: [],
@@ -910,7 +921,8 @@ describe('MCP Tool E2E', () => {
 
     await insertFact(db, {
       content: 'Approved fact',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.9,
       sourceCaptureIds: [],
@@ -931,7 +943,8 @@ describe('MCP Tool E2E', () => {
 
     const { id } = await insertFact(db, {
       content: 'Fact to approve',
-      category: 'preference',
+      tags: ['preference'],
+      source: ['consolidation'],
       embedding,
       confidence: 0.7,
       sourceCaptureIds: [],
