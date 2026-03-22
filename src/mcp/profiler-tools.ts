@@ -48,9 +48,9 @@ Every capture is classified with semantic tags. Provide tags when calling captur
 ## How to Capture
 
 Use the capture_thought tool. Write in third person as an observer. Provide tags when confident:
-- capture_thought({ content: "Pedro prefers TypeScript over JavaScript for all new projects", tags: ["preference"] })
-- capture_thought({ content: "Pedro has deep Azure infrastructure experience — sets up Container Apps, Functions, and Bicep IaC fluently", tags: ["skill"] })
-- capture_thought({ content: "Pedro is building Open Brain to help AI tools understand who he is", tags: ["goal"] })
+- capture_thought({ content: "Alex prefers TypeScript over JavaScript for all new projects", tags: ["preference"] })
+- capture_thought({ content: "Alex has deep Azure infrastructure experience — sets up Container Apps, Functions, and Bicep IaC fluently", tags: ["skill"] })
+- capture_thought({ content: "Alex is building Open Brain to help AI tools understand who he is", tags: ["goal"] })
 - capture_thought({ content: "Fixed Telegram retry loop by responding 200 immediately after webhook POST", tags: ["problem-solution"] })
 
 Multiple tags are fine: tags: ["decision", "health"]
@@ -119,7 +119,7 @@ Provide tags when you're confident about the type. If unsure, omit them — the 
 
 | Tag | What it means | Example |
 |-----|---------------|---------|
-| preference | How the user likes things done | "Pedro prefers Hono over Express for TypeScript APIs" |
+| preference | How the user likes things done | "Alex prefers Hono over Express for TypeScript APIs" |
 | decision | A choice made with rationale | "Chose JWT sessions over server-side, prioritizing simplicity" |
 | problem-solution | A problem encountered and how it was resolved | "Fixed Telegram retry loop by responding 200 immediately" |
 | pattern | A recurring behavior or habit | "Tends to defer tests until after first bugs appear" |
@@ -153,12 +153,12 @@ Simply omit the tags parameter when in doubt — auto-classification handles it 
 Good:
 \`\`\`
 capture_thought({
-  content: "Pedro prefers TypeScript over JavaScript for all new projects. Expressed strong conviction when choosing the tech stack.",
+  content: "Alex prefers TypeScript over JavaScript for all new projects. Expressed strong conviction when choosing the tech stack.",
   tags: ["preference"]
 })
 
 capture_thought({
-  content: "Pedro has deep experience with Azure infrastructure — set up Container Apps, Functions, Key Vault, and Bicep IaC fluently without guidance.",
+  content: "Alex has deep experience with Azure infrastructure — set up Container Apps, Functions, Key Vault, and Bicep IaC fluently without guidance.",
   tags: ["skill"]
 })
 
@@ -168,12 +168,12 @@ capture_thought({
 })
 
 capture_thought({
-  content: "Pedro is building a personal AI knowledge system (Open Brain) to help AI tools understand who he is. This is a passion project, not work-related.",
+  content: "Alex is building a personal AI knowledge system (Open Brain) to help AI tools understand who he is. This is a passion project, not work-related.",
   tags: ["goal", "interest"]
 })
 
 capture_thought({
-  content: "Pedro values efficiency and directness — pushed back on over-engineering and wanted minimal, focused solutions.",
+  content: "Alex values efficiency and directness — pushed back on over-engineering and wanted minimal, focused solutions.",
   tags: ["pattern", "preference"]
 })
 \`\`\`
@@ -181,11 +181,11 @@ capture_thought({
 Bad:
 - "User asked me to fix a bug" (operational, no profile signal)
 - "I love TypeScript" (first person — use third person)
-- "Pedro used Claude Code today" (too vague — what did it reveal about him?)
+- "Alex used Claude Code today" (too vague — what did it reveal about him?)
 
 ### Key Principles
 
-1. **Third person always** — "Pedro prefers..." not "I prefer..."
+1. **Third person always** — "Alex prefers..." not "I prefer..."
 2. **One signal per capture** — don't bundle unrelated observations
 3. **Include context** — "chose X over Y because Z" is better than "likes X"
 4. **Be specific** — "uses Hono for HTTP APIs" beats "likes web frameworks"

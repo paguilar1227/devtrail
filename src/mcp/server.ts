@@ -18,7 +18,7 @@ export function createMcpServer(deps: AppDeps): McpServer {
 ON SESSION START: Call brain_help to learn how to use this system effectively. Call get_user_profile to understand who the user is.
 
 PROACTIVE BEHAVIOR:
-- After completing a task, making a decision, or noticing a user preference/pattern, capture it via capture_thought in third person (e.g. "Pedro prefers TypeScript for new projects").
+- After completing a task, making a decision, or noticing a user preference/pattern, capture it via capture_thought in third person (e.g. "Alex prefers TypeScript for new projects").
 - When the user mentions a commitment, deadline, or action item, suggest creating a reminder (but never add without consent).
 
 TAG SYSTEM:
@@ -26,7 +26,7 @@ Every capture, fact, and insight is classified with semantic tags. 14 allowed ta
 preference, decision, problem-solution, pattern, goal, opinion, skill, relationship, resource, idea, interest, health, dislike, milestone
 
 When calling capture_thought, provide tags if you are confident about the type:
-- capture_thought({ content: "Pedro avoids YAML configs", tags: ["dislike"] })
+- capture_thought({ content: "Alex avoids YAML configs", tags: ["dislike"] })
 - capture_thought({ content: "Fixed Telegram retry loop by responding 200 immediately", tags: ["problem-solution"] })
 - If unsure, omit tags — the pipeline auto-classifies.
 - Multiple tags are fine: tags: ["decision", "health"]
