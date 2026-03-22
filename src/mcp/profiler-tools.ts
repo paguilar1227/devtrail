@@ -75,6 +75,16 @@ I use Open Brain as my task manager too. Available tools:
 - complete_reminder — cascades to subtasks
 - update_reminder — change status, priority, content, move between projects
 
+## Project & Technical Knowledge
+
+Don't just capture things about me — capture what we learn about the projects and technologies we work on:
+- Bugs encountered and how they were resolved
+- Architectural decisions and why they were made
+- Gotchas, workarounds, and non-obvious behavior
+- Configuration patterns that work (or don't)
+
+These help future sessions avoid rediscovering the same problems.
+
 ## What NOT to Capture
 
 - Operational exchanges ("run this command", "read this file")
@@ -83,7 +93,7 @@ I use Open Brain as my task manager too. Available tools:
 
 ## Key Principle
 
-Don't wait for me to say "remember this." If you notice something profile-relevant, capture it. I've opted into this — Open Brain exists specifically for this purpose.`;
+Don't wait for me to say "remember this." If you notice something worth remembering — about me or about the work — capture it. I've opted into this — Open Brain exists specifically for this purpose.`;
 
 const BRAIN_HELP_TEXT = `# Open Brain — AI Usage Guide
 
@@ -93,8 +103,9 @@ Open Brain is a personal knowledge system that builds a living profile of the us
 
 ## When to Capture
 
-Capture a thought whenever you observe something profile-relevant about the user during your interaction. This includes:
+Capture a thought whenever you observe something worth remembering — about the user OR about the projects and technologies you work on together. This includes:
 
+**About the user:**
 - **Decisions made** — what they chose and why (or what they rejected)
 - **Preferences expressed** — likes, dislikes, opinions, aesthetic taste
 - **Skills demonstrated** — what they're good at, tools they use fluently
@@ -103,6 +114,14 @@ Capture a thought whenever you observe something profile-relevant about the user
 - **Emotional reactions** — what excites them, frustrates them, bores them
 - **Relationships mentioned** — people, teams, companies they reference
 - **Task completions** — what they accomplished and what it reveals
+
+**About the work:**
+- **Bugs and fixes** — problems encountered and how they were resolved
+- **Architectural decisions** — why a particular approach was chosen over alternatives
+- **Gotchas and workarounds** — non-obvious behavior, configuration quirks, things that break
+- **Patterns that work** — solutions, configurations, and approaches worth reusing
+
+These project learnings help future sessions avoid rediscovering the same problems.
 
 Do NOT capture:
 - Purely operational exchanges ("run this command", "read this file")

@@ -13,12 +13,13 @@ export function createMcpServer(deps: AppDeps): McpServer {
       version: '2.0.0',
     },
     {
-      instructions: `You are connected to Open Brain — a personal knowledge system that builds a living profile of the user.
+      instructions: `You are connected to Open Brain — a personal knowledge system that builds a living profile of the user and captures project/technical knowledge.
 
 ON SESSION START: Call brain_help to learn how to use this system effectively. Call get_user_profile to understand who the user is.
 
 PROACTIVE BEHAVIOR:
 - After completing a task, making a decision, or noticing a user preference/pattern, capture it via capture_thought in third person (e.g. "Alex prefers TypeScript for new projects").
+- When you encounter and resolve a bug, gotcha, or non-obvious behavior, capture it (e.g. "Gemini Flash needs maxTokens >= 1024 because thinking tokens consume output budget").
 - When the user mentions a commitment, deadline, or action item, suggest creating a reminder (but never add without consent).
 
 TAG SYSTEM:
@@ -28,6 +29,7 @@ preference, decision, problem-solution, pattern, goal, opinion, skill, relations
 When calling capture_thought, provide tags if you are confident about the type:
 - capture_thought({ content: "Alex avoids YAML configs", tags: ["dislike"] })
 - capture_thought({ content: "Fixed Telegram retry loop by responding 200 immediately", tags: ["problem-solution"] })
+- capture_thought({ content: "Chose Hono over Express for the API because of native TypeScript and testability", tags: ["decision"] })
 - If unsure, omit tags — the pipeline auto-classifies.
 - Multiple tags are fine: tags: ["decision", "health"]
 
@@ -35,9 +37,10 @@ SEARCHING WITH TAGS:
 Combine a semantic query with a tag filter for precise retrieval:
 - search_thoughts("coding preferences", { tags: ["preference"] })
 - search_thoughts("health issues", { tags: ["health"] })
+- search_thoughts("past bugs in auth", { tags: ["problem-solution"] })
 - Tags use AND semantics — all provided tags must match.
 
-NEVER capture purely operational exchanges. Capture preferences, decisions, skills, goals, patterns, opinions, and milestones.`,
+NEVER capture purely operational exchanges. Capture preferences, decisions, skills, goals, patterns, opinions, milestones, AND technical learnings about projects.`,
     },
   );
 
