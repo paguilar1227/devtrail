@@ -1,9 +1,10 @@
 import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
 import type { FactRow } from '../db/facts.js';
+import { validateTags, ALLOWED_TAGS, TAG_DESCRIPTIONS } from '../capture/tags.js';
 
 export interface ClusterInput {
-  captures: Array<{ id: string; content: string; embedding: number[] }>;
+  captures: Array<{ id: string; content: string; embedding: number[]; source?: string[]; tags?: string[] }>;
   existingFacts: Array<{ id: string; content: string; confidence: number; origin: string; tags: string[] }>;
   reviewMode: string;
 }
@@ -16,15 +17,20 @@ export interface ClusterResult {
   tokensUsed: number;
 }
 
+const TAG_ALLOWLIST_SECTION = `
+ALLOWED TAGS (use ONLY these):
+${ALLOWED_TAGS.map((t) => `- "${t}": ${TAG_DESCRIPTIONS[t]}`).join('\n')}
+`;
+
 const NOISE_CRITERIA_PROMPT = `You are a profile consolidation engine for a personal knowledge system. Your job is to extract profile facts about the user from their captured thoughts. You should be AGGRESSIVE about creating facts — this system exists to build a living profile, and every signal matters.
 
 Given a cluster of captures and any existing facts, determine what new profile facts should be created or existing ones updated.
 
 EXAMPLES of what SHOULD become facts:
-- "I love TypeScript" → create_fact: "Prefers TypeScript" (category: preference, confidence: 0.7)
-- "I am interested in healthy high-protein foods" → create_fact: "Interested in healthy high-protein foods" (category: preference, confidence: 0.7)
-- "I love this style of pizza" → create_fact: "Enjoys pizza" (category: preference, confidence: 0.5)
-- "Working on a new AI project" → create_fact: "Working on an AI project" (category: goal, confidence: 0.5)
+- "I love TypeScript" → create_fact: "Prefers TypeScript" (tags: ["preference"], confidence: 0.7)
+- "I am interested in healthy high-protein foods" → create_fact: "Interested in healthy high-protein foods" (tags: ["preference", "interest"], confidence: 0.7)
+- "I love this style of pizza" → create_fact: "Enjoys pizza" (tags: ["interest"], confidence: 0.5)
+- "Working on a new AI project" → create_fact: "Working on an AI project" (tags: ["goal"], confidence: 0.5)
 
 NOISE CRITERIA — ONLY discard a capture if ALL of these are true:
 1. Contains no preference, opinion, or value judgment
@@ -40,13 +46,15 @@ Examples of ACTUAL noise: "test", "Hello", "ok", "query: show me all captures wi
 YOUR DEFAULT SHOULD BE TO CREATE A FACT. Only discard if a capture is truly meaningless noise. When in doubt, create a fact with low confidence (0.3-0.4). It is far worse to miss a real signal than to create a low-confidence fact that gets refined later.
 
 IMPORTANT: Never modify facts with origin "user_edited". If new evidence contradicts a user_edited fact, flag it for review instead.
-
+${TAG_ALLOWLIST_SECTION}
 For each capture cluster, return a JSON object with an "actions" array. Each action is one of:
-- {"action": "create_fact", "content": "...", "category": "preference|habit|skill|relationship|opinion|history|goal|personality", "confidence": 0.0-1.0, "source_capture_ids": ["..."]}
+- {"action": "create_fact", "content": "...", "tags": ["preference", "skill"], "confidence": 0.0-1.0, "source_capture_ids": ["..."]}
 - {"action": "update_fact", "fact_id": "...", "content": "...", "confidence": 0.0-1.0, "reason": "..."}
 - {"action": "flag_review", "fact_id": "...", "reason": "..."}
 - {"action": "merge_facts", "keep_id": "...", "archive_id": "...", "merged_content": "...", "confidence": 0.0-1.0}
 - {"action": "discard", "reason": "..."}
+
+Note: "update_fact" does NOT include tags — tags are inherited from the existing fact.
 
 Return ONLY valid JSON.`;
 
@@ -69,7 +77,7 @@ export async function processCluster(
 
   const factsText = input.existingFacts.length > 0
     ? input.existingFacts
-        .map((f) => `[${f.id}] (${f.tags.join(',')}, confidence: ${f.confidence}, origin: ${f.origin}): ${f.content}`)
+        .map((f) => `[${f.id}] (tags: [${f.tags.join(', ')}], confidence: ${f.confidence}, origin: ${f.origin}): ${f.content}`)
         .join('\n')
     : 'No existing facts.';
 
@@ -90,18 +98,22 @@ export async function processCluster(
     actions = [];
   }
 
+  // Compute source union across all captures in this cluster
+  const factSource = [...new Set(input.captures.flatMap((c) => c.source ?? []))];
+
   // Process actions within a transaction (per-cluster commit)
   await db.transaction(async (txClient) => {
     for (const action of actions) {
       if (action.action === 'create_fact') {
-        const reviewStatus = shouldAutoApprove(action.tags ?? [], input.reviewMode)
+        const actionTags = validateTags(action.tags ?? []);
+        const reviewStatus = shouldAutoApprove(actionTags, input.reviewMode)
           ? 'auto_approved'
           : 'pending_review';
 
         await txClient.query(
-          `INSERT INTO facts (content, tags, confidence, source_capture_ids, origin, review_status)
-           VALUES ($1, $2, $3, $4, 'consolidation', $5)`,
-          [action.content, action.tags ?? [], action.confidence, action.source_capture_ids, reviewStatus],
+          `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
+           VALUES ($1, $2, $3, $4, $5, 'consolidation', $6)`,
+          [action.content, actionTags, factSource, action.confidence, action.source_capture_ids, reviewStatus],
         );
         result.factsCreated++;
         if (reviewStatus === 'pending_review') result.itemsFlagged++;
@@ -110,11 +122,11 @@ export async function processCluster(
         // Check if the fact is user_edited
         const existingFact = input.existingFacts.find((f) => f.id === action.fact_id);
         if (existingFact?.origin === 'user_edited') {
-          // Flag for review instead of updating
+          // Flag for review instead of updating — preserve existing tags
           await txClient.query(
-            `INSERT INTO facts (content, tags, confidence, source_capture_ids, origin, review_status)
-             VALUES ($1, $2, $3, $4, 'consolidation', 'pending_review')`,
-            [action.content, existingFact.tags, action.confidence,
+            `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
+             VALUES ($1, $2, $3, $4, $5, 'consolidation', 'pending_review')`,
+            [action.content, existingFact.tags, factSource, action.confidence,
              input.captures.map((c) => c.id)],
           );
           result.itemsFlagged++;
@@ -183,6 +195,6 @@ function shouldAutoApprove(tags: string[], reviewMode: string): boolean {
   if (reviewMode === 'autonomous') return true;
   if (reviewMode === 'ask') return false;
   // Hybrid mode: auto-approve low-impact tags
-  const autoApproveTags = ['preference', 'habit', 'skill', 'history'];
-  return tags.some((t) => autoApproveTags.includes(t));
+  const autoApproveTags = new Set(['preference', 'skill', 'interest', 'dislike', 'resource']);
+  return tags.some((t) => autoApproveTags.has(t));
 }

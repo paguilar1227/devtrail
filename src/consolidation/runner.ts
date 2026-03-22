@@ -63,11 +63,16 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
   try {
     // Include completed reminders as captures for consolidation
     const allInputs = [
-      ...pendingCaptures.map((c) => ({ id: c.id, content: c.content, embedding: c.embedding })),
+      ...pendingCaptures.map((c) => ({
+        id: c.id, content: c.content, embedding: c.embedding,
+        source: c.source, tags: c.tags,
+      })),
       ...completedReminders.map((r) => ({
         id: r.id,
         content: `[Completed reminder] ${r.content}`,
         embedding: r.embedding,
+        source: ['system'] as string[],
+        tags: [] as string[],
       })),
     ];
 
@@ -141,7 +146,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
 
       const phase2Result = await runPhase2(db, consolidationLLM, {
         facts: activeFacts.map((f) => ({
-          id: f.id, content: f.content, tags: f.tags, confidence: f.confidence,
+          id: f.id, content: f.content, tags: f.tags, confidence: f.confidence, source: f.source,
         })),
         existingInsights: existingInsights.map((i) => ({
           id: i.id, content: i.content, tags: i.tags,
