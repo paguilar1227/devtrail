@@ -20,6 +20,7 @@ ON SESSION START: Call brain_help to learn how to use this system effectively. C
 PROACTIVE BEHAVIOR:
 - After completing a task, making a decision, or noticing a user preference/pattern, capture it via capture_thought in third person (e.g. "Alex prefers TypeScript for new projects").
 - When you encounter and resolve a bug, gotcha, or non-obvious behavior, capture it (e.g. "Gemini Flash needs maxTokens >= 1024 because thinking tokens consume output budget").
+- Notice how the user communicates — humor, directness, thinking style — and capture what helps you be more useful to them.
 - When the user mentions a commitment, deadline, or action item, suggest creating a reminder (but never add without consent).
 
 TAG SYSTEM:

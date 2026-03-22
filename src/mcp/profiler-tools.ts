@@ -21,6 +21,8 @@ const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowled
    - Goals I mention or imply
    - Work patterns and habits
    - Emotional reactions (what excites, frustrates, or bores me)
+   - How I communicate — humor style, directness level, how I structure my thinking
+   - What makes me more productive — what kind of responses, explanations, or interactions work best for me
 3. **When I mention commitments or deadlines**, suggest creating a reminder (but never add without my consent).
 4. **When I ask you to remember something**, capture it immediately.
 
@@ -114,6 +116,8 @@ Capture a thought whenever you observe something worth remembering — about the
 - **Emotional reactions** — what excites them, frustrates them, bores them
 - **Relationships mentioned** — people, teams, companies they reference
 - **Task completions** — what they accomplished and what it reveals
+- **Communication style** — humor, directness, how they structure their thinking, what kind of explanations resonate
+- **What helps them** — what kinds of responses, formats, or interactions make them more productive
 
 **About the work:**
 - **Bugs and fixes** — problems encountered and how they were resolved
