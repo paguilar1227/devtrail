@@ -39,21 +39,38 @@ const deps = {
 // Run migrations on startup (idempotent — safe to run every boot)
 async function runMigrations() {
   try {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+
     // Use raw pool to avoid pgvector type registration (extension doesn't exist yet)
     const result = await deps.db.pool.query(
       "SELECT count(*) as count FROM pg_tables WHERE schemaname = 'public' AND tablename = 'captures'",
     );
-    if (parseInt(result.rows[0].count) > 0) {
-      console.log('Database tables already exist, skipping migration.');
-      return;
+
+    if (parseInt(result.rows[0].count) === 0) {
+      console.log('Running database migration 001...');
+      const migrationPath = join(__dirname, '..', 'migrations', '001_initial_schema.sql');
+      const sql = readFileSync(migrationPath, 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 001 complete.');
+    } else {
+      console.log('Database tables already exist, checking for incremental migrations.');
     }
 
-    console.log('Running database migration...');
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const migrationPath = join(__dirname, '..', 'migrations', '001_initial_schema.sql');
-    const sql = readFileSync(migrationPath, 'utf-8');
-    await deps.db.pool.query(sql);
-    console.log('Database migration complete.');
+    // Migration 002: tags and source arrays
+    // Idempotent: check if captures.tags column already exists before running
+    const m002Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'captures' AND column_name = 'tags'`,
+    );
+    if (parseInt(m002Check.rows[0].count) === 0) {
+      console.log('Running database migration 002...');
+      const migrationPath = join(__dirname, '..', 'migrations', '002_tags_and_source_array.sql');
+      const sql = readFileSync(migrationPath, 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 002 complete.');
+    }
+
+    console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);
     process.exit(1);
