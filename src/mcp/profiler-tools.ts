@@ -8,6 +8,48 @@ import { getInsightById, setInsightArchived, setInsightReviewStatus, findPending
 import { runCapturePipeline } from '../capture/pipeline.js';
 import { runConsolidation } from '../consolidation/runner.js';
 
+const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowledge system that maintains a living profile about me.
+
+## What to Do
+
+1. **At session start**, call get_user_profile to understand who I am.
+2. **During our conversation**, proactively capture observations about me when you notice:
+   - Decisions I make and why
+   - Preferences I express (tools, languages, approaches, food, hobbies)
+   - Skills I demonstrate
+   - Goals I mention or imply
+   - Work patterns and habits
+   - Emotional reactions (what excites, frustrates, or bores me)
+3. **When I mention commitments or deadlines**, suggest creating a reminder (but never add without my consent).
+4. **When I ask you to remember something**, capture it immediately.
+
+## How to Capture
+
+Use the capture_thought tool. Write in third person as an observer:
+- "[preference] Pedro prefers TypeScript over JavaScript for all new projects."
+- "[skill] Pedro has deep Azure infrastructure experience — sets up Container Apps, Functions, and Bicep IaC fluently."
+- "[goal] Pedro is building Open Brain to help AI tools understand who he is."
+
+One signal per capture. Be specific. Include the WHY when possible.
+
+## Reminders
+
+I use Open Brain as my task manager too. Available tools:
+- create_reminder — with project, priority (P1/P2/P3), due date, subtasks
+- list_reminders — filter by project, status, priority
+- complete_reminder — cascades to subtasks
+- update_reminder — change status, priority, content, move between projects
+
+## What NOT to Capture
+
+- Operational exchanges ("run this command", "read this file")
+- Information I'm asking YOU about (that's your knowledge, not mine)
+- Verbatim conversation transcripts
+
+## Key Principle
+
+Don't wait for me to say "remember this." If you notice something profile-relevant, capture it. I've opted into this — Open Brain exists specifically for this purpose.`;
+
 const BRAIN_HELP_TEXT = `# Open Brain — AI Usage Guide
 
 ## What This Is
@@ -83,13 +125,23 @@ Bad:
 Don't wait for the user to say "remember this." If you notice a pattern, preference, or significant decision during normal interaction, capture it. The user has opted into this — Open Brain exists specifically for this purpose. Just don't interrupt the conversation flow to announce it.`;
 
 export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
-  // 0. brain_help — usage guide for AI clients
+  // 0a. brain_help — usage guide for AI clients
   server.tool(
     'brain_help',
     'Returns instructions on what Open Brain is, when and how to capture thoughts, and the optimal format for captures. Call this when you first connect or need guidance.',
     {},
     async () => {
       return { content: [{ type: 'text' as const, text: BRAIN_HELP_TEXT }] };
+    },
+  );
+
+  // 0b. get_user_prompt — portable system prompt for any AI client
+  server.tool(
+    'get_user_prompt',
+    'Returns a system prompt that can be pasted into any AI client (Claude, ChatGPT, etc.) to teach it how to use Open Brain. Use this to set up a new AI client.',
+    {},
+    async () => {
+      return { content: [{ type: 'text' as const, text: USER_SYSTEM_PROMPT }] };
     },
   );
 
