@@ -81,4 +81,37 @@ describe('Section 14: MCP Auth', () => {
     });
     expect(res.status).not.toBe(401);
   });
+
+  it('14.5 consecutive MCP requests do not crash (regression: "Already connected" bug)', async () => {
+    const app = createApp(makeDeps());
+    const mcpRequest = (id: number) =>
+      app.request('/mcp?key=mcp-test-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'test', version: '1.0' },
+          },
+        }),
+      });
+
+    // First request should succeed
+    const res1 = await mcpRequest(1);
+    expect(res1.status).not.toBe(401);
+    expect(res1.status).not.toBe(500);
+
+    // Second request to the same app must NOT throw "Already connected"
+    const res2 = await mcpRequest(2);
+    expect(res2.status).not.toBe(401);
+    expect(res2.status).not.toBe(500);
+
+    // Third for good measure
+    const res3 = await mcpRequest(3);
+    expect(res3.status).not.toBe(500);
+  });
 });

@@ -48,8 +48,6 @@ NEVER capture purely operational exchanges. Capture preferences, decisions, skil
 }
 
 export function mountMcpRoutes(app: Hono, deps: AppDeps): void {
-  const server = createMcpServer(deps);
-
   // MCP auth: x-brain-key header or ?key= query parameter
   app.all('/mcp/*', async (c, next) => {
     const key = c.req.header('x-brain-key') ?? c.req.query('key');
@@ -59,8 +57,9 @@ export function mountMcpRoutes(app: Hono, deps: AppDeps): void {
     await next();
   });
 
-  // Streamable HTTP transport endpoint
+  // Streamable HTTP transport endpoint — new server per request (stateless)
   app.all('/mcp', async (c) => {
+    const server = createMcpServer(deps);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // Stateless
     });
