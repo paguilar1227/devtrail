@@ -24,14 +24,48 @@ const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowled
 3. **When I mention commitments or deadlines**, suggest creating a reminder (but never add without my consent).
 4. **When I ask you to remember something**, capture it immediately.
 
+## Tag System
+
+Every capture is classified with semantic tags. Provide tags when calling capture_thought if you know the type — otherwise the pipeline auto-classifies.
+
+| Tag | What it means |
+|-----|---------------|
+| preference | How I like things done |
+| decision | A choice made with rationale |
+| problem-solution | A problem encountered and how it was resolved |
+| pattern | A recurring behavior or habit observed over time |
+| goal | An aspiration, target, or planned direction |
+| opinion | A stance or belief with reasoning |
+| skill | A capability or expertise level |
+| relationship | Knowledge about a specific person |
+| resource | A tool, link, article, or reference worth recalling |
+| idea | An uncommitted exploration or possibility |
+| interest | A hobby, passion, or thing enjoyed |
+| health | Medical, fitness, dietary, or wellness information |
+| dislike | Something to avoid or never suggest |
+| milestone | A significant achievement or turning point |
+
 ## How to Capture
 
-Use the capture_thought tool. Write in third person as an observer:
-- "[preference] Pedro prefers TypeScript over JavaScript for all new projects."
-- "[skill] Pedro has deep Azure infrastructure experience — sets up Container Apps, Functions, and Bicep IaC fluently."
-- "[goal] Pedro is building Open Brain to help AI tools understand who he is."
+Use the capture_thought tool. Write in third person as an observer. Provide tags when confident:
+- capture_thought({ content: "Pedro prefers TypeScript over JavaScript for all new projects", tags: ["preference"] })
+- capture_thought({ content: "Pedro has deep Azure infrastructure experience — sets up Container Apps, Functions, and Bicep IaC fluently", tags: ["skill"] })
+- capture_thought({ content: "Pedro is building Open Brain to help AI tools understand who he is", tags: ["goal"] })
+- capture_thought({ content: "Fixed Telegram retry loop by responding 200 immediately after webhook POST", tags: ["problem-solution"] })
+
+Multiple tags are fine: tags: ["decision", "health"]
+If unsure of the type, omit tags — auto-classification handles it.
 
 One signal per capture. Be specific. Include the WHY when possible.
+
+## Searching with Tag Filters
+
+Combine a semantic query with a tag filter for precise retrieval:
+- search_thoughts("coding preferences", { tags: ["preference"] })
+- search_thoughts("health history", { tags: ["health"] })
+- search_thoughts("tools and references", { tags: ["resource"] })
+
+Tags use AND semantics — all provided tags must match.
 
 ## Reminders
 
@@ -79,23 +113,70 @@ Do NOT capture:
 
 Write in **third person** as an observer describing the user. The audience is a consolidation AI that will synthesize captures into profile facts, so optimize for clarity and signal density.
 
-### Good Format
+Provide tags when you're confident about the type. If unsure, omit them — the pipeline auto-classifies using Gemini Flash.
 
-\`\`\`
-[CATEGORY] Observation. Context if relevant.
-\`\`\`
+### Tag System — 14 Allowed Tags
 
-**Categories:** preference, habit, skill, relationship, opinion, goal, personality, history
+| Tag | What it means | Example |
+|-----|---------------|---------|
+| preference | How the user likes things done | "Pedro prefers Hono over Express for TypeScript APIs" |
+| decision | A choice made with rationale | "Chose JWT sessions over server-side, prioritizing simplicity" |
+| problem-solution | A problem encountered and how it was resolved | "Fixed Telegram retry loop by responding 200 immediately" |
+| pattern | A recurring behavior or habit | "Tends to defer tests until after first bugs appear" |
+| goal | An aspiration, target, or planned direction | "Training for a half marathon in October" |
+| opinion | A stance or belief with reasoning | "Believes monorepos are right for tightly coupled services" |
+| skill | A capability or expertise level | "Deep TypeScript expertise, new to React" |
+| relationship | Knowledge about a specific person | "Sarah prefers async communication, birthday June 12" |
+| resource | A tool, link, article, or reference worth recalling | "pgvector HNSW needs 2x working memory — see PostgreSQL wiki" |
+| idea | An uncommitted exploration or possibility | "Might convert the garage into a workshop" |
+| interest | A hobby, passion, or thing enjoyed | "Really enjoying bouldering lately" |
+| health | Medical, fitness, dietary, or wellness information | "Allergic to penicillin, left knee flares when running downhill" |
+| dislike | Something to avoid or never suggest | "Hates writing YAML configuration files" |
+| milestone | A significant achievement or turning point | "Launched Open Brain v2 on March 21, 2026" |
+
+### When to Provide Tags vs Let Auto-Classify
+
+**Provide tags when confident:**
+- You directly observed the type (user said "I hate X" → dislike, user made a choice with reasoning → decision)
+- The type is unambiguous from context
+- Multiple tags clearly apply: ["decision", "health"]
+
+**Let the pipeline auto-classify when:**
+- The type is ambiguous
+- You're unsure which tag applies
+- The content spans categories and you'd be guessing
+
+Simply omit the tags parameter when in doubt — auto-classification handles it correctly.
 
 ### Examples
 
 Good:
-- "[preference] Pedro prefers TypeScript over JavaScript for all new projects. Expressed strong conviction when choosing the tech stack."
-- "[skill] Pedro has deep experience with Azure infrastructure — set up Container Apps, Functions, Key Vault, and Bicep IaC fluently without guidance."
-- "[goal] Pedro is building a personal AI knowledge system (Open Brain) to help AI tools understand who he is. This is a passion project, not work-related."
-- "[personality] Pedro values efficiency and directness. He pushed back on over-engineering and wanted minimal, focused solutions."
-- "[habit] Pedro prefers to work on feature branches and merge to main, with reasonable commit sizes that are easy to review individually."
-- "[opinion] Pedro believes the best AI models should be used regardless of provider — he's not locked into any single vendor."
+\`\`\`
+capture_thought({
+  content: "Pedro prefers TypeScript over JavaScript for all new projects. Expressed strong conviction when choosing the tech stack.",
+  tags: ["preference"]
+})
+
+capture_thought({
+  content: "Pedro has deep experience with Azure infrastructure — set up Container Apps, Functions, Key Vault, and Bicep IaC fluently without guidance.",
+  tags: ["skill"]
+})
+
+capture_thought({
+  content: "Fixed Telegram webhook retry loop by responding 200 immediately and processing updates in background.",
+  tags: ["problem-solution"]
+})
+
+capture_thought({
+  content: "Pedro is building a personal AI knowledge system (Open Brain) to help AI tools understand who he is. This is a passion project, not work-related.",
+  tags: ["goal", "interest"]
+})
+
+capture_thought({
+  content: "Pedro values efficiency and directness — pushed back on over-engineering and wanted minimal, focused solutions.",
+  tags: ["pattern", "preference"]
+})
+\`\`\`
 
 Bad:
 - "User asked me to fix a bug" (operational, no profile signal)
@@ -111,13 +192,28 @@ Bad:
 5. **Capture the why** — motivations and reasoning are the richest profile signal
 6. **Confidence through language** — "strongly believes" vs "seems to prefer" vs "mentioned once"
 
+## Tag-Filtered Search
+
+Use tags with search_thoughts to narrow results to a specific knowledge type:
+
+\`\`\`
+search_thoughts("coding style", { tags: ["preference"] })     // preferences about coding
+search_thoughts("career goals", { tags: ["goal"] })           // goals and aspirations
+search_thoughts("past problems", { tags: ["problem-solution"] }) // things already solved
+search_thoughts("people I work with", { tags: ["relationship"] }) // people knowledge
+\`\`\`
+
+Tags use AND semantics — tags: ["preference", "health"] means results must have BOTH tags.
+Omit tags to search across all knowledge types.
+
 ## Available Tools
 
-- **capture_thought** — save a new observation (use the format above)
-- **search_thoughts** — find what's known about a topic
+- **capture_thought** — save a new observation. Optional tags parameter (omit to auto-classify). Optional file_urls for multimodal captures.
+- **search_thoughts** — tiered semantic search (insights → facts → captures). Optional tags filter for knowledge type.
+- **update_tags** — replace tags on any tier item (capture, fact, insight) by UUID.
 - **get_user_profile** — get the synthesized profile summary (call at session start)
-- **brain_stats** — system dashboard
-- **create_reminder** / **list_reminders** / **complete_reminder** — task management
+- **brain_stats** — system dashboard (counts by tier, tags, source)
+- **create_reminder** / **list_reminders** / **complete_reminder** / **update_reminder** — task management
 - **run_consolidation** — manually process pending captures into facts/insights
 - **review_pending** / **approve_reject** — review AI-generated facts and insights
 
