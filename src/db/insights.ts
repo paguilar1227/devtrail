@@ -58,15 +58,23 @@ export async function findApprovedInsights(db: DbClient): Promise<InsightRow[]> 
 
 export async function findSimilarInsights(
   db: DbClient, embedding: number[], threshold: number, limit: number,
+  tags?: string[],
 ): Promise<Array<InsightRow & { similarity: number }>> {
+  const params: any[] = [JSON.stringify(embedding), threshold, limit];
+  let tagFilter = '';
+  if (tags && tags.length > 0) {
+    params.push(tags);
+    tagFilter = `AND tags @> $${params.length}`;
+  }
   const result = await db.query(
     `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
      FROM insights
      WHERE archived = false AND review_status != 'user_rejected'
        AND embedding IS NOT NULL
        AND 1 - (embedding <=> $1::vector) > $2
+       ${tagFilter}
      ORDER BY similarity DESC LIMIT $3`,
-    [JSON.stringify(embedding), threshold, limit],
+    params,
   );
   return result.rows;
 }

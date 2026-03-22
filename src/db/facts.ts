@@ -100,15 +100,23 @@ export async function findActiveFacts(db: DbClient, minConfidence: number): Prom
 
 export async function findSimilarFacts(
   db: DbClient, embedding: number[], threshold: number, limit: number,
+  tags?: string[],
 ): Promise<Array<FactRow & { similarity: number }>> {
+  const params: any[] = [JSON.stringify(embedding), threshold, limit];
+  let tagFilter = '';
+  if (tags && tags.length > 0) {
+    params.push(tags);
+    tagFilter = `AND tags @> $${params.length}`;
+  }
   const result = await db.query(
     `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
      FROM facts
      WHERE archived = false AND review_status != 'user_rejected'
        AND embedding IS NOT NULL
        AND 1 - (embedding <=> $1::vector) > $2
+       ${tagFilter}
      ORDER BY similarity DESC LIMIT $3`,
-    [JSON.stringify(embedding), threshold, limit],
+    params,
   );
   return result.rows;
 }

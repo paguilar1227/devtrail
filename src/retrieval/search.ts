@@ -20,11 +20,12 @@ export async function searchThoughts(
   query: string,
   threshold: number,
   limit: number,
+  tags?: string[],
 ): Promise<SearchResult[]> {
   const queryEmbedding = await embeddingProvider.embed(query);
 
   // Tier 1: Search insights first
-  const insights = await findSimilarInsights(db, queryEmbedding, threshold, limit);
+  const insights = await findSimilarInsights(db, queryEmbedding, threshold, limit, tags);
   if (insights.length > 0) {
     return insights.map((i) => ({
       tier: 'insight' as const,
@@ -37,7 +38,7 @@ export async function searchThoughts(
   }
 
   // Tier 2: Search facts
-  const facts = await findSimilarFacts(db, queryEmbedding, threshold, limit);
+  const facts = await findSimilarFacts(db, queryEmbedding, threshold, limit, tags);
   if (facts.length > 0) {
     const results: SearchResult[] = [];
     for (const fact of facts) {
@@ -66,7 +67,7 @@ export async function searchThoughts(
   }
 
   // Tier 3: Fall back to raw captures
-  const captures = await findSimilarCaptures(db, queryEmbedding, threshold);
+  const captures = await findSimilarCaptures(db, queryEmbedding, threshold, limit, tags);
   return captures.slice(0, limit).map((c) => ({
     tier: 'capture' as const,
     confidence: null,

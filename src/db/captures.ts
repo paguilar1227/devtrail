@@ -84,16 +84,24 @@ export async function findSimilarCaptures(
   embedding: number[],
   threshold: number,
   limit: number = 20,
+  tags?: string[],
 ): Promise<Array<CaptureRow & { similarity: number }>> {
+  const params: any[] = [JSON.stringify(embedding), threshold, limit];
+  let tagFilter = '';
+  if (tags && tags.length > 0) {
+    params.push(tags);
+    tagFilter = `AND tags @> $${params.length}`;
+  }
   const result = await db.query(
     `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
      FROM captures
      WHERE archived = false
        AND embedding IS NOT NULL
        AND 1 - (embedding <=> $1::vector) > $2
+       ${tagFilter}
      ORDER BY similarity DESC
      LIMIT $3`,
-    [JSON.stringify(embedding), threshold, limit],
+    params,
   );
   return result.rows;
 }
