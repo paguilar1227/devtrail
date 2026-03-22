@@ -82,7 +82,7 @@ describe('phase1', () => {
     const result = await processCluster(db, llm, {
       captures: [{ id: 'cap-3', content: 'TS generics are amazing', embedding: [] }],
       existingFacts: [
-        { id: 'fact-existing', content: 'Prefers TypeScript', confidence: 0.8, origin: 'consolidation', category: 'preference' },
+        { id: 'fact-existing', content: 'Prefers TypeScript', confidence: 0.8, origin: 'consolidation', tags: ['preference'] },
       ],
       reviewMode: 'hybrid',
     });
@@ -142,7 +142,7 @@ describe('phase1', () => {
     const result = await processCluster(db, llm, {
       captures: [{ id: 'cap-5', content: 'Contradicting info', embedding: [] }],
       existingFacts: [
-        { id: 'fact-user-edited', content: 'User said this', confidence: 1.0, origin: 'user_edited', category: 'preference' },
+        { id: 'fact-user-edited', content: 'User said this', confidence: 1.0, origin: 'user_edited', tags: ['preference'] },
       ],
       reviewMode: 'hybrid',
     });

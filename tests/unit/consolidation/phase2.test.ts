@@ -33,9 +33,9 @@ describe('phase2', () => {
     const { runPhase2 } = await import('../../../src/consolidation/phase2.js');
     const result = await runPhase2(db, llm, {
       facts: [
-        { id: 'f1', content: 'Prefers TypeScript', category: 'preference', confidence: 0.9 },
-        { id: 'f2', content: 'Works as software engineer', category: 'history', confidence: 1.0 },
-        { id: 'f3', content: 'Enjoys solving complex problems', category: 'personality', confidence: 0.8 },
+        { id: 'f1', content: 'Prefers TypeScript', tags: ['preference'], confidence: 0.9 },
+        { id: 'f2', content: 'Works as software engineer', tags: ['history'], confidence: 1.0 },
+        { id: 'f3', content: 'Enjoys solving complex problems', tags: ['personality'], confidence: 0.8 },
       ],
       existingInsights: [],
     });
@@ -59,7 +59,7 @@ describe('phase2', () => {
 
     const { runPhase2 } = await import('../../../src/consolidation/phase2.js');
     const result = await runPhase2(db, llm, {
-      facts: [{ id: 'f1', content: 'Likes pizza', category: 'preference', confidence: 0.7 }],
+      facts: [{ id: 'f1', content: 'Likes pizza', tags: ['preference'], confidence: 0.7 }],
       existingInsights: [],
     });
 

@@ -15,7 +15,7 @@ describe('telegram handlers', () => {
     expect(mockPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         content: 'I love hiking in the mountains',
-        source: 'telegram',
+        source: ['telegram'],
       }),
     );
   });
