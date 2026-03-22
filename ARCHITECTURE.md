@@ -444,36 +444,45 @@ Per-chat state tracking (`lastActions` Map). Stores the last action type, remind
 
 **Auth:** `x-brain-key` header or `?key=` query parameter on `/mcp` endpoint.
 
-### Tools (19 total)
+### AI Client Setup — Two Mechanisms
 
-**Profiler tools (11):**
+Open Brain uses two complementary mechanisms to teach AI clients how to use it:
+
+1. **Server instructions (automatic):** The `McpServer` is created with an `instructions` field in its options. MCP-compliant clients (Claude, etc.) receive this string on connection and apply it automatically — no user configuration needed. The instructions tell the AI to call `brain_help` at session start, call `get_user_profile` to bootstrap context, proactively capture via `capture_thought`, and suggest reminders when commitments are mentioned.
+
+2. **`get_user_prompt` tool (portable):** For non-MCP clients (ChatGPT, raw API usage, etc.), the `get_user_prompt` tool returns the same behavioral instructions as a copyable system prompt. Users paste it into their AI client's custom instructions or system prompt field once, and any AI client gains the same proactive behavior.
+
+### Tools (20 total)
+
+**Profiler tools (12):**
 
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `brain_help` | Returns AI usage guide — when/how to capture, third-person format, category tags |
-| 2 | `get_user_profile` | Session bootstrap — synthesized profile summary |
-| 3 | `search_thoughts` | Tiered semantic search: insights -> facts -> captures |
-| 4 | `capture_thought` | Capture text + optional file URLs from any MCP client |
-| 5 | `brain_stats` | Dashboard — counts by type, facts by category, pending review |
-| 6 | `archive_thought` | Soft-delete (no cascade recalculation) |
-| 7 | `unarchive_thought` | Restore archived item |
-| 8 | `update_fact` | Direct user edit — sets origin to `user_edited`, confidence to 1.0 |
-| 9 | `review_pending` | List items with `pending_review` status |
-| 10 | `approve_reject` | Approve, reject, or edit pending review items (looks up by UUID across facts and insights) |
-| 11 | `run_consolidation` | Manually trigger consolidation pipeline |
+| 2 | `get_user_prompt` | Returns a portable system prompt to paste into any AI client (Claude, ChatGPT, etc.) |
+| 3 | `get_user_profile` | Session bootstrap — synthesized profile summary |
+| 4 | `search_thoughts` | Tiered semantic search: insights -> facts -> captures |
+| 5 | `capture_thought` | Capture text + optional file URLs from any MCP client |
+| 6 | `brain_stats` | Dashboard — counts by type, facts by category, pending review |
+| 7 | `archive_thought` | Soft-delete (no cascade recalculation) |
+| 8 | `unarchive_thought` | Restore archived item |
+| 9 | `update_fact` | Direct user edit — sets origin to `user_edited`, confidence to 1.0 |
+| 10 | `review_pending` | List items with `pending_review` status |
+| 11 | `approve_reject` | Approve, reject, or edit pending review items (looks up by UUID across facts and insights) |
+| 12 | `run_consolidation` | Manually trigger consolidation pipeline |
 
 **Reminder tools (8):**
 
 | # | Tool | Description |
 |---|------|-------------|
-| 12 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
-| 13 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
-| 14 | `get_reminder_detail` | Single task with all comments and full subtask tree |
-| 15 | `update_reminder` | Change status, priority, content, due date, move project/section |
-| 16 | `complete_reminder` | Mark done (does NOT auto-complete subtasks) |
-| 17 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
-| 18 | `add_reminder_comment` | Add a timestamped progress comment |
-| 19 | `list_projects` | All projects with task count stats by status |
+| 13 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
+| 14 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
+| 15 | `get_reminder_detail` | Single task with all comments and full subtask tree |
+| 16 | `update_reminder` | Change status, priority, content, due date, move project/section |
+| 17 | `complete_reminder` | Mark done (does NOT auto-complete subtasks) |
+| 18 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
+| 19 | `add_reminder_comment` | Add a timestamped progress comment |
+| 20 | `list_projects` | All projects with task count stats by status |
 
 ### brain_help
 

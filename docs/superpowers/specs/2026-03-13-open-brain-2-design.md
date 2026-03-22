@@ -329,10 +329,21 @@ Low-confidence response includes `evidence` array with source items and a `note`
 
 ## MCP Tool Surface
 
-19 tools exposed via JSON-RPC 2.0 (11 profiler + 8 reminders):
+20 tools exposed via JSON-RPC 2.0 (12 profiler + 8 reminders):
+
+### AI Client Setup
+
+Two mechanisms teach AI clients how to use Open Brain:
+
+- **Server instructions (automatic):** The MCP server sends an `instructions` string on connection. MCP-compliant clients (Claude, etc.) apply it automatically — no user configuration needed.
+- **`get_user_prompt` (portable):** For non-MCP clients (ChatGPT, etc.), this tool returns the same behavioral instructions as a copyable system prompt users paste into custom instructions once.
+
+### Profiler Tools
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
+| `brain_help` | Returns AI usage guide — when/how to capture, format, categories | none |
+| `get_user_prompt` | Returns a portable system prompt to paste into any AI client | none |
 | `get_user_profile` | Session bootstrap — synthesized profile summary | none |
 | `search_thoughts` | Tiered semantic search: insights → facts → captures, with conditional evidence on low confidence (see Retrieval Flow Path 2) | `query` (required), `threshold` (0-1, default 0.5), `limit` (default 10) |
 | `capture_thought` | Capture from any MCP client | `content` (required), `file_urls` (optional, array of accessible URLs) |
@@ -343,7 +354,6 @@ Low-confidence response includes `evidence` array with source items and a `note`
 | `review_pending` | List items with `review_status = 'pending_review'` | `limit` (optional), `type` (optional: 'fact' \| 'insight', defaults to both) |
 | `approve_reject` | Act on items in `pending_review` status — approve, reject, or edit | `id` (required), `action` ('approve' \| 'reject' \| 'edit'), `content` (required if action='edit'). Looks up by UUID across facts and insights tables (UUIDs are globally unique). Only operates on items with `review_status = 'pending_review'`. Use `update_fact` to edit already-approved facts. |
 | `run_consolidation` | Manually trigger the consolidation pipeline | none |
-| `brain_help` | Returns AI usage guide — when/how to capture, format, categories | none |
 
 ### Archive Behavior
 

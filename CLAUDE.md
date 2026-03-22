@@ -160,7 +160,7 @@ src/
 ├── capture/         # Universal ingest pipeline
 ├── consolidation/   # 3-phase consolidation (DBSCAN → Opus → embed)
 ├── retrieval/       # Profile synthesis + tiered search
-├── mcp/             # MCP server + 19 tools
+├── mcp/             # MCP server + 20 tools
 ├── db/              # PostgreSQL query modules (6 tables)
 ├── providers/       # AI provider abstraction (Gemini, Anthropic)
 ├── storage/         # Azure Blob Storage
@@ -194,7 +194,13 @@ Check order in `message:text` handler: pendingSubtask → pendingAction → undo
 1. Add the tool registration in `src/mcp/profiler-tools.ts` or `src/mcp/reminder-tools.ts`
 2. Use Zod for parameter validation
 3. Add an E2E test in `tests/e2e/api-e2e.test.ts`
-4. Update `ARCHITECTURE.md`
+4. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table
+
+### MCP Server Instructions
+
+The `McpServer` in `src/mcp/server.ts` is created with an `instructions` field. MCP clients that support it (Claude, etc.) receive this string on connection and apply it automatically — no user setup needed. The instructions tell the AI to call `brain_help`, proactively capture, and suggest reminders.
+
+For AI clients that don't support MCP server instructions (ChatGPT, raw API), the `get_user_prompt` tool returns the same behavioral instructions as a portable system prompt users can paste into their client's custom instructions field once.
 
 ## Production Environment
 
