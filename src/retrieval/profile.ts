@@ -11,7 +11,7 @@ Write in third person.`;
 export async function getUserProfile(db: DbClient, llm: LLMProvider): Promise<string> {
   // 1. Load approved insights
   const insightsResult = await db.query(
-    `SELECT id, content, category, confidence, source_fact_ids
+    `SELECT id, content, tags, confidence, source_fact_ids
      FROM insights
      WHERE review_status IN ('auto_approved', 'user_approved')
        AND archived = false
@@ -23,7 +23,7 @@ export async function getUserProfile(db: DbClient, llm: LLMProvider): Promise<st
     .flatMap((i: any) => i.source_fact_ids ?? []);
 
   const uncoveredFactsResult = await db.query(
-    `SELECT id, content, category, confidence
+    `SELECT id, content, tags, confidence
      FROM facts
      WHERE confidence >= 0.7
        AND archived = false
@@ -52,11 +52,11 @@ export async function getUserProfile(db: DbClient, llm: LLMProvider): Promise<st
   }
 
   const insightsText = insights.length > 0
-    ? insights.map((i: any) => `- [${i.category}] ${i.content}`).join('\n')
+    ? insights.map((i: any) => `- [${(i.tags ?? []).join(', ')}] ${i.content}`).join('\n')
     : 'None yet.';
 
   const factsText = facts.length > 0
-    ? facts.map((f: any) => `- [${f.category}] ${f.content}`).join('\n')
+    ? facts.map((f: any) => `- [${(f.tags ?? []).join(', ')}] ${f.content}`).join('\n')
     : 'None.';
 
   const remindersText = reminders.length > 0
