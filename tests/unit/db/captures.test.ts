@@ -27,13 +27,14 @@ describe('captures', () => {
         fileHashes: null,
         embedding: new Array(3072).fill(0.1),
         metadata: { people: [], topics: ['typescript'], action_items: [], dates: [], type: 'statement' },
-        source: 'mcp',
+        source: ['mcp'],
+        tags: ['technology', 'programming'],
       });
 
       expect(result.id).toBe('uuid-1');
       expect(db.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO captures'),
-        expect.arrayContaining(['I love TypeScript', 'mcp']),
+        expect.arrayContaining(['I love TypeScript', ['mcp'], ['technology', 'programming']]),
       );
     });
   });
@@ -107,6 +108,37 @@ describe('captures', () => {
         expect.stringContaining('archived'),
         expect.arrayContaining([true, 'uuid-1']),
       );
+    });
+  });
+
+  describe('updateCaptureTags', () => {
+    it('updates tags and returns the new tag array', async () => {
+      const db = mockDb();
+      vi.mocked(db.query).mockResolvedValueOnce({
+        rows: [{ tags: ['technology', 'productivity'] }],
+        command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+      });
+
+      const { updateCaptureTags } = await import('../../../src/db/captures.js');
+      const result = await updateCaptureTags(db, 'uuid-1', ['technology', 'productivity']);
+
+      expect(result).toEqual(['technology', 'productivity']);
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE captures SET tags'),
+        [['technology', 'productivity'], 'uuid-1'],
+      );
+    });
+
+    it('returns null when capture not found', async () => {
+      const db = mockDb();
+      vi.mocked(db.query).mockResolvedValueOnce({
+        rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [],
+      });
+
+      const { updateCaptureTags } = await import('../../../src/db/captures.js');
+      const result = await updateCaptureTags(db, 'nonexistent', ['tag']);
+
+      expect(result).toBeNull();
     });
   });
 });

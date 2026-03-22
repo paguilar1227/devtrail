@@ -31,7 +31,7 @@ import { llmJsonParse } from './llm-parse.js';
 import { buildTodosMessage } from './command-handlers.js';
 import type { StateRefs } from './state.js';
 
-type CaptureFn = (input: { content: string; files: FileInput[]; source: string }) => Promise<{ success: boolean; captureId?: string; reason?: string }>;
+type CaptureFn = (input: { content: string; files: FileInput[]; source: string[] }) => Promise<{ success: boolean; captureId?: string; reason?: string }>;
 type DownloadFileFn = (fileId: string) => Promise<Buffer>;
 
 /** Register the NL intent router (message:text) and all media handlers on the bot. */
@@ -405,7 +405,7 @@ export function registerNlRouter(
 
     } else {
       // Default: capture as thought
-      const result = await captureFn({ content: text, files: [], source: 'telegram' });
+      const result = await captureFn({ content: text, files: [], source: ['telegram'] });
       if (result.success) {
         await ctx.reply(`Captured! (${result.captureId?.slice(0, 8)})`);
       } else {

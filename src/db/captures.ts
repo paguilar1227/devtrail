@@ -7,7 +7,8 @@ export interface CaptureInsert {
   fileHashes: string[] | null;
   embedding: number[];
   metadata: Record<string, unknown>;
-  source: string;
+  source: string[];
+  tags: string[];
 }
 
 export interface CaptureRow {
@@ -18,7 +19,8 @@ export interface CaptureRow {
   file_hashes: string[] | null;
   embedding: number[];
   metadata: Record<string, unknown>;
-  source: string;
+  source: string[];
+  tags: string[];
   status: string;
   archived: boolean;
   created_at: Date;
@@ -30,8 +32,8 @@ export async function insertCapture(
   capture: CaptureInsert,
 ): Promise<{ id: string }> {
   const result = await db.query(
-    `INSERT INTO captures (content, content_types, file_urls, file_hashes, embedding, metadata, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO captures (content, content_types, file_urls, file_hashes, embedding, metadata, source, tags)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
     [
       capture.content,
@@ -41,9 +43,18 @@ export async function insertCapture(
       JSON.stringify(capture.embedding),
       JSON.stringify(capture.metadata),
       capture.source,
+      capture.tags,
     ],
   );
   return result.rows[0];
+}
+
+export async function updateCaptureTags(db: DbClient, id: string, tags: string[]): Promise<string[] | null> {
+  const result = await db.query(
+    `UPDATE captures SET tags = $1, updated_at = now() WHERE id = $2 RETURNING tags`,
+    [tags, id],
+  );
+  return result.rows[0]?.tags ?? null;
 }
 
 export async function findCapturesByStatus(

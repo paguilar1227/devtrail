@@ -91,7 +91,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
           captures: cluster,
           existingFacts: existingFacts.map((f) => ({
             id: f.id, content: f.content, confidence: f.confidence,
-            origin: f.origin, category: f.category,
+            origin: f.origin, tags: f.tags,
           })),
           reviewMode,
         });
@@ -141,10 +141,10 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
 
       const phase2Result = await runPhase2(db, consolidationLLM, {
         facts: activeFacts.map((f) => ({
-          id: f.id, content: f.content, category: f.category, confidence: f.confidence,
+          id: f.id, content: f.content, tags: f.tags, confidence: f.confidence,
         })),
         existingInsights: existingInsights.map((i) => ({
-          id: i.id, content: i.content, category: i.category,
+          id: i.id, content: i.content, tags: i.tags,
           confidence: i.confidence, source_fact_ids: i.source_fact_ids,
         })),
       });

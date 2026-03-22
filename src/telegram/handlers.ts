@@ -11,7 +11,7 @@ export interface TelegramPhotoInput {
   chatId: string;
 }
 
-type CaptureFn = (input: { content: string; files: Array<{ data: Buffer; contentType: string; filename: string }>; source: string }) => Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }>;
+type CaptureFn = (input: { content: string; files: Array<{ data: Buffer; contentType: string; filename: string }>; source: string[] }) => Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }>;
 type DownloadFn = (fileId: string) => Promise<Buffer>;
 type CreateReminderFn = (content: string, source: string) => Promise<{ id: string }>;
 type ListRemindersFn = () => Promise<Array<{ id: string; content: string; status: string }>>;
@@ -25,7 +25,7 @@ export async function handleTextMessage(
   return capture({
     content: input.text,
     files: [],
-    source: 'telegram',
+    source: ['telegram'],
   });
 }
 
@@ -85,7 +85,7 @@ export async function handlePhotoMessage(
   return capture({
     content: input.caption ?? 'Photo capture',
     files: [{ data: photoBuffer, contentType: 'image/jpeg', filename: `${input.fileId}.jpg` }],
-    source: 'telegram',
+    source: ['telegram'],
   });
 }
 
@@ -101,7 +101,7 @@ export async function handleVoiceMessage(
   return capture({
     content: transcription,
     files: [{ data: audioBuffer, contentType: 'audio/ogg', filename: `${input.fileId}.ogg` }],
-    source: 'telegram',
+    source: ['telegram'],
   });
 }
 
@@ -117,6 +117,6 @@ export async function handleDocumentMessage(
   return capture({
     content: summary,
     files: [{ data: fileBuffer, contentType: input.mimeType, filename: input.fileName }],
-    source: 'telegram',
+    source: ['telegram'],
   });
 }

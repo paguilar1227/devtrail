@@ -9,7 +9,7 @@ export interface SearchResult {
   tier: 'insight' | 'fact' | 'capture';
   confidence: number | null;
   content: string;
-  category: string | null;
+  tags: string[];
   note: string | null;
   evidence: Array<{ content: string; tier: string }> | null;
 }
@@ -30,7 +30,7 @@ export async function searchThoughts(
       tier: 'insight' as const,
       confidence: i.confidence,
       content: i.content,
-      category: i.category,
+      tags: i.tags,
       note: i.confidence < 0.7 ? 'Moderate confidence — based on mixed evidence' : null,
       evidence: null,
     }));
@@ -57,7 +57,7 @@ export async function searchThoughts(
         tier: 'fact',
         confidence: fact.confidence,
         content: fact.content,
-        category: fact.category,
+        tags: fact.tags,
         note,
         evidence,
       });
@@ -71,7 +71,7 @@ export async function searchThoughts(
     tier: 'capture' as const,
     confidence: null,
     content: c.content,
-    category: null,
+    tags: c.tags,
     note: null,
     evidence: null,
   }));

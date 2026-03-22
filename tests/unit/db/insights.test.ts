@@ -14,7 +14,8 @@ describe('insights', () => {
     const { insertInsight } = await import('../../../src/db/insights.js');
     const result = await insertInsight(db, {
       content: 'User shows strong analytical tendencies',
-      category: 'pattern',
+      tags: ['pattern', 'behavior'],
+      source: ['telegram', 'mcp'],
       embedding: new Array(3072).fill(0),
       confidence: 0.75,
       sourceFactIds: ['f1', 'f2', 'f3'],
@@ -59,5 +60,29 @@ describe('insights', () => {
       expect.stringContaining("origin = 'user_edited'"),
       expect.arrayContaining(['user_approved', 'Edited insight content', 'ins-1']),
     );
+  });
+
+  it('updates insight tags and returns new tag array', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ tags: ['pattern', 'behavior'] }], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    const { updateInsightTags } = await import('../../../src/db/insights.js');
+    const result = await updateInsightTags(db, 'ins-1', ['pattern', 'behavior']);
+    expect(result).toEqual(['pattern', 'behavior']);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE insights SET tags'),
+      [['pattern', 'behavior'], 'ins-1'],
+    );
+  });
+
+  it('returns null from updateInsightTags when insight not found', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [],
+    });
+    const { updateInsightTags } = await import('../../../src/db/insights.js');
+    const result = await updateInsightTags(db, 'nonexistent', ['tag']);
+    expect(result).toBeNull();
   });
 });

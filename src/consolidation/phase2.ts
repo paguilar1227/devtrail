@@ -2,8 +2,8 @@ import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
 
 export interface Phase2Input {
-  facts: Array<{ id: string; content: string; category: string; confidence: number }>;
-  existingInsights: Array<{ id: string; content: string; category: string; confidence: number; source_fact_ids: string[] }>;
+  facts: Array<{ id: string; content: string; tags: string[]; confidence: number }>;
+  existingInsights: Array<{ id: string; content: string; tags: string[]; confidence: number; source_fact_ids: string[] }>;
 }
 
 export interface Phase2Result {
@@ -42,12 +42,12 @@ export async function runPhase2(
   const result: Phase2Result = { insightsCreated: 0, insightsRegenerated: 0, tokensUsed: 0 };
 
   const factsText = input.facts
-    .map((f) => `[${f.id}] (${f.category}, ${f.confidence}): ${f.content}`)
+    .map((f) => `[${f.id}] (${f.tags.join(',')}, ${f.confidence}): ${f.content}`)
     .join('\n');
 
   const insightsText = input.existingInsights.length > 0
     ? input.existingInsights
-        .map((i) => `[${i.id}] (${i.category}, ${i.confidence}, from: ${i.source_fact_ids.join(',')}): ${i.content}`)
+        .map((i) => `[${i.id}] (${i.tags.join(',')}, ${i.confidence}, from: ${i.source_fact_ids.join(',')}): ${i.content}`)
         .join('\n')
     : 'No existing insights.';
 
@@ -72,9 +72,9 @@ export async function runPhase2(
       for (const insight of parsed.insights) {
         if (!insight.source_fact_ids || insight.source_fact_ids.length < 2) continue;
         await txClient.query(
-          `INSERT INTO insights (content, category, confidence, source_fact_ids, origin, review_status)
+          `INSERT INTO insights (content, tags, confidence, source_fact_ids, origin, review_status)
            VALUES ($1, $2, $3, $4, 'consolidation', 'pending_review')`,
-          [insight.content, insight.category, insight.confidence, insight.source_fact_ids],
+          [insight.content, insight.tags ?? [], insight.confidence, insight.source_fact_ids],
         );
         result.insightsCreated++;
       }

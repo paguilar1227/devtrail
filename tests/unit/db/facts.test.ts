@@ -14,7 +14,8 @@ describe('facts', () => {
     const { insertFact } = await import('../../../src/db/facts.js');
     const result = await insertFact(db, {
       content: 'Prefers TypeScript over JavaScript',
-      category: 'preference',
+      tags: ['preference', 'technology'],
+      source: ['telegram'],
       embedding: new Array(3072).fill(0),
       confidence: 0.8,
       sourceCaptureIds: ['cap-1', 'cap-2'],
@@ -75,5 +76,29 @@ describe('facts', () => {
     const { findSimilarFacts } = await import('../../../src/db/facts.js');
     const results = await findSimilarFacts(db, new Array(3072).fill(0), 0.5, 10);
     expect(results[0].similarity).toBe(0.88);
+  });
+
+  it('updates fact tags and returns new tag array', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [{ tags: ['preference', 'technology'] }], command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+    });
+    const { updateFactTags } = await import('../../../src/db/facts.js');
+    const result = await updateFactTags(db, 'fact-1', ['preference', 'technology']);
+    expect(result).toEqual(['preference', 'technology']);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE facts SET tags'),
+      [['preference', 'technology'], 'fact-1'],
+    );
+  });
+
+  it('returns null from updateFactTags when fact not found', async () => {
+    const db = mockDb();
+    vi.mocked(db.query).mockResolvedValueOnce({
+      rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [],
+    });
+    const { updateFactTags } = await import('../../../src/db/facts.js');
+    const result = await updateFactTags(db, 'nonexistent', ['tag']);
+    expect(result).toBeNull();
   });
 });

@@ -2,7 +2,8 @@ import type { DbClient } from './client.js';
 
 export interface FactInsert {
   content: string;
-  category: string;
+  tags: string[];
+  source: string[];
   embedding: number[];
   confidence: number;
   sourceCaptureIds: string[];
@@ -13,7 +14,8 @@ export interface FactInsert {
 export interface FactRow {
   id: string;
   content: string;
-  category: string;
+  tags: string[];
+  source: string[];
   embedding: number[];
   confidence: number;
   source_capture_ids: string[];
@@ -28,13 +30,21 @@ export interface FactRow {
 
 export async function insertFact(db: DbClient, fact: FactInsert): Promise<{ id: string }> {
   const result = await db.query(
-    `INSERT INTO facts (content, category, embedding, confidence, source_capture_ids, origin, review_status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO facts (content, tags, source, embedding, confidence, source_capture_ids, origin, review_status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
-    [fact.content, fact.category, JSON.stringify(fact.embedding), fact.confidence,
+    [fact.content, fact.tags, fact.source, JSON.stringify(fact.embedding), fact.confidence,
      fact.sourceCaptureIds, fact.origin, fact.reviewStatus],
   );
   return result.rows[0];
+}
+
+export async function updateFactTags(db: DbClient, id: string, tags: string[]): Promise<string[] | null> {
+  const result = await db.query(
+    `UPDATE facts SET tags = $1, updated_at = now() WHERE id = $2 RETURNING tags`,
+    [tags, id],
+  );
+  return result.rows[0]?.tags ?? null;
 }
 
 export async function updateFactContent(

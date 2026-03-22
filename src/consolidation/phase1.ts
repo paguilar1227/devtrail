@@ -4,7 +4,7 @@ import type { FactRow } from '../db/facts.js';
 
 export interface ClusterInput {
   captures: Array<{ id: string; content: string; embedding: number[] }>;
-  existingFacts: Array<{ id: string; content: string; confidence: number; origin: string; category: string }>;
+  existingFacts: Array<{ id: string; content: string; confidence: number; origin: string; tags: string[] }>;
   reviewMode: string;
 }
 
@@ -69,7 +69,7 @@ export async function processCluster(
 
   const factsText = input.existingFacts.length > 0
     ? input.existingFacts
-        .map((f) => `[${f.id}] (${f.category}, confidence: ${f.confidence}, origin: ${f.origin}): ${f.content}`)
+        .map((f) => `[${f.id}] (${f.tags.join(',')}, confidence: ${f.confidence}, origin: ${f.origin}): ${f.content}`)
         .join('\n')
     : 'No existing facts.';
 
@@ -94,14 +94,14 @@ export async function processCluster(
   await db.transaction(async (txClient) => {
     for (const action of actions) {
       if (action.action === 'create_fact') {
-        const reviewStatus = shouldAutoApprove(action.category, input.reviewMode)
+        const reviewStatus = shouldAutoApprove(action.tags ?? [], input.reviewMode)
           ? 'auto_approved'
           : 'pending_review';
 
         await txClient.query(
-          `INSERT INTO facts (content, category, confidence, source_capture_ids, origin, review_status)
+          `INSERT INTO facts (content, tags, confidence, source_capture_ids, origin, review_status)
            VALUES ($1, $2, $3, $4, 'consolidation', $5)`,
-          [action.content, action.category, action.confidence, action.source_capture_ids, reviewStatus],
+          [action.content, action.tags ?? [], action.confidence, action.source_capture_ids, reviewStatus],
         );
         result.factsCreated++;
         if (reviewStatus === 'pending_review') result.itemsFlagged++;
@@ -112,9 +112,9 @@ export async function processCluster(
         if (existingFact?.origin === 'user_edited') {
           // Flag for review instead of updating
           await txClient.query(
-            `INSERT INTO facts (content, category, confidence, source_capture_ids, origin, review_status)
+            `INSERT INTO facts (content, tags, confidence, source_capture_ids, origin, review_status)
              VALUES ($1, $2, $3, $4, 'consolidation', 'pending_review')`,
-            [action.content, existingFact.category, action.confidence,
+            [action.content, existingFact.tags, action.confidence,
              input.captures.map((c) => c.id)],
           );
           result.itemsFlagged++;
@@ -179,10 +179,10 @@ export async function processCluster(
   return result;
 }
 
-function shouldAutoApprove(category: string, reviewMode: string): boolean {
+function shouldAutoApprove(tags: string[], reviewMode: string): boolean {
   if (reviewMode === 'autonomous') return true;
   if (reviewMode === 'ask') return false;
-  // Hybrid mode: auto-approve low-impact categories
-  const autoApproveCategories = ['preference', 'habit', 'skill', 'history'];
-  return autoApproveCategories.includes(category);
+  // Hybrid mode: auto-approve low-impact tags
+  const autoApproveTags = ['preference', 'habit', 'skill', 'history'];
+  return tags.some((t) => autoApproveTags.includes(t));
 }

@@ -2,7 +2,8 @@ import type { DbClient } from './client.js';
 
 export interface InsightInsert {
   content: string;
-  category: string;
+  tags: string[];
+  source: string[];
   embedding: number[];
   confidence: number;
   sourceFactIds: string[];
@@ -12,7 +13,8 @@ export interface InsightInsert {
 export interface InsightRow {
   id: string;
   content: string;
-  category: string;
+  tags: string[];
+  source: string[];
   embedding: number[];
   confidence: number;
   source_fact_ids: string[];
@@ -26,13 +28,21 @@ export interface InsightRow {
 
 export async function insertInsight(db: DbClient, insight: InsightInsert): Promise<{ id: string }> {
   const result = await db.query(
-    `INSERT INTO insights (content, category, embedding, confidence, source_fact_ids, origin)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO insights (content, tags, source, embedding, confidence, source_fact_ids, origin)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [insight.content, insight.category, JSON.stringify(insight.embedding),
+    [insight.content, insight.tags, insight.source, JSON.stringify(insight.embedding),
      insight.confidence, insight.sourceFactIds, insight.origin],
   );
   return result.rows[0];
+}
+
+export async function updateInsightTags(db: DbClient, id: string, tags: string[]): Promise<string[] | null> {
+  const result = await db.query(
+    `UPDATE insights SET tags = $1, updated_at = now() WHERE id = $2 RETURNING tags`,
+    [tags, id],
+  );
+  return result.rows[0]?.tags ?? null;
 }
 
 export async function findApprovedInsights(db: DbClient): Promise<InsightRow[]> {

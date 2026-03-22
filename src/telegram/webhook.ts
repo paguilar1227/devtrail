@@ -10,7 +10,7 @@ import type { StateRefs } from './state.js';
 export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   const bot = new Bot(deps.config.telegramBotToken);
 
-  const captureFn = async (input: { content: string; files: FileInput[]; source: string }) => {
+  const captureFn = async (input: { content: string; files: FileInput[]; source: string[] }) => {
     return runCapturePipeline({
       db: deps.db,
       embeddingProvider: deps.embeddingProvider,

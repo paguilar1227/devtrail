@@ -200,7 +200,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         blobStorage: deps.blobStorage,
         content,
         files,
-        source: 'mcp',
+        source: ['mcp'],
       });
 
       if (!result.success) {
@@ -312,19 +312,19 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       type: z.enum(['fact', 'insight']).optional().describe('Filter by type, defaults to both'),
     },
     async ({ limit, type }) => {
-      const items: Array<{ id: string; type: string; content: string; category: string; confidence: number }> = [];
+      const items: Array<{ id: string; type: string; content: string; tags: string[]; confidence: number }> = [];
 
       if (!type || type === 'fact') {
         const facts = await findPendingReviewFacts(deps.db, limit);
         for (const f of facts) {
-          items.push({ id: f.id, type: 'fact', content: f.content, category: f.category, confidence: f.confidence });
+          items.push({ id: f.id, type: 'fact', content: f.content, tags: f.tags, confidence: f.confidence });
         }
       }
 
       if (!type || type === 'insight') {
         const insights = await findPendingReviewInsights(deps.db, limit);
         for (const i of insights) {
-          items.push({ id: i.id, type: 'insight', content: i.content, category: i.category, confidence: i.confidence });
+          items.push({ id: i.id, type: 'insight', content: i.content, tags: i.tags, confidence: i.confidence });
         }
       }
 

@@ -20,7 +20,7 @@ export interface PipelineInput {
   blobStorage: BlobStorage;
   content: string;
   files: FileInput[];
-  source: string;
+  source: string[];
 }
 
 export interface PipelineResult {
@@ -119,6 +119,7 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     embedding,
     metadata: metadata as unknown as Record<string, unknown>,
     source,
+    tags: [],
   });
 
   return { success: true, captureId: result.id, warnings: warnings.length > 0 ? warnings : undefined };
