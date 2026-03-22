@@ -1489,8 +1489,25 @@ describe('Tags System E2E', () => {
     expect(row.tags).toHaveLength(2);
   });
 
-  // ── T4: search_thoughts with tag filter returns only matching captures ──
-  it('T4. search_thoughts with tag filter returns only tagged results', async () => {
+  // Helper: create an McpServer and return a typed tool-caller
+  async function createMcpCaller() {
+    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const { registerProfilerTools } = await import('../../src/mcp/profiler-tools.js');
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerProfilerTools(server, deps);
+    // Access registered tools directly (no transport needed for unit-level invocation)
+    const tools = (server as any)._registeredTools as Record<string, { handler: (args: any, extra: any) => Promise<any> }>;
+    return {
+      call: async (name: string, args: Record<string, unknown> = {}) => {
+        const tool = tools[name];
+        if (!tool) throw new Error(`Tool not registered: ${name}`);
+        return tool.handler(args, {});
+      },
+    };
+  }
+
+  // ── T4: MCP search_thoughts with tag filter (through actual MCP tool) ───
+  it('T4. MCP search_thoughts with tag filter returns only tagged results', async () => {
     const { insertCapture } = await import('../../src/db/captures.js');
     const embedding = new Array(EMBEDDING_DIM).fill(0.1);
 
@@ -1518,18 +1535,28 @@ describe('Tags System E2E', () => {
       tags: ['goal'],
     });
 
-    const { searchThoughts } = await import('../../src/retrieval/search.js');
-    const fixedProvider = fixedEmbeddingProvider();
+    // Use a fixed embedding provider so search similarity fires
+    const originalProvider = deps.embeddingProvider;
+    deps.embeddingProvider = fixedEmbeddingProvider();
+    try {
+      const mcp = await createMcpCaller();
+      const result = await mcp.call('search_thoughts', { query: 'code style', threshold: 0.5, limit: 10, tags: ['preference'] });
 
-    // Search with preference tag filter — should only return the preference capture
-    const results = await searchThoughts(db, fixedProvider, 'code style', 0.5, 10, ['preference']);
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results.every((r) => r.tags.includes('preference'))).toBe(true);
-    expect(results.find((r) => r.tags.includes('goal') && !r.tags.includes('preference'))).toBeUndefined();
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed.length).toBeGreaterThanOrEqual(1);
+      // All returned results must have the preference tag
+      expect(parsed.every((r: any) => r.tags.includes('preference'))).toBe(true);
+      // Goal-only results must not be present
+      expect(parsed.find((r: any) => r.tags.includes('goal') && !r.tags.includes('preference'))).toBeUndefined();
+    } finally {
+      deps.embeddingProvider = originalProvider;
+    }
   });
 
-  // ── T5: update_tags via MCP changes stored tags ─────────────────────────
-  it('T5. update_tags MCP tool replaces tags on a capture', async () => {
+  // ── T5: MCP update_tags (through actual MCP tool) ───────────────────────
+  it('T5. MCP update_tags tool replaces tags on a capture', async () => {
     const { insertCapture, getCaptureById } = await import('../../src/db/captures.js');
     const embedding = new Array(EMBEDDING_DIM).fill(0.1);
 
@@ -1544,10 +1571,14 @@ describe('Tags System E2E', () => {
       tags: ['preference'],
     });
 
-    // Call update_tags via the MCP tool handler (the same function profiler-tools uses)
-    const { updateCaptureTags } = await import('../../src/db/captures.js');
-    await updateCaptureTags(db, id, ['skill', 'decision']);
+    const mcp = await createMcpCaller();
+    const result = await mcp.call('update_tags', { id, tier: 'capture', tags: ['skill', 'decision'] });
 
+    // Tool should return a success message (not isError)
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('Tags updated');
+
+    // Verify the DB reflects the change
     const updated = await getCaptureById(db, id);
     expect(updated).toBeDefined();
     expect(updated!.tags).toEqual(expect.arrayContaining(['skill', 'decision']));
@@ -1555,11 +1586,9 @@ describe('Tags System E2E', () => {
     expect(updated!.tags).toHaveLength(2);
   });
 
-  // ── T6: update_tags via MCP rejects invalid tags ────────────────────────
-  it('T6. update_tags MCP tool rejects invalid tags and returns isError', async () => {
-    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
-    const { registerProfilerTools } = await import('../../src/mcp/profiler-tools.js');
-    const { insertCapture } = await import('../../src/db/captures.js');
+  // ── T6: MCP update_tags rejects invalid tags (through actual MCP tool) ──
+  it('T6. MCP update_tags tool rejects invalid tags and returns isError', async () => {
+    const { insertCapture, getCaptureById } = await import('../../src/db/captures.js');
     const embedding = new Array(EMBEDDING_DIM).fill(0.1);
 
     const { id } = await insertCapture(db, {
@@ -1573,25 +1602,65 @@ describe('Tags System E2E', () => {
       tags: ['interest'],
     });
 
-    // Call update_tags with an invalid tag directly via the DB function layer —
-    // verify validateTags strips bogus tags so the DB only receives valid ones.
-    const { validateTags } = await import('../../src/capture/tags.js');
-    const rawTags = ['bogus', 'invalid-tag'];
-    const validTags = validateTags(rawTags);
+    const mcp = await createMcpCaller();
+    const result = await mcp.call('update_tags', { id, tier: 'capture', tags: ['bogus', 'invalid-tag'] });
 
-    // All tags are invalid — validateTags returns []
-    expect(validTags).toHaveLength(0);
+    // Tool must signal an error — invalid tags are rejected
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Invalid tags');
 
-    // The MCP tool also checks for invalid tags and returns isError.
-    // We can test this by verifying the isValidTag predicate:
-    const { isValidTag } = await import('../../src/capture/tags.js');
-    expect(isValidTag('bogus')).toBe(false);
-    expect(isValidTag('preference')).toBe(true);
-
-    // Capture should be unchanged
-    const { getCaptureById } = await import('../../src/db/captures.js');
+    // Original tags must be unchanged in the DB
     const unchanged = await getCaptureById(db, id);
     expect(unchanged!.tags).toContain('interest');
+    expect(unchanged!.tags).not.toContain('bogus');
+  });
+
+  // ── MCP capture_thought with tags (through actual MCP tool) ────────────
+  it('MCP. capture_thought with explicit tags stores them + source = mcp', async () => {
+    const mcp = await createMcpCaller();
+    const result = await mcp.call('capture_thought', {
+      content: 'Pedro prefers TypeScript for all server-side work',
+      tags: ['preference', 'skill'],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('Captured!');
+
+    // Parse the capture ID from the response text "Captured! ID: <uuid>"
+    const match = result.content[0].text.match(/ID:\s+([0-9a-f-]{36})/);
+    expect(match).not.toBeNull();
+    const captureId = match![1];
+
+    const dbResult = await db.query('SELECT * FROM captures WHERE id = $1', [captureId]);
+    expect(dbResult.rows.length).toBe(1);
+    const row = dbResult.rows[0];
+    expect(row.tags).toEqual(expect.arrayContaining(['preference', 'skill']));
+    expect(row.source).toEqual(['mcp']);
+  });
+
+  // ── MCP capture_thought without tags → auto-classify (through actual MCP tool) ──
+  it('MCP. capture_thought without tags auto-classifies via LLM + source = mcp', async () => {
+    const mcp = await createMcpCaller();
+    // No tags provided — pipeline should call LLM for auto-classification.
+    // Mock LLM returns tags: ['preference'] for metadata extraction calls.
+    const result = await mcp.call('capture_thought', {
+      content: 'Pedro enjoys pair programming sessions on complex problems',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('Captured!');
+
+    const match = result.content[0].text.match(/ID:\s+([0-9a-f-]{36})/);
+    expect(match).not.toBeNull();
+    const captureId = match![1];
+
+    const dbResult = await db.query('SELECT * FROM captures WHERE id = $1', [captureId]);
+    const row = dbResult.rows[0];
+    // Auto-classified — mock LLM returns ['preference']
+    expect(Array.isArray(row.tags)).toBe(true);
+    expect(row.tags.length).toBeGreaterThan(0);
+    expect(row.tags).toContain('preference');
+    expect(row.source).toEqual(['mcp']);
   });
 
   // ── T7: Source is stored as array ───────────────────────────────────────
