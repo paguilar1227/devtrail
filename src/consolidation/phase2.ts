@@ -1,8 +1,9 @@
 import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
+import { validateTags, ALLOWED_TAGS, TAG_DESCRIPTIONS } from '../capture/tags.js';
 
 export interface Phase2Input {
-  facts: Array<{ id: string; content: string; tags: string[]; confidence: number }>;
+  facts: Array<{ id: string; content: string; tags: string[]; confidence: number; source: string[] }>;
   existingInsights: Array<{ id: string; content: string; tags: string[]; confidence: number; source_fact_ids: string[] }>;
 }
 
@@ -12,6 +13,11 @@ export interface Phase2Result {
   tokensUsed: number;
 }
 
+const TAG_ALLOWLIST_SECTION = `
+ALLOWED TAGS (use ONLY these):
+${ALLOWED_TAGS.map((t) => `- "${t}": ${TAG_DESCRIPTIONS[t]}`).join('\n')}
+`;
+
 const INSIGHT_PROMPT = `You are a personal profile insight generator. Given a set of facts about a person, identify cross-cutting patterns and meta-observations.
 
 RULES:
@@ -19,12 +25,11 @@ RULES:
 - Each insight must draw from at least 2 facts
 - Focus on patterns, tendencies, identity traits, and personal evolution
 - Calibrate confidence based on how many facts support the pattern
-- Categories: pattern, tendency, identity, evolution, goal
-
+${TAG_ALLOWLIST_SECTION}
 Return JSON:
 {
   "insights": [
-    {"content": "...", "category": "...", "confidence": 0.0-1.0, "source_fact_ids": ["..."]}
+    {"content": "...", "tags": ["pattern", "opinion"], "confidence": 0.0-1.0, "source_fact_ids": ["..."]}
   ],
   "updates": [
     {"insight_id": "...", "content": "...", "confidence": 0.0-1.0, "reason": "..."}
@@ -42,12 +47,12 @@ export async function runPhase2(
   const result: Phase2Result = { insightsCreated: 0, insightsRegenerated: 0, tokensUsed: 0 };
 
   const factsText = input.facts
-    .map((f) => `[${f.id}] (${f.tags.join(',')}, ${f.confidence}): ${f.content}`)
+    .map((f) => `[${f.id}] (tags: [${f.tags.join(', ')}], ${f.confidence}): ${f.content}`)
     .join('\n');
 
   const insightsText = input.existingInsights.length > 0
     ? input.existingInsights
-        .map((i) => `[${i.id}] (${i.tags.join(',')}, ${i.confidence}, from: ${i.source_fact_ids.join(',')}): ${i.content}`)
+        .map((i) => `[${i.id}] (tags: [${i.tags.join(', ')}], ${i.confidence}, from: ${i.source_fact_ids.join(',')}): ${i.content}`)
         .join('\n')
     : 'No existing insights.';
 
@@ -71,10 +76,21 @@ export async function runPhase2(
     if (Array.isArray(parsed.insights)) {
       for (const insight of parsed.insights) {
         if (!insight.source_fact_ids || insight.source_fact_ids.length < 2) continue;
+
+        const insightTags = validateTags(insight.tags ?? []);
+
+        // Compute source union from the contributing facts
+        const insightSource = [...new Set(
+          insight.source_fact_ids.flatMap((fid: string) => {
+            const fact = input.facts.find((f) => f.id === fid);
+            return fact?.source ?? [];
+          }),
+        )];
+
         await txClient.query(
-          `INSERT INTO insights (content, tags, confidence, source_fact_ids, origin, review_status)
-           VALUES ($1, $2, $3, $4, 'consolidation', 'pending_review')`,
-          [insight.content, insight.tags ?? [], insight.confidence, insight.source_fact_ids],
+          `INSERT INTO insights (content, tags, source, confidence, source_fact_ids, origin, review_status)
+           VALUES ($1, $2, $3, $4, $5, 'consolidation', 'pending_review')`,
+          [insight.content, insightTags, insightSource, insight.confidence, insight.source_fact_ids],
         );
         result.insightsCreated++;
       }
