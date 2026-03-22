@@ -51,7 +51,7 @@ function makeInput(overrides: Partial<PipelineInput> = {}): PipelineInput {
     },
     content: 'Test capture',
     files: [],
-    source: 'api',
+    source: ['api'],
     ...overrides,
   } as unknown as PipelineInput;
 }
@@ -127,7 +127,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
   it('11.5 Similarity > 0.95 → returns {success: false}', async () => {
     mockFindSimilarCaptures.mockResolvedValueOnce([
-      { id: 'existing-cap', similarity: 0.98, content: 'similar', content_types: ['text'], file_urls: null, file_hashes: null, embedding: [], metadata: {}, source: 'api', status: 'pending', archived: false, created_at: new Date(), updated_at: new Date() },
+      { id: 'existing-cap', similarity: 0.98, content: 'similar', content_types: ['text'], file_urls: null, file_hashes: null, embedding: [], metadata: {}, source: ['api'], status: 'pending', archived: false, created_at: new Date(), updated_at: new Date() },
     ]);
 
     const input = makeInput();

@@ -397,7 +397,7 @@ describe('Section 5: GET /api/v1/captures', () => {
       pool: {},
       query: vi.fn().mockResolvedValue({
         rows: [
-          { id: '1', content: 'test', content_types: ['text'], file_urls: null, source: 'api', status: 'pending', created_at: new Date() },
+          { id: '1', content: 'test', content_types: ['text'], file_urls: null, source: ['api'], status: 'pending', created_at: new Date() },
         ],
       }),
       transaction: vi.fn(),

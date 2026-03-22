@@ -345,6 +345,12 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         GROUP BY src ORDER BY count DESC
       `);
 
+      const capturesByTag = await deps.db.query(`
+        SELECT unnest(tags) AS tag, count(*) as count FROM captures
+        WHERE archived = false
+        GROUP BY tag ORDER BY count DESC
+      `);
+
       const row = stats.rows[0];
       const result = {
         captures: parseInt(row.captures_count),
@@ -355,6 +361,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         factsByTag: factTags.rows,
         insightsByTag: insightTags.rows,
         capturesBySource: capturesBySource.rows,
+        capturesByTag: capturesByTag.rows,
       };
 
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

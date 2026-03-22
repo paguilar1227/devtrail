@@ -114,7 +114,7 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   ]);
 
   // Step 7: Determine final tags — caller-provided tags win; fall back to LLM-extracted tags
-  const finalTags = (validTags && validTags.length > 0) ? validTags : (metadata as any).tags ?? [];
+  const finalTags = (validTags && validTags.length > 0) ? validTags : metadata.tags ?? [];
 
   // Step 8: Insert into captures table
   const result = await insertCapture(db, {

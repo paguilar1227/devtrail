@@ -73,7 +73,7 @@ export function createApp(deps: AppDeps) {
   app.get('/api/v1/facts', async (c) => {
     const limit = Number(c.req.query('limit') ?? '20');
     const result = await deps.db.query(
-      `SELECT id, content, category, confidence, origin, review_status, source_capture_ids, created_at, updated_at
+      `SELECT id, content, tags, source, confidence, origin, review_status, source_capture_ids, created_at, updated_at
        FROM facts WHERE archived = false ORDER BY confidence DESC, created_at DESC LIMIT $1`,
       [limit],
     );
@@ -84,7 +84,7 @@ export function createApp(deps: AppDeps) {
   app.get('/api/v1/insights', async (c) => {
     const limit = Number(c.req.query('limit') ?? '20');
     const result = await deps.db.query(
-      `SELECT id, content, category, confidence, origin, review_status, source_fact_ids, generated_at, updated_at
+      `SELECT id, content, tags, source, confidence, origin, review_status, source_fact_ids, generated_at, updated_at
        FROM insights WHERE archived = false ORDER BY confidence DESC, generated_at DESC LIMIT $1`,
       [limit],
     );

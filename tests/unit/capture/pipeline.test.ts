@@ -126,7 +126,7 @@ describe('capture pipeline', () => {
       blobStorage: blob,
       content: 'New photo',
       files: [{ data: Buffer.from('new img'), contentType: 'image/png', filename: 'new.png' }],
-      source: 'api',
+      source: ['api'],
     });
 
     expect(result.success).toBe(true);

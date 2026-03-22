@@ -3,7 +3,7 @@ import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
 
 const SYNTHESIS_PROMPT = `You are generating a concise profile summary for an AI assistant.
-Given the person's insights, key facts, and current activities, produce a natural-language summary organized by category.
+Given the person's insights, key facts, and current activities, produce a natural-language summary organized by tags.
 Include what they're currently focused on (from active reminders).
 Keep it concise but comprehensive — this will be used by other AI tools to quickly understand who this person is.
 Write in third person.`;
