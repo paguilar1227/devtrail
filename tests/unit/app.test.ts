@@ -52,12 +52,47 @@ describe('Hono app', () => {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer test-key-123',
       },
-      body: JSON.stringify({ content: 'I love TypeScript', source: 'api' }),
+      body: JSON.stringify({ content: 'I love TypeScript' }),
     });
 
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.captureId).toBe('cap-1');
+    // Verify source is hardcoded to ['api'] — callers cannot override
+    expect(mockRunCapturePipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ source: ['api'] }),
+    );
+  });
+
+  it('accepts optional tags and passes them validated to the pipeline', async () => {
+    mockRunCapturePipeline.mockResolvedValueOnce({
+      success: true,
+      captureId: 'cap-2',
+    });
+
+    const deps = {
+      db: { pool: {}, query: vi.fn(), transaction: vi.fn(), close: vi.fn() },
+      embeddingProvider: { embed: vi.fn().mockResolvedValue([]), dimensions: 3072 },
+      metadataLLM: { complete: vi.fn() },
+      blobStorage: { upload: vi.fn(), exists: vi.fn(), getUrl: vi.fn() },
+      config: { apiKey: 'test-key-123' },
+    };
+
+    const app = createApp(deps as any);
+    const res = await app.request('/api/v1/capture', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer test-key-123',
+      },
+      body: JSON.stringify({ content: 'I prefer TypeScript', tags: ['preference', 'invalid-tag'] }),
+    });
+
+    expect(res.status).toBe(201);
+    // Only valid tags should be passed through
+    expect(mockRunCapturePipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ['preference'] }),
+    );
   });
 
   it('returns 409 for duplicate captures', async () => {
@@ -81,7 +116,7 @@ describe('Hono app', () => {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer test-key-123',
       },
-      body: JSON.stringify({ content: 'duplicate', source: 'api' }),
+      body: JSON.stringify({ content: 'duplicate' }),
     });
 
     expect(res.status).toBe(409);

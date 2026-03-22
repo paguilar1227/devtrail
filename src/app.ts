@@ -6,6 +6,7 @@ import type { EmbeddingProvider, LLMProvider } from './providers/types.js';
 import type { BlobStorage } from './storage/blob.js';
 import type { Config } from './config.js';
 import { runCapturePipeline } from './capture/pipeline.js';
+import { validateTags } from './capture/tags.js';
 import { runConsolidation } from './consolidation/runner.js';
 import { mountMcpRoutes } from './mcp/server.js';
 import { setupTelegramWebhook } from './telegram/webhook.js';
@@ -142,7 +143,7 @@ export function createApp(deps: AppDeps) {
   // POST /api/v1/capture — Universal ingest endpoint
   app.post('/api/v1/capture', async (c) => {
     const body = await c.req.json();
-    const { content, source = 'api', file_urls } = body;
+    const { content, tags: rawTags, file_urls } = body;
 
     if (!content || typeof content !== 'string') {
       return c.json({ error: 'content is required and must be a string' }, 400);
@@ -171,7 +172,8 @@ export function createApp(deps: AppDeps) {
       blobStorage: deps.blobStorage,
       content,
       files,
-      source,
+      source: ['api'],
+      tags: rawTags ? validateTags(rawTags) : undefined,
     });
 
     if (!result.success) {
