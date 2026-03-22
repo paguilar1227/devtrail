@@ -17,6 +17,7 @@ vi.mock('../../../src/capture/metadata.js', () => ({
     action_items: [],
     dates: [],
     type: 'statement',
+    tags: [],
   }),
 }));
 
@@ -200,5 +201,50 @@ describe('Section 11: Pipeline Regressions', () => {
     expect(result.success).toBe(true);
     expect(result.warnings).toBeDefined();
     expect(result.warnings![0]).toContain('conversion failed');
+  });
+
+  it('11.11 Caller-provided valid tags are stored (bypass metadata tags)', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill'],
+    });
+
+    const input = makeInput({ tags: ['preference', 'goal'] });
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(mockInsertCapture).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ['preference', 'goal'] }),
+    );
+  });
+
+  it('11.12 No caller tags → uses tags from metadata extraction', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill', 'interest'],
+    });
+
+    const input = makeInput(); // no tags field
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(mockInsertCapture).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ['skill', 'interest'] }),
+    );
+  });
+
+  it('11.13 Empty caller tags array → falls back to metadata tags', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['decision'],
+    });
+
+    const input = makeInput({ tags: [] });
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(mockInsertCapture).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ['decision'] }),
+    );
   });
 });

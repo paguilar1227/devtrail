@@ -6,6 +6,7 @@ import { insertCapture } from '../db/captures.js';
 import { computeFileHash, checkFileHashDedup, checkSemanticDedup } from './dedup.js';
 import { extractMetadata } from './metadata.js';
 import { convertForEmbedding } from './media-convert.js';
+import { validateTags } from './tags.js';
 
 export interface FileInput {
   data: Buffer;
@@ -21,6 +22,7 @@ export interface PipelineInput {
   content: string;
   files: FileInput[];
   source: string[];
+  tags?: string[];
 }
 
 export interface PipelineResult {
@@ -32,6 +34,7 @@ export interface PipelineResult {
 
 export async function runCapturePipeline(input: PipelineInput): Promise<PipelineResult> {
   const { db, embeddingProvider, metadataLLM, blobStorage, content, files, source } = input;
+  const validTags = input.tags ? validateTags(input.tags) : null;
 
   // Step 1: Compute file hashes
   const fileHashes = files.map((f) => computeFileHash(f.data));
@@ -110,7 +113,10 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     extractMetadata(metadataLLM, content),
   ]);
 
-  // Step 7: Insert into captures table
+  // Step 7: Determine final tags — caller-provided tags win; fall back to LLM-extracted tags
+  const finalTags = (validTags && validTags.length > 0) ? validTags : (metadata as any).tags ?? [];
+
+  // Step 8: Insert into captures table
   const result = await insertCapture(db, {
     content,
     contentTypes,
@@ -119,7 +125,7 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     embedding,
     metadata: metadata as unknown as Record<string, unknown>,
     source,
-    tags: [],
+    tags: finalTags,
   });
 
   return { success: true, captureId: result.id, warnings: warnings.length > 0 ? warnings : undefined };
