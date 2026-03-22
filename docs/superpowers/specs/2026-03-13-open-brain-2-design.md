@@ -71,7 +71,8 @@ file_urls       text[]          -- Azure Blob Storage URLs (null for text-only)
 file_hashes     text[]          -- SHA-256 of file bytes (null for text-only)
 embedding       vector(3072)    -- Gemini Embedding 2 output (must request 3072 dims explicitly)
 metadata        jsonb           -- {people, topics, action_items, dates, type}
-source          varchar         -- 'telegram' | 'mcp' | 'api'
+source          text[]          -- ['telegram'] | ['mcp'] | ['api'] (single-element array per capture)
+tags            text[]          -- semantic tags from 14-tag allowlist (see Tag System below)
 status          varchar DEFAULT 'pending'  -- 'pending' | 'consolidated' | 'failed'
 archived        boolean DEFAULT false
 created_at      timestamptz DEFAULT now()
@@ -79,6 +80,8 @@ updated_at      timestamptz DEFAULT now()  -- tracks status changes
 
 -- Indexes
 HNSW ON embedding (cosine distance)
+GIN ON tags
+GIN ON source
 B-tree ON status
 B-tree ON archived
 B-tree ON created_at DESC
@@ -91,8 +94,8 @@ Tier 2 — synthesized, mutable profile knowledge. Represents the living profile
 ```sql
 id                  uuid PRIMARY KEY DEFAULT gen_random_uuid()
 content             text NOT NULL
-category            varchar     -- 'preference' | 'habit' | 'skill' | 'relationship'
-                                -- | 'opinion' | 'history' | 'goal' | 'personality'
+tags                text[]      -- semantic tags from 14-tag allowlist (replaces category)
+source              text[]      -- union of contributing captures' source arrays
 embedding           vector(3072)
 confidence          float       -- 0.0 to 1.0
 source_capture_ids  uuid[]      -- which captures produced this fact
@@ -110,7 +113,8 @@ edited_at           timestamptz -- set when user directly edits
 -- Indexes
 HNSW ON embedding (cosine distance)
 GIN ON source_capture_ids      -- reverse provenance lookups
-B-tree ON category
+GIN ON tags
+GIN ON source
 B-tree ON confidence
 B-tree ON review_status
 B-tree ON archived
@@ -123,7 +127,8 @@ Tier 3 — cross-cutting patterns derived from multiple facts. Highest value tie
 ```sql
 id                uuid PRIMARY KEY DEFAULT gen_random_uuid()
 content           text NOT NULL
-category          varchar     -- 'pattern' | 'tendency' | 'identity' | 'evolution' | 'goal'
+tags              text[]      -- semantic tags from 14-tag allowlist (replaces category)
+source            text[]      -- union of contributing facts' source arrays
 embedding         vector(3072)
 confidence        float       -- 0.0 to 1.0
 source_fact_ids   uuid[]      -- which facts produced this insight
@@ -137,6 +142,8 @@ edited_at         timestamptz -- set when user edits via approve_reject
 -- Indexes
 HNSW ON embedding (cosine distance)
 GIN ON source_fact_ids          -- reverse provenance lookups
+GIN ON tags
+GIN ON source
 B-tree ON review_status
 B-tree ON archived
 ```
@@ -176,6 +183,41 @@ reminders ──[one-to-many via reminder_id]──→ reminder_comments
 ```
 
 No join tables — arrays store references for profiler relationships. A single capture can feed multiple facts. A single fact can feed multiple insights. Reminders use `parent_id` for subtask hierarchy and a foreign key for comments.
+
+## Tag System
+
+Every capture, fact, and insight carries a `tags text[]` column for semantic classification. Tags replaced the old `category varchar` field — they are multi-valued, apply to all three tiers, and use a curated allowlist.
+
+### 14 Allowed Tags
+
+| Tag | Retrieval question answered | Example |
+|-----|-----------------------------|---------|
+| `preference` | How do I like X done? | "Pedro prefers Hono over Express for TypeScript APIs" |
+| `decision` | What did I decide and why? | "Chose JWT sessions over server-side, prioritizing simplicity" |
+| `problem-solution` | Have I dealt with this before? | "Fixed Telegram retry loop by responding 200 immediately" |
+| `pattern` | What are my tendencies? | "Tends to defer tests until after first bugs appear" |
+| `goal` | What am I working toward? | "Training for a half marathon in October" |
+| `opinion` | What do I think/believe about X? | "Believes monorepos are right for tightly coupled services" |
+| `skill` | What can I do / what's my level? | "Deep TypeScript expertise, new to React" |
+| `relationship` | What do I know about person X? | "Sarah prefers async communication, birthday June 12" |
+| `resource` | What was that reference/tool/link? | "pgvector HNSW needs 2x working memory — see PostgreSQL wiki" |
+| `idea` | What have I been mulling over? | "Might convert the garage into a workshop" |
+| `interest` | What am I into? | "Really enjoying bouldering lately" |
+| `health` | What's relevant to my body/wellness? | "Allergic to penicillin, left knee flares when running downhill" |
+| `dislike` | What should I avoid / never suggest? | "Hates writing YAML configuration files" |
+| `milestone` | What have I accomplished? | "Launched Open Brain v2 on March 21, 2026" |
+
+### Tag Assignment Flow
+
+- **Telegram and REST API:** pipeline auto-classifies tags via Gemini Flash during metadata extraction (one combined LLM call — no extra cost).
+- **MCP `capture_thought`:** AI caller may provide `tags` upfront. If valid tags provided, used as-is. If omitted or invalid, pipeline auto-classifies.
+- **Facts:** initialized as the union of all contributing captures' tags; consolidation LLM (Claude Opus) refines.
+- **Insights:** initialized as the union of all contributing facts' tags; consolidation LLM refines.
+- **Manual correction:** `update_tags` MCP tool replaces tags on any item by UUID.
+
+### Source Arrays
+
+`source` became a `text[]` column (was `varchar`). Captures have single-element sources: `['telegram']`, `['mcp']`, `['api']`. Facts and insights inherit the union of all contributing sources — a fact derived from both Telegram and MCP captures has `source: ['telegram', 'mcp']`.
 
 ## Capture Flow
 
@@ -319,7 +361,7 @@ Called when the AI needs specific information — answers "what does this person
   "tier": "insight | fact | capture",
   "confidence": 0.88,
   "content": "...",
-  "category": "pattern",
+  "tags": ["pattern", "preference"],
   "note": null,
   "evidence": null
 }
@@ -329,7 +371,7 @@ Low-confidence response includes `evidence` array with source items and a `note`
 
 ## MCP Tool Surface
 
-20 tools exposed via JSON-RPC 2.0 (12 profiler + 8 reminders):
+21 tools exposed via JSON-RPC 2.0 (13 profiler + 8 reminders):
 
 ### AI Client Setup
 
@@ -342,18 +384,19 @@ Two mechanisms teach AI clients how to use Open Brain:
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
-| `brain_help` | Returns AI usage guide — when/how to capture, format, categories | none |
+| `brain_help` | Returns AI usage guide — when/how to capture, 14-tag system, tag-filtered search | none |
 | `get_user_prompt` | Returns a portable system prompt to paste into any AI client | none |
 | `get_user_profile` | Session bootstrap — synthesized profile summary | none |
-| `search_thoughts` | Tiered semantic search: insights → facts → captures, with conditional evidence on low confidence (see Retrieval Flow Path 2) | `query` (required), `threshold` (0-1, default 0.5), `limit` (default 10) |
-| `capture_thought` | Capture from any MCP client | `content` (required), `file_urls` (optional, array of accessible URLs) |
-| `brain_stats` | Dashboard — counts, types, topics, confidence distribution | none |
+| `search_thoughts` | Tiered semantic search: insights → facts → captures, with conditional evidence on low confidence (see Retrieval Flow Path 2) | `query` (required), `threshold` (0-1, default 0.5), `limit` (default 10), `tags` (optional array — AND filter) |
+| `capture_thought` | Capture from any MCP client. Tags are optional — provide when confident of type, otherwise auto-classified. | `content` (required), `file_urls` (optional), `tags` (optional array from 14-tag allowlist) |
+| `brain_stats` | Dashboard — counts by tier, facts/insights/captures by tag, captures by source | none |
 | `archive_thought` | Soft-delete (soft isolation, no cascade recalculation) | `id` (required), `type` ('capture' \| 'fact' \| 'insight') |
 | `unarchive_thought` | Restore archived item | `id` (required), `type` ('capture' \| 'fact' \| 'insight') |
 | `update_fact` | Edit/refine a fact directly (marks as `user_edited`, confidence → 1.0, preserves source links) | `id` (required), `content` (required) |
 | `review_pending` | List items with `review_status = 'pending_review'` | `limit` (optional), `type` (optional: 'fact' \| 'insight', defaults to both) |
 | `approve_reject` | Act on items in `pending_review` status — approve, reject, or edit | `id` (required), `action` ('approve' \| 'reject' \| 'edit'), `content` (required if action='edit'). Looks up by UUID across facts and insights tables (UUIDs are globally unique). Only operates on items with `review_status = 'pending_review'`. Use `update_fact` to edit already-approved facts. |
 | `run_consolidation` | Manually trigger the consolidation pipeline | none |
+| `update_tags` | Replace tags on any tier item (capture, fact, insight) | `id` (required, full UUID), `tier` ('capture' \| 'fact' \| 'insight'), `tags` (required array, replaces existing) |
 
 ### Archive Behavior
 

@@ -131,7 +131,8 @@ id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
 content         text NOT NULL
 embedding       vector(3072)
 metadata        jsonb
-source          varchar
+source          text[]          -- array: ['telegram'], ['mcp'], ['api'], or union for promoted tiers
+tags            text[]          -- semantic tags from the 14-tag allowlist (see Tag System section)
 archived        boolean DEFAULT false
 created_at      timestamptz DEFAULT now()
 updated_at      timestamptz DEFAULT now()
@@ -142,6 +143,40 @@ Rules:
 2. **Type-specific columns** are added alongside the core shape, not instead of it. Use `metadata` JSONB for exploratory/infrequent attributes.
 3. **All embeddings are 3072 dimensions** (Gemini Embedding 2 maximum, explicitly requested).
 4. **New data types feeding profile signal** should add a reader in the consolidation pipeline.
+5. **Source is an array** — captures have single-element source arrays; facts and insights inherit the union of all contributing captures' sources.
+6. **Tags are arrays** — multiple tags per item are valid. Tags are validated against the 14-tag allowlist.
+
+### Tag System
+
+Every capture, fact, and insight is semantically classified with tags. Tags enable filtered retrieval: `search_thoughts("coding style", { tags: ["preference"] })` returns only preference-type results about coding, not all coding-related entries.
+
+**14 allowed tags:**
+
+| Tag | What it captures |
+|-----|-----------------|
+| `preference` | How the user likes things done |
+| `decision` | A choice made with rationale |
+| `problem-solution` | A problem encountered and how it was resolved |
+| `pattern` | A recurring behavior or habit observed over time |
+| `goal` | An aspiration, target, or planned direction |
+| `opinion` | A stance or belief with reasoning |
+| `skill` | A capability or expertise level |
+| `relationship` | Knowledge about a specific person |
+| `resource` | A tool, link, article, or reference worth recalling |
+| `idea` | An uncommitted exploration or possibility |
+| `interest` | A hobby, passion, or thing enjoyed |
+| `health` | Medical, fitness, dietary, or wellness information |
+| `dislike` | Something to avoid or never suggest |
+| `milestone` | A significant achievement or turning point |
+
+**Tag assignment:**
+- **Telegram and REST API captures:** auto-classified by Gemini Flash during metadata extraction (piggybacked on the existing metadata prompt — no extra LLM call).
+- **MCP captures:** AI caller may provide tags upfront via `capture_thought({ tags: [...] })`; if omitted or invalid, pipeline auto-classifies.
+- **Facts:** start as the union of all contributing captures' tags; consolidation LLM may refine (add/remove).
+- **Insights:** start as the union of all contributing facts' tags; consolidation LLM may refine.
+- `update_tags` MCP tool allows manual tag correction on any tier item.
+
+**Expanding the allowlist:** Add the new tag to `ALLOWED_TAGS` in `src/capture/tags.ts` and `TAG_DESCRIPTIONS`. No migration needed — the allowlist is a code-only constant. Run `npx vitest run` to verify unit tests still pass.
 
 ---
 
@@ -452,24 +487,25 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 
 2. **`get_user_prompt` tool (portable):** For non-MCP clients (ChatGPT, raw API usage, etc.), the `get_user_prompt` tool returns the same behavioral instructions as a copyable system prompt. Users paste it into their AI client's custom instructions or system prompt field once, and any AI client gains the same proactive behavior.
 
-### Tools (20 total)
+### Tools (21 total)
 
-**Profiler tools (12):**
+**Profiler tools (13):**
 
 | # | Tool | Description |
 |---|------|-------------|
-| 1 | `brain_help` | Returns AI usage guide — when/how to capture, third-person format, category tags |
+| 1 | `brain_help` | Returns AI usage guide — when/how to capture, third-person format, 14-tag system |
 | 2 | `get_user_prompt` | Returns a portable system prompt to paste into any AI client (Claude, ChatGPT, etc.) |
 | 3 | `get_user_profile` | Session bootstrap — synthesized profile summary |
-| 4 | `search_thoughts` | Tiered semantic search: insights -> facts -> captures |
-| 5 | `capture_thought` | Capture text + optional file URLs from any MCP client |
-| 6 | `brain_stats` | Dashboard — counts by type, facts by category, pending review |
+| 4 | `search_thoughts` | Tiered semantic search: insights -> facts -> captures. Optional `tags` filter (AND semantics). |
+| 5 | `capture_thought` | Capture text + optional file URLs. Optional `tags` array; if omitted, auto-classified. |
+| 6 | `brain_stats` | Dashboard — counts by type, facts/insights by tag, captures by source |
 | 7 | `archive_thought` | Soft-delete (no cascade recalculation) |
 | 8 | `unarchive_thought` | Restore archived item |
 | 9 | `update_fact` | Direct user edit — sets origin to `user_edited`, confidence to 1.0 |
 | 10 | `review_pending` | List items with `pending_review` status |
 | 11 | `approve_reject` | Approve, reject, or edit pending review items (looks up by UUID across facts and insights) |
 | 12 | `run_consolidation` | Manually trigger consolidation pipeline |
+| 13 | `update_tags` | Replace tags on any tier item (capture, fact, insight) by UUID. Validates against allowlist. |
 
 **Reminder tools (8):**
 
@@ -486,7 +522,7 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 
 ### brain_help
 
-The `brain_help` tool returns a detailed guide for AI clients on when to capture, what format to use (third person, one signal per capture, category tags), and what not to capture. It encourages **proactive capture** — AI clients should capture observations without waiting for explicit user requests.
+The `brain_help` tool returns a detailed guide for AI clients on when to capture, what format to use (third person, one signal per capture, 14-tag system), when to provide tags vs let auto-classify, and how to use tag-filtered search. It encourages **proactive capture** — AI clients should capture observations without waiting for explicit user requests.
 
 ---
 

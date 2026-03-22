@@ -10,6 +10,8 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 
 - **Three-tier knowledge architecture:** raw captures -> synthesized facts -> cross-cutting insights
 - **Multimodal capture:** text, photos, voice memos, documents (PDF, CSV, HTML, JSON, etc.)
+- **Tag system:** 14 curated semantic tags (preference, decision, skill, goal, etc.) for filtered retrieval — auto-classified by LLM, or provided by MCP callers
+- **Tag-filtered search:** `search_thoughts("coding style", { tags: ["preference"] })` returns only preference-type results
 - **Semantic dedup:** cosine similarity check prevents duplicate captures
 - **Consolidation pipeline:** DBSCAN clustering + Claude Opus reasoning promotes captures to facts and insights
 - **Review system:** autonomous, hybrid (default), or ask modes for fact/insight approval
@@ -35,13 +37,13 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 - **Media capture:** photos, voice memos, and documents are captured with AI summarization
 - **MIME detection:** 25 file extension mappings when Telegram sends `application/octet-stream`
 
-### MCP Tools (20 total)
+### MCP Tools (21 total)
 
-**Profiler (12 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation
+**Profiler (13 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation, update_tags
 
 **Reminders (8 tools):** create_reminder, list_reminders, get_reminder_detail, update_reminder, complete_reminder, delete_reminder, add_reminder_comment, list_projects
 
-MCP-compatible clients (Claude, etc.) receive behavioral instructions automatically on connection. For other AI clients, call `get_user_prompt` once to get a system prompt you can paste into custom instructions.
+MCP-compatible clients (Claude, etc.) receive behavioral instructions automatically on connection — including tag system guidance and search patterns. For other AI clients, call `get_user_prompt` once to get a system prompt you can paste into custom instructions.
 
 ## Architecture
 

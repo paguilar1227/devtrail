@@ -158,9 +158,12 @@ src/
 │   ├── mime-utils.ts       # MIME type inference + summarization routing
 │   └── handlers.ts         # Per-message-type handler functions
 ├── capture/         # Universal ingest pipeline
+│   ├── pipeline.ts         # Orchestrates dedup, embedding, metadata, DB insert
+│   ├── metadata.ts         # Gemini Flash metadata + tag extraction (piggybacked on one LLM call)
+│   └── tags.ts             # ALLOWED_TAGS (14 tags), TAG_DESCRIPTIONS, validateTags(), isValidTag()
 ├── consolidation/   # 3-phase consolidation (DBSCAN → Opus → embed)
 ├── retrieval/       # Profile synthesis + tiered search
-├── mcp/             # MCP server + 20 tools
+├── mcp/             # MCP server + 21 tools
 ├── db/              # PostgreSQL query modules (6 tables)
 ├── providers/       # AI provider abstraction (Gemini, Anthropic)
 ├── storage/         # Azure Blob Storage
@@ -169,6 +172,16 @@ src/
 ├── app.ts           # Hono HTTP server + REST API
 └── server.ts        # Entry point (migration, App Insights, background checkers)
 ```
+
+### Tag System
+
+`src/capture/tags.ts` is the single source of truth for the tag allowlist. It exports:
+- `ALLOWED_TAGS` — 14-element const array. Used for Zod validation in MCP tools and as the prompt list in metadata extraction.
+- `TAG_DESCRIPTIONS` — map from tag name to one-line description. Injected into the Gemini Flash metadata prompt so the LLM knows what each tag means.
+- `validateTags(tags: string[]): string[]` — filters to valid tags, deduplicates.
+- `isValidTag(tag: string): boolean` — single tag check.
+
+**To expand the allowlist:** Add the new tag to both `ALLOWED_TAGS` and `TAG_DESCRIPTIONS` in `src/capture/tags.ts`. No migration needed — tags are stored in `text[]` columns with no DB-level constraint. The allowlist is code-only.
 
 ### State Machines in Telegram
 
