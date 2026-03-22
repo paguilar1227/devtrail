@@ -2,11 +2,12 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AppDeps } from '../app.js';
-import { getCaptureById, setCaptureArchived } from '../db/captures.js';
-import { getFactById, setFactArchived, setFactReviewStatus, userEditFact, findPendingReviewFacts } from '../db/facts.js';
-import { getInsightById, setInsightArchived, setInsightReviewStatus, findPendingReviewInsights } from '../db/insights.js';
+import { getCaptureById, setCaptureArchived, updateCaptureTags } from '../db/captures.js';
+import { getFactById, setFactArchived, setFactReviewStatus, userEditFact, findPendingReviewFacts, updateFactTags } from '../db/facts.js';
+import { getInsightById, setInsightArchived, setInsightReviewStatus, findPendingReviewInsights, updateInsightTags } from '../db/insights.js';
 import { runCapturePipeline } from '../capture/pipeline.js';
 import { runConsolidation } from '../consolidation/runner.js';
+import { ALLOWED_TAGS, validateTags, isValidTag } from '../capture/tags.js';
 
 const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowledge system that maintains a living profile about me.
 
@@ -161,15 +162,16 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
   // 2. search_thoughts — tiered semantic search
   server.tool(
     'search_thoughts',
-    'Tiered semantic search: insights → facts → captures, with conditional evidence on low confidence',
+    'Tiered semantic search: insights → facts → captures. Use tags to filter by knowledge type.',
     {
       query: z.string().describe('Search query'),
       threshold: z.number().min(0).max(1).default(0.5).describe('Similarity threshold (0-1)'),
       limit: z.number().int().positive().default(10).describe('Max results'),
+      tags: z.array(z.string()).optional().describe('Filter by tags (AND — must have all). Available: ' + ALLOWED_TAGS.join(', ')),
     },
-    async ({ query, threshold, limit }) => {
+    async ({ query, threshold, limit, tags }) => {
       const { searchThoughts } = await import('../retrieval/search.js');
-      const results = await searchThoughts(deps.db, deps.embeddingProvider, query, threshold, limit);
+      const results = await searchThoughts(deps.db, deps.embeddingProvider, query, threshold, limit, tags);
       return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
     },
   );
@@ -177,12 +179,13 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
   // 3. capture_thought — capture from any MCP client
   server.tool(
     'capture_thought',
-    'Capture a thought from any MCP client',
+    'Capture a thought, observation, or piece of knowledge about the user',
     {
-      content: z.string().describe('Text content of the thought'),
-      file_urls: z.array(z.string()).optional().describe('Array of accessible URLs to download files from'),
+      content: z.string().describe('Text of the thought (third person, one signal per capture)'),
+      file_urls: z.array(z.string()).optional().describe('URLs to download files from'),
+      tags: z.array(z.string()).optional().describe('Semantic tags from allowlist: ' + ALLOWED_TAGS.join(', ') + '. If omitted, auto-classified.'),
     },
-    async ({ content, file_urls }) => {
+    async ({ content, file_urls, tags }) => {
       const files: Array<{ data: Buffer; contentType: string; filename: string }> = [];
       if (file_urls) {
         for (const url of file_urls) {
@@ -201,6 +204,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         content,
         files,
         source: ['mcp'],
+        tags: tags ? validateTags(tags) : undefined,
       });
 
       if (!result.success) {
@@ -227,10 +231,22 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
           (SELECT count(*) FROM insights WHERE review_status = 'pending_review') AS insights_pending
       `);
 
-      const categories = await deps.db.query(`
-        SELECT category, count(*) as count FROM facts
+      const factTags = await deps.db.query(`
+        SELECT unnest(tags) AS tag, count(*) as count FROM facts
         WHERE archived = false AND review_status != 'user_rejected'
-        GROUP BY category ORDER BY count DESC
+        GROUP BY tag ORDER BY count DESC
+      `);
+
+      const insightTags = await deps.db.query(`
+        SELECT unnest(tags) AS tag, count(*) as count FROM insights
+        WHERE archived = false AND review_status != 'user_rejected'
+        GROUP BY tag ORDER BY count DESC
+      `);
+
+      const capturesBySource = await deps.db.query(`
+        SELECT unnest(source) AS src, count(*) as count FROM captures
+        WHERE archived = false
+        GROUP BY src ORDER BY count DESC
       `);
 
       const row = stats.rows[0];
@@ -240,7 +256,9 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         insights: parseInt(row.insights_count),
         reminders: parseInt(row.reminders_count),
         pendingReview: parseInt(row.facts_pending) + parseInt(row.insights_pending),
-        factsByCategory: categories.rows,
+        factsByTag: factTags.rows,
+        insightsByTag: insightTags.rows,
+        capturesBySource: capturesBySource.rows,
       };
 
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -419,6 +437,53 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       } catch (err) {
         return { content: [{ type: 'text' as const, text: `Consolidation failed: ${String(err)}` }], isError: true };
       }
+    },
+  );
+
+  // 11. update_tags — replace tags on any tier item
+  server.tool(
+    'update_tags',
+    'Update semantic tags on a capture, fact, or insight',
+    {
+      id: z.string().uuid().describe('UUID of the item'),
+      tier: z.enum(['capture', 'fact', 'insight']).describe('Which tier'),
+      tags: z.array(z.string()).describe('New tags (replaces existing). Allowed: ' + ALLOWED_TAGS.join(', ')),
+    },
+    async ({ id, tier, tags: rawTags }) => {
+      const invalidTags = rawTags.filter((t) => !isValidTag(t));
+      if (invalidTags.length > 0) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid tags: ${invalidTags.join(', ')}. Allowed: ${ALLOWED_TAGS.join(', ')}` }],
+          isError: true,
+        };
+      }
+      const validTags = validateTags(rawTags);
+
+      let oldTags: string[] | undefined;
+      if (tier === 'capture') {
+        const existing = await getCaptureById(deps.db, id);
+        if (!existing) {
+          return { content: [{ type: 'text' as const, text: `No capture found with id ${id}` }], isError: true };
+        }
+        oldTags = existing.tags;
+        await updateCaptureTags(deps.db, id, validTags);
+      } else if (tier === 'fact') {
+        const existing = await getFactById(deps.db, id);
+        if (!existing) {
+          return { content: [{ type: 'text' as const, text: `No fact found with id ${id}` }], isError: true };
+        }
+        oldTags = existing.tags;
+        await updateFactTags(deps.db, id, validTags);
+      } else {
+        const existing = await getInsightById(deps.db, id);
+        if (!existing) {
+          return { content: [{ type: 'text' as const, text: `No insight found with id ${id}` }], isError: true };
+        }
+        oldTags = existing.tags;
+        await updateInsightTags(deps.db, id, validTags);
+      }
+
+      return { content: [{ type: 'text' as const, text: `Tags updated: [${(oldTags ?? []).join(', ')}] → [${validTags.join(', ')}]` }] };
     },
   );
 }
