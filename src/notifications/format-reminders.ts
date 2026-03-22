@@ -38,12 +38,19 @@ function formatDueDate(date: Date | null): string {
   const d = date instanceof Date ? date : new Date(date);
   const now = new Date();
   const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString('en-US', {
+  const datePart = d.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     ...(sameYear ? {} : { year: 'numeric' }),
   });
+  // Include time if it's not midnight (i.e., a specific time was set)
+  const hasTime = d.getUTCHours() !== 0 || d.getUTCMinutes() !== 0;
+  if (hasTime) {
+    const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return `${datePart} at ${timePart}`;
+  }
+  return datePart;
 }
 
 // Short variant without weekday — used by detail view

@@ -73,6 +73,20 @@ describe('formatSingleReminder', () => {
     expect(result).toContain('20');
   });
 
+  it('shows time when due date has non-midnight time', () => {
+    const r = makeReminder({ content: 'Call dentist', due_date: new Date('2026-03-20T14:30:00Z') });
+    const result = formatSingleReminder(r);
+    expect(result).toContain('— due');
+    expect(result).toMatch(/at \d+:\d{2}/); // e.g. "at 2:30 PM" or "at 9:30 AM"
+  });
+
+  it('does not show time when due date is midnight', () => {
+    const r = makeReminder({ content: 'Buy groceries', due_date: new Date('2026-03-20T00:00:00Z') });
+    const result = formatSingleReminder(r);
+    expect(result).toContain('— due');
+    expect(result).not.toContain(' at ');
+  });
+
   it('shows in_progress icon', () => {
     const r = makeReminder({ content: 'Task', status: 'in_progress' });
     const result = formatSingleReminder(r);
