@@ -2,7 +2,8 @@
 import { Bot } from 'grammy';
 import type { Hono } from 'hono';
 import type { AppDeps } from '../app.js';
-import { runCapturePipeline, type FileInput } from '../capture/pipeline.js';
+import type { FileInput } from '../capture/pipeline.js';
+import * as capturesSvc from '../services/captures.js';
 import { registerCommandHandlers } from './command-handlers.js';
 import { registerNlRouter } from './nl-router.js';
 import type { StateRefs } from './state.js';
@@ -11,13 +12,11 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
   const bot = new Bot(deps.config.telegramBotToken);
 
   const captureFn = async (input: { content: string; files: FileInput[]; source: string[] }) => {
-    return runCapturePipeline({
-      db: deps.db,
-      embeddingProvider: deps.embeddingProvider,
-      metadataLLM: deps.metadataLLM,
-      blobStorage: deps.blobStorage,
-      ...input,
-    });
+    const result = await capturesSvc.captureThought(deps, input.content, input.files, undefined, input.source);
+    if ('error' in result) {
+      return { success: false, reason: result.reason };
+    }
+    return { success: true, captureId: result.captureId, warnings: result.warnings };
   };
 
   const downloadFile = async (fileId: string): Promise<Buffer> => {
@@ -36,7 +35,7 @@ export function setupTelegramWebhook(app: Hono, deps: AppDeps): Bot {
     // Pending subtask state — tracks when user should next type a subtask for a parent
     pendingSubtask: new Map<string, { parentId: string; parentContent: string; parentProject: string | null; parentSection: string | null; depth: number }>(),
     // Pending action state — tracks when user should next type the argument for an action menu action
-    pendingAction: new Map<string, { action: 'edit' | 'comment' | 'move'; reminderId: string }>(),
+    pendingAction: new Map(),
   };
 
   // Register all /command handlers and the callback_query handler

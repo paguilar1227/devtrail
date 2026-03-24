@@ -1,23 +1,11 @@
 // src/telegram/nl-router.ts
 import { Bot, InlineKeyboard } from 'grammy';
 import type { AppDeps } from '../app.js';
+import type { ServiceDeps } from '../services/index.js';
 import type { FileInput } from '../capture/pipeline.js';
-import {
-  insertReminder,
-  completeReminder as dbCompleteReminder,
-  findActiveReminders,
-  findAllReminders,
-  getReminderById,
-  updateReminder,
-  deleteReminder,
-  findSubtasks,
-  findRemindersDueOnDate,
-  findOverdueReminders,
-  reparentReminder,
-  resolveReminderId,
-} from '../db/reminders.js';
+import * as remindersSvc from '../services/reminders.js';
+import * as commentsSvc from '../services/comments.js';
 import type { ReminderRow } from '../db/reminders.js';
-import { insertComment, deleteComment } from '../db/reminder-comments.js';
 import {
   handleTextMessage,
   handlePhotoMessage,
@@ -42,6 +30,9 @@ export function registerNlRouter(
   captureFn: CaptureFn,
   downloadFile: DownloadFileFn,
 ): void {
+  // AppDeps and ServiceDeps have the same shape
+  const svcDeps = deps as ServiceDeps;
+
   // Natural language router — classify intent before acting
   bot.on('message:text', async (ctx) => {
     console.log(`[telegram] message:text handler hit: "${ctx.message.text}"`);
@@ -76,15 +67,12 @@ export function registerNlRouter(
           console.log(`[subtask-parser] Result: content="${parsedContent}", priority=${parsedPriority}, due=${parsedDueDate}`);
         }
 
-        const embedding = await deps.embeddingProvider.embed(parsedContent);
-        const subtaskResult = await insertReminder(deps.db, {
+        const subtaskResult = await remindersSvc.createReminder(svcDeps, {
           content: parsedContent,
-          embedding,
           category: parsedCategory,
           project: pendingSub.parentProject,
           section: pendingSub.parentSection,
           parentId: pendingSub.parentId,
-          depth: pendingSub.depth,
           priority: parsedPriority,
           source: 'telegram',
           sourceContext: null,
@@ -92,8 +80,8 @@ export function registerNlRouter(
         });
 
         // Show parent with all subtasks including the new one
-        const parentReminder = await getReminderById(deps.db, pendingSub.parentId);
-        const allSubtasks = await findSubtasks(deps.db, pendingSub.parentId);
+        const parentReminder = await remindersSvc.getReminder(svcDeps, pendingSub.parentId);
+        const allSubtasks = await remindersSvc.findSubtasks(svcDeps, pendingSub.parentId);
         const newSubtask = allSubtasks.find(st => st.id === subtaskResult.id);
 
         let replyText = `Subtask added to "${pendingSub.parentContent}":\n`;
@@ -135,34 +123,35 @@ export function registerNlRouter(
       return;
     }
 
-    // Check for pending action (edit/comment/move) set by the ⚙ action menu
+    // Check for pending action (edit/comment/move/comment-edit) set by the ⚙ action menu
     const pendingAct = stateRefs.pendingAction.get(chatId);
     if (pendingAct) {
       stateRefs.pendingAction.delete(chatId);
       if (pendingAct.action === 'edit') {
-        await updateReminder(deps.db, pendingAct.reminderId, { content: text });
-        const editEmbedding = await deps.embeddingProvider.embed(text);
-        await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(editEmbedding), pendingAct.reminderId]);
+        await remindersSvc.updateReminder(svcDeps, pendingAct.reminderId, { content: text });
         stateRefs.lastActions.set(chatId, { action: 'update', reminderId: pendingAct.reminderId });
         await ctx.reply(`Updated (${pendingAct.reminderId.slice(0, 8)}): "${text}"`);
       } else if (pendingAct.action === 'comment') {
-        const commentEmbedding = await deps.embeddingProvider.embed(text);
-        const commentResult = await insertComment(deps.db, { content: text, embedding: commentEmbedding, reminderId: pendingAct.reminderId, source: 'telegram' });
+        const commentResult = await commentsSvc.addComment(svcDeps, pendingAct.reminderId, text, 'telegram');
         stateRefs.lastActions.set(chatId, { action: 'comment', reminderId: commentResult.id });
         await ctx.reply(`Comment added to (${pendingAct.reminderId.slice(0, 8)}): "${text}"`);
+      } else if (pendingAct.action === 'comment-edit') {
+        await commentsSvc.updateComment(svcDeps, pendingAct.commentId!, text);
+        stateRefs.lastActions.set(chatId, { action: 'edit-comment', reminderId: pendingAct.commentId! });
+        await ctx.reply('Comment updated.');
       } else if (pendingAct.action === 'move') {
         if (text.toLowerCase().trim() === 'root') {
-          await reparentReminder(deps.db, pendingAct.reminderId, null);
+          await remindersSvc.reparentReminder(svcDeps, pendingAct.reminderId, null);
           await ctx.reply(`Moved (${pendingAct.reminderId.slice(0, 8)}) to root level.`);
         } else {
-          const targetId = await resolveReminderId(deps.db, text.trim());
+          const targetId = await remindersSvc.resolveReminderId(svcDeps, text.trim());
           if (!targetId) {
             // Re-set the pending action so the user can try again
             stateRefs.pendingAction.set(chatId, pendingAct);
             await ctx.reply(`No reminder found matching "${text}". Try again with a valid ID or short ID, or type "root".`);
             return;
           }
-          await reparentReminder(deps.db, pendingAct.reminderId, targetId);
+          await remindersSvc.reparentReminder(svcDeps, pendingAct.reminderId, targetId);
           await ctx.reply(`Moved (${pendingAct.reminderId.slice(0, 8)}) under (${targetId.slice(0, 8)}).`);
         }
       }
@@ -178,15 +167,15 @@ export function registerNlRouter(
       }
       try {
         if (last.action === 'create') {
-          await deleteReminder(deps.db, last.reminderId);
+          await remindersSvc.deleteReminder(svcDeps, last.reminderId);
           await ctx.reply(`↩️ Undone: deleted the reminder (${last.reminderId.slice(0, 8)})`);
         } else if (last.action === 'complete') {
           const prev = last.previousState ?? {};
-          await updateReminder(deps.db, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
+          await remindersSvc.updateReminder(svcDeps, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
           await ctx.reply(`↩️ Undone: restored reminder status to ${(prev.status as string) ?? 'not_started'} (${last.reminderId.slice(0, 8)})`);
         } else if (last.action === 'update') {
           const prev = last.previousState ?? {};
-          await updateReminder(deps.db, last.reminderId, {
+          await remindersSvc.updateReminder(svcDeps, last.reminderId, {
             status: prev.status as string | undefined,
             priority: prev.priority as string | null | undefined,
             project: prev.project as string | null | undefined,
@@ -194,8 +183,12 @@ export function registerNlRouter(
           });
           await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
         } else if (last.action === 'comment') {
-          await deleteComment(deps.db, last.reminderId); // reminderId holds the commentId for this action
+          await commentsSvc.deleteComment(svcDeps, last.reminderId); // reminderId holds the commentId for this action
           await ctx.reply(`↩️ Undone: removed the comment (${last.reminderId.slice(0, 8)})`);
+        } else if (last.action === 'delete-comment') {
+          const prev = last.previousState as { content: string; reminderId: string; source: string };
+          await commentsSvc.addComment(svcDeps, prev.reminderId, prev.content, prev.source);
+          await ctx.reply(`↩️ Undone: restored comment "${prev.content.slice(0, 50)}"`);
         } else {
           await ctx.reply('Cannot undo that action.');
         }
@@ -224,15 +217,12 @@ export function registerNlRouter(
 
     if (intent.action === 'create_reminder') {
       const taskContent = intent.content ?? text;
-      const embedding = await deps.embeddingProvider.embed(taskContent);
-      const result = await insertReminder(deps.db, {
+      const result = await remindersSvc.createReminder(svcDeps, {
         content: taskContent,
-        embedding,
         category: intent.category ?? null,
         project: intent.project ?? null,
         section: intent.section ?? null,
         parentId: null,
-        depth: 0,
         priority: intent.priority ?? null,
         source: 'telegram',
         sourceContext: null,
@@ -268,20 +258,19 @@ export function registerNlRouter(
       let reminders;
       let header = '';
       if (intent.dueFilter === 'today') {
-        reminders = await findRemindersDueOnDate(deps.db, new Date(), deps.config.timezone);
+        reminders = await remindersSvc.findRemindersDueOnDate(svcDeps, new Date(), deps.config.timezone);
         header = '📅 *Due Today*\n';
       } else if (intent.dueFilter === 'overdue') {
-        reminders = await findOverdueReminders(deps.db);
+        reminders = await remindersSvc.findOverdueReminders(svcDeps);
         header = '🔴 *Overdue*\n';
       } else if (intent.dueFilter === 'this_week') {
         // Get reminders due in the next 7 days
         const now = new Date();
         const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const { listReminders } = await import('../db/reminders.js');
-        reminders = await listReminders(deps.db, { due_before: weekEnd, due_after: now });
+        reminders = await remindersSvc.listReminders(svcDeps, { due_before: weekEnd, due_after: now });
         header = '📅 *Due This Week*\n';
       } else {
-        reminders = await findActiveReminders(deps.db);
+        reminders = await remindersSvc.findActiveReminders(svcDeps);
       }
       if (reminders.length === 0) {
         await ctx.reply(intent.dueFilter ? `No ${intent.dueFilter === 'overdue' ? 'overdue' : 'due'} reminders.` : 'No active reminders.');
@@ -293,12 +282,12 @@ export function registerNlRouter(
 
     } else if (intent.action === 'complete_reminder') {
       // Search all reminders (including done/subtasks) by description
-      const reminders = await findAllReminders(deps.db);
+      const reminders = await remindersSvc.findAllReminders(svcDeps);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
         stateRefs.lastActions.set(chatId, { action: 'complete', reminderId: match.id, previousState: { status: match.status } });
-        const nlDoneResult = await dbCompleteReminder(deps.db, match.id);
+        const nlDoneResult = await remindersSvc.completeReminder(svcDeps, match.id);
         const nlSubCount = nlDoneResult.completed.length - 1;
         const nlSubMsg = nlSubCount > 0 ? ` (+ ${nlSubCount} subtask${nlSubCount > 1 ? 's' : ''})` : '';
         await ctx.reply(`${INTENT_PREFIX} task completion.\n✓ Done${nlSubMsg}: "${match.content}" (${match.id.slice(0, 8)})${UNDO_HINT}`);
@@ -307,22 +296,18 @@ export function registerNlRouter(
       }
 
     } else if (intent.action === 'update_reminder') {
-      const reminders = await findAllReminders(deps.db);
+      const reminders = await remindersSvc.findAllReminders(svcDeps);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match) {
         stateRefs.lastActions.set(chatId, { action: 'update', reminderId: match.id, previousState: { content: match.content, status: match.status, priority: match.priority, project: match.project } });
-        await updateReminder(deps.db, match.id, {
+        await remindersSvc.updateReminder(svcDeps, match.id, {
           status: intent.status,
           priority: intent.priority ?? undefined,
           project: intent.project ?? undefined,
           dueDate: intent.dueDate ? new Date(intent.dueDate) : undefined,
           content: intent.content ?? undefined,
         });
-        if (intent.content) {
-          const embedding = await deps.embeddingProvider.embed(intent.content);
-          await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(embedding), match.id]);
-        }
         const changes = [
           intent.content ? `content → "${intent.content}"` : null,
           intent.status,
@@ -335,12 +320,11 @@ export function registerNlRouter(
       }
 
     } else if (intent.action === 'add_comment') {
-      const reminders = await findAllReminders(deps.db);
+      const reminders = await remindersSvc.findAllReminders(svcDeps);
       const search = (intent.taskSearch ?? '').toLowerCase();
       const match = reminders.find((r) => r.content.toLowerCase().includes(search));
       if (match && intent.content) {
-        const embedding = await deps.embeddingProvider.embed(intent.content);
-        const commentResult = await insertComment(deps.db, { content: intent.content, embedding, reminderId: match.id, source: 'telegram' });
+        const commentResult = await commentsSvc.addComment(svcDeps, match.id, intent.content, 'telegram');
         stateRefs.lastActions.set(chatId, { action: 'comment', reminderId: commentResult.id });
         await ctx.reply(`${INTENT_PREFIX} comment on task.\nAdded to "${match.content}": "${intent.content}"${UNDO_HINT}`);
       } else {
@@ -355,15 +339,15 @@ export function registerNlRouter(
       } else {
         try {
           if (last.action === 'create') {
-            await deleteReminder(deps.db, last.reminderId);
+            await remindersSvc.deleteReminder(svcDeps, last.reminderId);
             await ctx.reply(`↩️ Undone: deleted the reminder (${last.reminderId.slice(0, 8)})`);
           } else if (last.action === 'complete') {
             const prev = last.previousState ?? {};
-            await updateReminder(deps.db, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
+            await remindersSvc.updateReminder(svcDeps, last.reminderId, { status: (prev.status as string) ?? 'not_started' });
             await ctx.reply(`↩️ Undone: restored reminder status to ${(prev.status as string) ?? 'not_started'} (${last.reminderId.slice(0, 8)})`);
           } else if (last.action === 'update') {
             const prev = last.previousState ?? {};
-            await updateReminder(deps.db, last.reminderId, {
+            await remindersSvc.updateReminder(svcDeps, last.reminderId, {
               status: prev.status as string | undefined,
               priority: prev.priority as string | null | undefined,
               project: prev.project as string | null | undefined,
@@ -371,8 +355,12 @@ export function registerNlRouter(
             });
             await ctx.reply(`↩️ Undone: restored reminder to previous state (${last.reminderId.slice(0, 8)})`);
           } else if (last.action === 'comment') {
-            await deleteComment(deps.db, last.reminderId);
+            await commentsSvc.deleteComment(svcDeps, last.reminderId);
             await ctx.reply(`↩️ Undone: removed the comment (${last.reminderId.slice(0, 8)})`);
+          } else if (last.action === 'delete-comment') {
+            const prev = last.previousState as { content: string; reminderId: string; source: string };
+            await commentsSvc.addComment(svcDeps, prev.reminderId, prev.content, prev.source);
+            await ctx.reply(`↩️ Undone: restored comment "${prev.content.slice(0, 50)}"`);
           } else {
             await ctx.reply('Cannot undo that action.');
           }
@@ -384,21 +372,21 @@ export function registerNlRouter(
       }
 
     } else if (intent.action === 'move_reminder') {
-      const reminders = await findAllReminders(deps.db);
+      const reminders = await remindersSvc.findAllReminders(svcDeps);
       const taskSearch = ((intent as any).taskSearch ?? '').toLowerCase();
       const targetSearch = ((intent as any).targetSearch ?? '').toLowerCase();
       const task = reminders.find((r) => r.content.toLowerCase().includes(taskSearch));
       if (!task) {
         await ctx.reply(`Couldn't find a matching task for "${(intent as any).taskSearch}".`);
       } else if (targetSearch === 'root' || targetSearch === 'top level') {
-        await reparentReminder(deps.db, task.id, null);
+        await remindersSvc.reparentReminder(svcDeps, task.id, null);
         await ctx.reply(`${INTENT_PREFIX} move.\nMoved: "${task.content}" to root level (${task.id.slice(0, 8)})${UNDO_HINT}`);
       } else {
         const target = reminders.find((r) => r.content.toLowerCase().includes(targetSearch) && r.id !== task.id);
         if (!target) {
           await ctx.reply(`Couldn't find a matching task for "${(intent as any).targetSearch}" to move under.`);
         } else {
-          await reparentReminder(deps.db, task.id, target.id);
+          await remindersSvc.reparentReminder(svcDeps, task.id, target.id);
           await ctx.reply(`${INTENT_PREFIX} move.\nMoved: "${task.content}" under "${target.content}" (${task.id.slice(0, 8)})${UNDO_HINT}`);
         }
       }

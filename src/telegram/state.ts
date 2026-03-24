@@ -16,8 +16,9 @@ export type PendingSubtaskEntry = {
 };
 
 export type PendingActionEntry = {
-  action: 'edit' | 'comment' | 'move';
+  action: 'edit' | 'comment' | 'move' | 'comment-edit';
   reminderId: string;
+  commentId?: string;
 };
 
 export interface StateRefs {

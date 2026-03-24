@@ -404,9 +404,14 @@ describe('Telegram Pipeline — Slash Commands', () => {
   });
 
   it('T7: "/comment <short-id> Found a race" → resolves ID and adds comment', async () => {
+    const resolvedId = 'rem-11111-2222-3333-444455556666';
     vi.mocked(sharedDeps.db.query).mockImplementation(async (sql: string) => {
       if (typeof sql === 'string' && sql.includes('LIKE')) {
-        return { rows: [{ id: 'rem-11111-2222-3333-444455556666' }] } as any;
+        return { rows: [{ id: resolvedId }] } as any;
+      }
+      // addComment service validates reminder exists via getReminderById
+      if (typeof sql === 'string' && sql.includes('FROM reminders') && sql.includes('WHERE id')) {
+        return { rows: [{ id: resolvedId, content: 'Sign up for 5K race', status: 'not_started', depth: 0 }] } as any;
       }
       if (typeof sql === 'string' && sql.includes('INSERT INTO reminder_comments')) {
         return { rows: [{ id: 'comment-abc-12345678' }] } as any;

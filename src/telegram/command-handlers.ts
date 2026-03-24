@@ -1,19 +1,11 @@
 // src/telegram/command-handlers.ts
 import { Bot, InlineKeyboard } from 'grammy';
 import type { AppDeps } from '../app.js';
-import {
-  insertReminder,
-  completeReminder as dbCompleteReminder,
-  findActiveReminders,
-  getReminderById,
-  updateReminder,
-  deleteReminder,
-  findSubtasks,
-  resolveReminderId,
-  reparentReminder,
-} from '../db/reminders.js';
+import type { ServiceDeps } from '../services/index.js';
+import * as remindersSvc from '../services/reminders.js';
+import * as commentsSvc from '../services/comments.js';
 import type { ReminderRow } from '../db/reminders.js';
-import { insertComment } from '../db/reminder-comments.js';
+import { resolveReminderId } from '../db/reminders.js';
 import { handleCommentCommand } from './handlers.js';
 import { formatRemindersMarkdown, formatSingleReminder } from '../notifications/format-reminders.js';
 import { buildReminderParserPrompt } from './prompts.js';
@@ -43,12 +35,12 @@ export async function buildTodosMessage(
   const subtasksMap = new Map<string, ReminderRow[]>();
   for (const r of reminders) {
     if (r.depth === 0) {
-      const children = await findSubtasks(deps.db, r.id);
+      const children = await remindersSvc.findSubtasks(deps as ServiceDeps, r.id);
       if (children.length > 0) {
         subtasksMap.set(r.id, children);
         // Also fetch grandchildren for each child
         for (const child of children) {
-          const grandchildren = await findSubtasks(deps.db, child.id);
+          const grandchildren = await remindersSvc.findSubtasks(deps as ServiceDeps, child.id);
           if (grandchildren.length > 0) {
             subtasksMap.set(child.id, grandchildren);
           }
@@ -89,6 +81,9 @@ export function registerCommandHandlers(
   deps: AppDeps,
   stateRefs: StateRefs,
 ): void {
+  // AppDeps and ServiceDeps have the same shape
+  const svcDeps = deps as ServiceDeps;
+
   bot.command('remind', async (ctx) => {
     const text = ctx.message?.text ?? '';
     const content = text.replace(/^\/remind\s+/, '').trim();
@@ -107,15 +102,12 @@ export function registerCommandHandlers(
       'remind-parser',
     ) ?? { content, project: null, section: null, priority: null, category: null, dueDate: null };
 
-    const embedding = await deps.embeddingProvider.embed(parsed.content);
-    const result = await insertReminder(deps.db, {
+    const result = await remindersSvc.createReminder(svcDeps, {
       content: parsed.content,
-      embedding,
       category: parsed.category,
       project: parsed.project,
       section: parsed.section,
       parentId: null,
-      depth: 0,
       priority: parsed.priority,
       source: 'telegram',
       sourceContext: null,
@@ -151,7 +143,7 @@ export function registerCommandHandlers(
   });
 
   bot.command('todos', async (ctx) => {
-    const reminders = await findActiveReminders(deps.db);
+    const reminders = await remindersSvc.findActiveReminders(svcDeps);
 
     if (reminders.length === 0) {
       await ctx.reply('No active reminders.');
@@ -175,12 +167,12 @@ export function registerCommandHandlers(
     const chatId = String(ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id ?? '');
 
     if (action === 'done') {
-      const doneResult = await dbCompleteReminder(deps.db, reminderId);
+      const doneResult = await remindersSvc.completeReminder(svcDeps, reminderId);
       const doneSubCount = doneResult.completed.length - 1;
       const doneSubText = doneSubCount > 0 ? ` + ${doneSubCount} subtask${doneSubCount > 1 ? 's' : ''}` : '';
       await ctx.answerCallbackQuery({ text: `Marked as done ✓${doneSubText}` });
       // Re-render the full list with updated statuses
-      const reminders = await findActiveReminders(deps.db);
+      const reminders = await remindersSvc.findActiveReminders(svcDeps);
       if (reminders.length === 0) {
         await ctx.editMessageText('All done! No active reminders.');
       } else {
@@ -201,14 +193,14 @@ export function registerCommandHandlers(
         blocked: 'Blocked 🚫',
         not_started: 'Not started ○',
       };
-      const current = await getReminderById(deps.db, reminderId);
+      const current = await remindersSvc.getReminder(svcDeps, reminderId);
       if (!current) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
       const nextStatus = cycleMap[current.status];
       if (!nextStatus) { await ctx.answerCallbackQuery({ text: 'Already done' }); return; }
-      await updateReminder(deps.db, reminderId, { status: nextStatus });
+      await remindersSvc.updateReminder(svcDeps, reminderId, { status: nextStatus });
       await ctx.answerCallbackQuery({ text: cycleLabels[nextStatus] ?? nextStatus });
       // Re-render the full list with updated statuses
-      const cycleReminders = await findActiveReminders(deps.db);
+      const cycleReminders = await remindersSvc.findActiveReminders(svcDeps);
       if (cycleReminders.length === 0) {
         await ctx.editMessageText('No active reminders.');
       } else {
@@ -217,11 +209,11 @@ export function registerCommandHandlers(
       }
     } else if (action === 'subtask') {
       // Subtask selection — show parent + existing subtasks, prompt for new subtask text
-      const parent = await getReminderById(deps.db, reminderId);
+      const parent = await remindersSvc.getReminder(svcDeps, reminderId);
       if (!parent) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
       if (parent.depth >= 3) { await ctx.answerCallbackQuery({ text: 'Max subtask depth reached (4 levels)' }); return; }
 
-      const existingSubtasks = await findSubtasks(deps.db, reminderId);
+      const existingSubtasks = await remindersSvc.findSubtasks(svcDeps, reminderId);
       let text = `Adding subtask to:\n  ${formatSingleReminder(parent)}\n`;
       if (existingSubtasks.length > 0) {
         text += '\nExisting subtasks:\n';
@@ -248,12 +240,12 @@ export function registerCommandHandlers(
       }
     } else if (action === 'actions') {
       // Action menu — send a new message with action buttons for the specific task
-      const reminder = await getReminderById(deps.db, reminderId);
+      const reminder = await remindersSvc.getReminder(svcDeps, reminderId);
       if (!reminder) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
       const shortId = reminderId.slice(0, 8);
       const actionKeyboard = new InlineKeyboard()
         .text('✏ Edit', `action-edit:${reminderId}`)
-        .text('💬 Comment', `action-comment:${reminderId}`)
+        .text('💬 Comments', `action-comments:${reminderId}`)
         .text('↕ Move', `action-move:${reminderId}`)
         .row()
         .text('🗑 Delete', `action-delete:${reminderId}`)
@@ -264,7 +256,63 @@ export function registerCommandHandlers(
       stateRefs.pendingAction.set(chatId, { action: 'edit', reminderId });
       await ctx.answerCallbackQuery();
       await ctx.reply('Type the new text for this reminder:');
-    } else if (action === 'action-comment') {
+    } else if (action === 'action-comments') {
+      // View comments for this reminder
+      const comments = await commentsSvc.listComments(svcDeps, reminderId);
+      const reminder = await remindersSvc.getReminder(svcDeps, reminderId);
+      const title = reminder?.content ?? reminderId;
+
+      let commentText = `💬 Comments on "${title}" (${reminderId.slice(0, 8)})\n\n`;
+
+      if (comments.length === 0) {
+        commentText += 'No comments yet.';
+      } else {
+        comments.forEach((c, i) => {
+          const date = new Date(c.created_at).toLocaleString('en-US', {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+          });
+          commentText += `${i + 1}. ${c.content}\n   ${date}\n\n`;
+        });
+      }
+
+      const keyboard = new InlineKeyboard();
+      comments.forEach((c, i) => {
+        keyboard.text(`✏ ${i + 1}`, `cedit:${c.id}`).text(`🗑 ${i + 1}`, `cdel:${c.id}`).row();
+      });
+      keyboard.text('➕ Add Comment', `cadd:${reminderId}`);
+
+      await ctx.answerCallbackQuery();
+      await ctx.reply(commentText, { reply_markup: keyboard });
+    } else if (action === 'cedit') {
+      // Edit a comment — reminderId here is actually commentId
+      const commentId = reminderId;
+      const comment = await commentsSvc.getComment(svcDeps, commentId);
+      if (!comment) {
+        await ctx.answerCallbackQuery({ text: 'Comment not found' });
+        return;
+      }
+      stateRefs.pendingAction.set(chatId, { action: 'comment-edit', reminderId: comment.reminder_id, commentId });
+      await ctx.answerCallbackQuery();
+      await ctx.reply(`✏ Editing comment:\n"${comment.content}"\n\nType the new text:`);
+    } else if (action === 'cdel') {
+      // Delete a comment instantly
+      const commentId = reminderId;
+      let deleted;
+      try {
+        deleted = await commentsSvc.deleteComment(svcDeps, commentId);
+      } catch {
+        await ctx.answerCallbackQuery({ text: 'Comment not found' });
+        return;
+      }
+      stateRefs.lastActions.set(chatId, {
+        action: 'delete-comment',
+        reminderId: deleted.id,
+        previousState: { content: deleted.content, reminderId: deleted.reminder_id, source: deleted.source },
+      });
+      await ctx.answerCallbackQuery();
+      await ctx.reply(`🗑 Comment deleted: "${deleted.content}"`);
+    } else if (action === 'cadd') {
+      // Add comment — reuse existing pending action flow
       stateRefs.pendingAction.set(chatId, { action: 'comment', reminderId });
       await ctx.answerCallbackQuery();
       await ctx.reply('Type your comment:');
@@ -273,17 +321,17 @@ export function registerCommandHandlers(
       await ctx.answerCallbackQuery();
       await ctx.reply('Type the target task ID or short ID (or "root" to move to top level):');
     } else if (action === 'action-delete') {
-      const delReminder = await getReminderById(deps.db, reminderId);
-      await deleteReminder(deps.db, reminderId);
+      const delReminder = await remindersSvc.getReminder(svcDeps, reminderId);
+      await remindersSvc.deleteReminder(svcDeps, reminderId);
       await ctx.answerCallbackQuery({ text: 'Deleted' });
       await ctx.reply(`🗑 Deleted: "${delReminder?.content ?? reminderId}" (${reminderId.slice(0, 8)}) and all subtasks/comments.`);
     } else if (action === 'action-subtask') {
       // Reuse subtask flow: treat same as tapping subtask:<reminderId>
-      const subtaskParent = await getReminderById(deps.db, reminderId);
+      const subtaskParent = await remindersSvc.getReminder(svcDeps, reminderId);
       if (!subtaskParent) { await ctx.answerCallbackQuery({ text: 'Reminder not found' }); return; }
       if (subtaskParent.depth >= 3) { await ctx.answerCallbackQuery({ text: 'Max subtask depth reached (4 levels)' }); return; }
 
-      const existingSubs = await findSubtasks(deps.db, reminderId);
+      const existingSubs = await remindersSvc.findSubtasks(svcDeps, reminderId);
       let subtaskText = `Adding subtask to:\n  ${formatSingleReminder(subtaskParent)}\n`;
       if (existingSubs.length > 0) {
         subtaskText += '\nExisting subtasks:\n';
@@ -323,7 +371,7 @@ export function registerCommandHandlers(
       return;
     }
     const chatId = String(ctx.chat.id);
-    const result = await dbCompleteReminder(deps.db, fullId);
+    const result = await remindersSvc.completeReminder(svcDeps, fullId);
     const subtaskCount = result.completed.length - 1;
     const subtaskMsg = subtaskCount > 0 ? ` (+ ${subtaskCount} subtask${subtaskCount > 1 ? 's' : ''})` : '';
     stateRefs.lastActions.set(chatId, { action: 'complete', reminderId: fullId, previousState: { status: 'not_started' } });
@@ -345,7 +393,7 @@ export function registerCommandHandlers(
       return;
     }
     if (target.toLowerCase() === 'root') {
-      await reparentReminder(deps.db, fullTaskId, null);
+      await remindersSvc.reparentReminder(svcDeps, fullTaskId, null);
       await ctx.reply(`Moved (${fullTaskId.slice(0, 8)}) to root level.`);
     } else {
       const fullParentId = await resolveReminderId(deps.db, target);
@@ -353,8 +401,8 @@ export function registerCommandHandlers(
         await ctx.reply(`No reminder found matching "${target}" for the new parent.`);
         return;
       }
-      await reparentReminder(deps.db, fullTaskId, fullParentId);
-      const parent = await getReminderById(deps.db, fullParentId);
+      await remindersSvc.reparentReminder(svcDeps, fullTaskId, fullParentId);
+      const parent = await remindersSvc.getReminder(svcDeps, fullParentId);
       await ctx.reply(`Moved (${fullTaskId.slice(0, 8)}) under "${parent?.content ?? fullParentId}".`);
     }
   });
@@ -370,10 +418,10 @@ export function registerCommandHandlers(
       await ctx.reply(`No reminder found matching "${rawId}". Use /todos to see IDs.`);
       return;
     }
-    const reminder = await getReminderById(deps.db, fullId);
+    const reminder = await remindersSvc.getReminder(svcDeps, fullId);
     const chatId = String(ctx.chat.id);
     stateRefs.lastActions.set(chatId, { action: 'create', reminderId: fullId }); // undo will try to re-create, but delete is destructive — undo just notifies
-    await deleteReminder(deps.db, fullId);
+    await remindersSvc.deleteReminder(svcDeps, fullId);
     await ctx.reply(`🗑 Deleted: "${reminder?.content ?? fullId}" (${fullId.slice(0, 8)}) and all subtasks/comments.`);
   });
 
@@ -395,13 +443,11 @@ export function registerCommandHandlers(
 
     // Store previous state for undo
     const chatId = String(ctx.chat.id);
-    const old = await getReminderById(deps.db, fullId);
+    const old = await remindersSvc.getReminder(svcDeps, fullId);
     stateRefs.lastActions.set(chatId, { action: 'update', reminderId: fullId, previousState: { content: old?.content, status: old?.status, priority: old?.priority, project: old?.project } });
 
-    // Update content and re-embed
-    await updateReminder(deps.db, fullId, { content: newContent });
-    const embedding = await deps.embeddingProvider.embed(newContent);
-    await deps.db.query('UPDATE reminders SET embedding = $1 WHERE id = $2', [JSON.stringify(embedding), fullId]);
+    // Update content (service handles re-embedding)
+    await remindersSvc.updateReminder(svcDeps, fullId, { content: newContent });
 
     await ctx.reply(`Updated (${fullId.slice(0, 8)}): "${newContent}"`);
   });
@@ -414,8 +460,7 @@ export function registerCommandHandlers(
         async (rawReminderId, content, source) => {
           const fullId = await resolveReminderId(deps.db, rawReminderId);
           if (!fullId) throw new Error(`No reminder found matching "${rawReminderId}". Use /todos to see IDs.`);
-          const embedding = await deps.embeddingProvider.embed(content);
-          return insertComment(deps.db, { content, embedding, reminderId: fullId, source });
+          return commentsSvc.addComment(svcDeps, fullId, content, source);
         },
       );
       await ctx.reply(`Comment added to ${result.reminderId.slice(0, 8)} (${result.id.slice(0, 8)})`);
@@ -431,7 +476,7 @@ export function registerCommandHandlers(
   });
 
   bot.command('subtask', async (ctx) => {
-    const reminders = await findActiveReminders(deps.db);
+    const reminders = await remindersSvc.findActiveReminders(svcDeps);
     const topLevel = reminders.filter(r => r.depth === 0);
     if (topLevel.length === 0) {
       await ctx.reply('No reminders to add subtasks to.');
