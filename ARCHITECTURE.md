@@ -57,6 +57,10 @@ Its secondary purpose is a personal productivity layer (reminders, todos) that f
                     +---------------------------------+
 ```
 
+### Architecture Pattern
+
+Open Brain uses a **hexagonal architecture** (ports and adapters). All business logic lives in `src/services/`. The three entry-point surfaces — REST API, MCP server, and Telegram bot — are thin adapters: they parse inputs, call service functions, and format responses. No business logic lives in adapters.
+
 ### Components
 
 | Component | Azure Service | Purpose |
@@ -308,9 +312,45 @@ Response includes `tier`, `confidence`, `content`, `category`, and optionally `n
 
 ---
 
-## 7. Reminders System
+## 7. Service Layer
 
-**Implementation:** `src/db/reminders.ts`, `src/db/reminder-comments.ts`, `src/notifications/format-reminders.ts`, `src/notifications/due-date-checker.ts`
+**Implementation:** `src/services/`
+
+Open Brain uses a **hexagonal architecture** (ports and adapters pattern). All business logic lives in the service layer. The three adapter surfaces — REST API, MCP server, and Telegram bot — are thin wrappers that translate their input format, call the appropriate service function, and format the response. No business logic belongs in adapters.
+
+### Design Principles
+
+- **Adapters are thin:** REST routes, MCP tool handlers, and Telegram command handlers should contain no business logic — only argument parsing, service calls, and response formatting.
+- **Services own the logic:** validation, embedding, cross-table coordination, and error checking all happen in `src/services/`.
+- **Dependencies are injected:** every service function takes a `ServiceDeps` object as its first argument. This makes unit testing trivial — pass mocks.
+- **No circular imports:** adapters import services; services import DB modules and providers. Services never import adapters.
+
+### Service Modules
+
+| Module | Responsibility |
+|--------|---------------|
+| `captures.ts` | `captureThought` (full pipeline), `searchThoughts`, `listCaptures`, `getCapture`, `archiveCapture`, `unarchiveCapture` |
+| `comments.ts` | `addComment`, `listComments`, `getComment`, `updateComment`, `deleteComment` — owns comment validation and re-embedding |
+| `consolidation.ts` | `runConsolidation` (delegates to pipeline), `getConsolidationLogs` |
+| `facts.ts` | `getFact`, `listFacts`, `updateFact` (re-embeds, sets `user_edited`), `archiveFact`, `unarchiveFact`, `reviewPendingFacts`, `approveRejectFact` |
+| `insights.ts` | `getInsight`, `listInsights`, `updateInsight`, `archiveInsight`, `unarchiveInsight`, `reviewPendingInsights`, `approveRejectInsight` |
+| `profile.ts` | `getUserProfile` (LLM synthesis), `getBrainStats` (dashboard counts) |
+| `reminders.ts` | Full CRUD + `createReminder` (validates depth, embeds), `completeReminder` (cascade), `deleteReminder` (cascade), `reparentReminder`, `resolveReminderId`, `listProjects`, notification-support queries |
+| `tags.ts` | `updateTags` (validates allowlist, routes to correct DB table), `getAllowedTags` |
+| `index.ts` | `ServiceDeps` interface — the dependency injection contract |
+
+### Adding to the Service Layer
+
+When a new feature needs business logic:
+1. Add the function to the appropriate `src/services/*.ts` module (or create a new module).
+2. Call it from the adapter (REST route, MCP tool, or Telegram handler) — do not duplicate logic across adapters.
+3. Test the service function directly in unit tests; test the adapter integration in integration/E2E tests.
+
+---
+
+## 8. Reminders System
+
+**Implementation:** `src/services/reminders.ts`, `src/services/comments.ts`, `src/db/reminders.ts`, `src/db/reminder-comments.ts`, `src/notifications/format-reminders.ts`, `src/notifications/due-date-checker.ts`
 
 ### Hierarchy
 
@@ -355,7 +395,7 @@ Completed reminders are treated as profile signal during consolidation. The runn
 
 ---
 
-## 8. Telegram Bot
+## 9. Telegram Bot
 
 **Implementation:** Split across multiple modules for testability:
 - `src/telegram/webhook.ts` — Bot setup, webhook route, shared state initialization
@@ -429,10 +469,18 @@ Triggered by the gear button on any task. Sends a new message with five action b
 | Button | Callback Data | Behavior |
 |--------|---------------|----------|
 | Edit | `action-edit:{id}` | Sets `pendingAction` to `edit`, prompts for new text |
-| Comment | `action-comment:{id}` | Sets `pendingAction` to `comment`, prompts for comment text |
+| Comments | `action-comments:{id}` | Lists existing comments with edit/delete buttons per comment |
 | Move | `action-move:{id}` | Sets `pendingAction` to `move`, prompts for target ID or "root" |
 | Delete | `action-delete:{id}` | Immediately deletes the task + subtasks + comments |
 | Subtask | `action-subtask:{id}` | Enters subtask creation flow (same as `subtask:{id}`) |
+| Add Comment | `action-comment:{id}` | Sets `pendingAction` to `comment`, prompts for comment text |
+
+### Comment Management (Telegram)
+
+The Comments view (`action-comments:{id}`) shows each existing comment numbered, with a timestamp, and two buttons per comment: ✏ Edit (`action-edit-comment:{commentId}`) and 🗑 Delete (`action-delete-comment:{commentId}`).
+
+- **Edit comment:** `action-edit-comment:{commentId}` — sets `pendingAction` to `comment-edit` (storing both `reminderId` and `commentId`), prompts user for new text. Next plain text message calls `commentsSvc.updateComment()`.
+- **Delete comment:** `action-delete-comment:{commentId}` — immediately calls `commentsSvc.deleteComment()`, replies with confirmation.
 
 ### Pending State Machines
 
@@ -440,7 +488,7 @@ Two state machines maintain conversational context per chat (keyed by `chatId`):
 
 **`pendingSubtask`** — When a user clicks a subtask button, the chat enters a pending state. The next plain text message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). The state stores: `parentId`, `parentContent`, `parentProject`, `parentSection`, `depth`. Cleared after creation.
 
-**`pendingAction`** — When a user clicks an action menu button (edit/comment/move), the chat enters a pending state. The next plain text message is treated as the argument for that action. For `move`, if the target is invalid, the pending state is re-set so the user can try again. Stores: `action` ('edit' | 'comment' | 'move'), `reminderId`.
+**`pendingAction`** — When a user clicks an action menu button (edit/comment/move/comment-edit), the chat enters a pending state. The next plain text message is treated as the argument for that action. For `move`, if the target is invalid, the pending state is re-set so the user can try again. Stores: `action` ('edit' | 'comment' | 'move' | 'comment-edit'), `reminderId`, and optionally `commentId` (for `comment-edit` flow).
 
 ### Undo Support
 
@@ -471,7 +519,7 @@ Per-chat state tracking (`lastActions` Map). Stores the last action type, remind
 
 ---
 
-## 9. MCP Server
+## 10. MCP Server
 
 **Implementation:** `src/mcp/server.ts`, `src/mcp/profiler-tools.ts`, `src/mcp/reminder-tools.ts`
 
@@ -487,7 +535,7 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 
 2. **`get_user_prompt` tool (portable):** For non-MCP clients (ChatGPT, raw API usage, etc.), the `get_user_prompt` tool returns the same behavioral instructions as a copyable system prompt. Users paste it into their AI client's custom instructions or system prompt field once, and any AI client gains the same proactive behavior.
 
-### Tools (21 total)
+### Tools (23 total)
 
 **Profiler tools (13):**
 
@@ -507,18 +555,20 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 | 12 | `run_consolidation` | Manually trigger consolidation pipeline |
 | 13 | `update_tags` | Replace tags on any tier item (capture, fact, insight) by UUID. Validates against allowlist. |
 
-**Reminder tools (8):**
+**Reminder tools (10):**
 
 | # | Tool | Description |
 |---|------|-------------|
-| 13 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
-| 14 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
-| 15 | `get_reminder_detail` | Single task with all comments and full subtask tree |
-| 16 | `update_reminder` | Change status, priority, content, due date, move project/section |
-| 17 | `complete_reminder` | Mark done (does NOT auto-complete subtasks) |
-| 18 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
-| 19 | `add_reminder_comment` | Add a timestamped progress comment |
-| 20 | `list_projects` | All projects with task count stats by status |
+| 14 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
+| 15 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
+| 16 | `get_reminder_detail` | Single task with all comments and full subtask tree |
+| 17 | `update_reminder` | Change status, priority, content, due date, move project/section |
+| 18 | `complete_reminder` | Mark done (cascades to all subtasks) |
+| 19 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
+| 20 | `add_reminder_comment` | Add a timestamped progress comment |
+| 21 | `list_projects` | All projects with task count stats by status |
+| 22 | `edit_comment` | Edit the text of an existing comment (re-embeds content) |
+| 23 | `delete_comment` | Delete a comment by ID; returns the deleted comment content |
 
 ### brain_help
 
@@ -526,23 +576,60 @@ The `brain_help` tool returns a detailed guide for AI clients on when to capture
 
 ---
 
-## 10. REST API
+## 11. REST API
 
 **Framework:** Hono (`src/app.ts`)
 
 **Port:** 3000 (configurable via `PORT`)
+
+The REST API provides comprehensive CRUD coverage for all resources. All adapters (MCP, Telegram) call the service layer directly — the REST API is a separate adapter, not a pass-through.
 
 ### Endpoints
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/` | None | Health check — returns `{"status":"ok","service":"open-brain-v2"}` |
-| GET | `/api/v1/captures` | Bearer | List recent captures (with `?limit=N`) |
-| GET | `/api/v1/facts` | Bearer | List facts (non-archived, sorted by confidence) |
-| GET | `/api/v1/insights` | Bearer | List insights (non-archived, sorted by confidence) |
-| GET | `/api/v1/reminders` | Bearer | List reminders (with `?status=`, `?project=`, `?limit=`) |
+| GET | `/api/v1/captures` | Bearer | List captures (`?limit=N`, `?status=`) |
+| POST | `/api/v1/captures` | Bearer | Capture a thought (canonical path) |
+| POST | `/api/v1/capture` | Bearer | Capture a thought (backward-compatible alias) |
+| GET | `/api/v1/captures/:id` | Bearer | Get a single capture |
+| PATCH | `/api/v1/captures/:id/tags` | Bearer | Replace tags on a capture |
+| POST | `/api/v1/captures/:id/archive` | Bearer | Archive a capture |
+| POST | `/api/v1/captures/:id/unarchive` | Bearer | Restore a capture |
+| GET | `/api/v1/facts` | Bearer | List facts (`?limit=N`, `?min_confidence=`) |
+| GET | `/api/v1/facts/:id` | Bearer | Get a single fact |
+| PUT | `/api/v1/facts/:id` | Bearer | Update fact content (re-embeds, sets `user_edited`) |
+| PATCH | `/api/v1/facts/:id/tags` | Bearer | Replace tags on a fact |
+| POST | `/api/v1/facts/:id/archive` | Bearer | Archive a fact |
+| POST | `/api/v1/facts/:id/unarchive` | Bearer | Restore a fact |
+| POST | `/api/v1/facts/:id/approve` | Bearer | Approve a pending-review fact |
+| POST | `/api/v1/facts/:id/reject` | Bearer | Reject a pending-review fact |
+| GET | `/api/v1/insights` | Bearer | List insights (`?limit=N`) |
+| GET | `/api/v1/insights/:id` | Bearer | Get a single insight |
+| PUT | `/api/v1/insights/:id` | Bearer | Update insight content |
+| PATCH | `/api/v1/insights/:id/tags` | Bearer | Replace tags on an insight |
+| POST | `/api/v1/insights/:id/archive` | Bearer | Archive an insight |
+| POST | `/api/v1/insights/:id/unarchive` | Bearer | Restore an insight |
+| POST | `/api/v1/insights/:id/approve` | Bearer | Approve a pending-review insight |
+| POST | `/api/v1/insights/:id/reject` | Bearer | Reject a pending-review insight |
+| GET | `/api/v1/reminders` | Bearer | List reminders (`?status=`, `?project=`, `?priority=`, `?include_done=`, `?top_level_only=`, `?limit=`) |
+| POST | `/api/v1/reminders` | Bearer | Create a reminder |
+| GET | `/api/v1/reminders/:id` | Bearer | Get reminder detail (includes comments + subtask tree) |
+| PATCH | `/api/v1/reminders/:id` | Bearer | Update reminder fields |
+| POST | `/api/v1/reminders/:id/complete` | Bearer | Mark done (cascades to subtasks) |
+| DELETE | `/api/v1/reminders/:id` | Bearer | Delete reminder (cascade) |
+| POST | `/api/v1/reminders/:id/reparent` | Bearer | Move to a different parent (or root) |
+| GET | `/api/v1/reminders/:id/comments` | Bearer | List comments for a reminder |
+| POST | `/api/v1/reminders/:id/comments` | Bearer | Add a comment to a reminder |
+| GET | `/api/v1/comments/:id` | Bearer | Get a single comment |
+| PUT | `/api/v1/comments/:id` | Bearer | Update a comment (re-embeds content) |
+| DELETE | `/api/v1/comments/:id` | Bearer | Delete a comment |
+| POST | `/api/v1/search` | Bearer | Semantic search across captures/facts/insights |
+| GET | `/api/v1/profile` | Bearer | LLM-synthesized profile summary |
+| GET | `/api/v1/stats` | Bearer | Brain statistics dashboard |
+| GET | `/api/v1/review/pending` | Bearer | Pending facts and/or insights (`?type=fact\|insight`) |
+| GET | `/api/v1/projects` | Bearer | List all projects with task count stats |
 | GET | `/api/v1/consolidation/logs` | Bearer | Consolidation run history |
-| POST | `/api/v1/capture` | Bearer | Universal ingest endpoint |
 | POST | `/api/v1/consolidation/trigger` | Bearer | Manually trigger consolidation |
 | ALL | `/mcp` | x-brain-key | MCP streamable HTTP transport |
 | POST | `/telegram/webhook` | Telegram secret | Telegram webhook handler |
@@ -559,7 +646,7 @@ The `brain_help` tool returns a detailed guide for AI clients on when to capture
 
 ---
 
-## 11. Provider Abstraction
+## 12. Provider Abstraction
 
 **Implementation:** `src/providers/types.ts`, `src/providers/gemini-embedding.ts`, `src/providers/gemini-llm.ts`, `src/providers/anthropic-llm.ts`
 
@@ -605,7 +692,7 @@ interface LLMProvider {
 
 ---
 
-## 12. Infrastructure
+## 13. Infrastructure
 
 **Implementation:** `infra/main.bicep` and `infra/modules/*.bicep`
 
@@ -654,7 +741,7 @@ Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW ind
 
 ---
 
-## 13. Known Limitations & Gotchas
+## 14. Known Limitations & Gotchas
 
 ### Gemini 2.5 Flash
 
@@ -697,7 +784,7 @@ Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW ind
 
 ---
 
-## 14. Testing
+## 15. Testing
 
 **Framework:** Vitest
 
@@ -758,7 +845,7 @@ The CI workflow uses a `pgvector/pgvector:pg16` service container for E2E tests.
 
 ---
 
-## 15. File Map
+## 16. File Map
 
 ```
 open-brain-v2/
@@ -784,13 +871,24 @@ open-brain-v2/
       profile.ts                      get_user_profile: insights + uncovered facts + active reminders -> Gemini Flash synthesis.
       search.ts                       search_thoughts: tiered search (insights -> facts -> captures) with conditional evidence.
 
+    services/
+      index.ts                        ServiceDeps interface — dependency injection contract for all service modules.
+      captures.ts                     captureThought (pipeline), searchThoughts, listCaptures, getCapture, archive/unarchive.
+      comments.ts                     addComment, listComments, getComment, updateComment, deleteComment (owns embedding).
+      consolidation.ts                runConsolidation (delegates to pipeline runner), getConsolidationLogs.
+      facts.ts                        getFact, listFacts, updateFact (re-embeds), archiveFact, reviewPendingFacts, approveRejectFact.
+      insights.ts                     getInsight, listInsights, updateInsight, archiveInsight, reviewPendingInsights, approveRejectInsight.
+      profile.ts                      getUserProfile (LLM synthesis), getBrainStats (dashboard counts).
+      reminders.ts                    Full CRUD + createReminder (validates depth, embeds), completeReminder (cascade), reparentReminder.
+      tags.ts                         updateTags (validates allowlist, routes to correct DB table), getAllowedTags.
+
     db/
       client.ts                       PostgreSQL pool + pgvector type registration + transaction helper.
       captures.ts                     CRUD for captures table. Similarity search, hash lookup, status updates.
       facts.ts                        CRUD for facts table. User edit, version tracking, similarity search, review status.
       insights.ts                     CRUD for insights table. Similarity search, review status, archival.
       reminders.ts                    CRUD for reminders. Hierarchy (subtasks), filtering, project stats, due date queries.
-      reminder-comments.ts            CRUD for reminder_comments.
+      reminder-comments.ts            CRUD for reminder_comments. getCommentById, updateComment, deleteComment.
       consolidation-log.ts            Insert + query consolidation run logs.
 
     providers/
@@ -801,8 +899,8 @@ open-brain-v2/
 
     mcp/
       server.ts                       MCP server setup (McpServer + streamable HTTP transport + auth middleware).
-      profiler-tools.ts               11 profiler tools including brain_help, get_user_profile, capture, search, review.
-      reminder-tools.ts               8 reminder tools: CRUD, comments, projects.
+      profiler-tools.ts               13 profiler tools including brain_help, get_user_profile, capture, search, review.
+      reminder-tools.ts               10 reminder tools: CRUD, comments (add/edit/delete), projects.
 
     telegram/
       webhook.ts                      Bot setup, webhook route, shared state initialization, dedup guard, registers handler modules.

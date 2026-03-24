@@ -20,6 +20,7 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 
 - **Hierarchical tasks:** Project > Section > Task with subtask nesting (up to 4 levels)
 - **Rich metadata:** status, priority (P1/P2/P3), due dates, categories, comments
+- **Comment management:** view, edit, and delete comments via Telegram action menu or MCP tools
 - **Cascade behaviors:** completing a parent auto-completes children; deleting cascades to subtasks + comments
 - **Reparenting/move:** move tasks between parents or to root level, children follow
 - **Short IDs:** use first 8 characters of UUID for commands (e.g., `/done 4e0bd1b2`)
@@ -37,11 +38,11 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 - **Media capture:** photos, voice memos, and documents are captured with AI summarization
 - **MIME detection:** 25 file extension mappings when Telegram sends `application/octet-stream`
 
-### MCP Tools (21 total)
+### MCP Tools (23 total)
 
 **Profiler (13 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation, update_tags
 
-**Reminders (8 tools):** create_reminder, list_reminders, get_reminder_detail, update_reminder, complete_reminder, delete_reminder, add_reminder_comment, list_projects
+**Reminders (10 tools):** create_reminder, list_reminders, get_reminder_detail, update_reminder, complete_reminder, delete_reminder, add_reminder_comment, list_projects, edit_comment, delete_comment
 
 MCP-compatible clients (Claude, etc.) receive behavioral instructions automatically on connection — including tag system guidance and search patterns. For other AI clients, call `get_user_prompt` once to get a system prompt you can paste into custom instructions.
 
@@ -55,7 +56,7 @@ MCP-compatible clients (Claude, etc.) receive behavioral instructions automatica
 | File storage | Azure Blob Storage |
 | Container registry | Azure Container Registry (shared, existing) |
 
-The Container App hosts three surfaces on a single process: a REST API (`/api/v1/*`), an MCP server (`/mcp`), and the Telegram webhook handler. The Azure Function runs the consolidation pipeline on a timer: capture -> fact promotion -> insight generation, using Claude Opus 4.6 for reasoning.
+The Container App hosts three surfaces on a single process: a REST API (`/api/v1/*`), an MCP server (`/mcp`), and the Telegram webhook handler. All three surfaces are thin adapters over a shared **service layer** (`src/services/`) that owns all business logic — hexagonal architecture / ports and adapters pattern. The Azure Function runs the consolidation pipeline on a timer: capture -> fact promotion -> insight generation, using Claude Opus 4.6 for reasoning.
 
 ## Tech Stack
 

@@ -369,9 +369,30 @@ Called when the AI needs specific information — answers "what does this person
 
 Low-confidence response includes `evidence` array with source items and a `note` explaining the uncertainty.
 
+## Service Layer Architecture
+
+Open Brain uses a **hexagonal architecture** (ports and adapters pattern). All business logic lives in `src/services/`. The three adapter surfaces — REST API, MCP server, and Telegram bot — are thin wrappers that parse inputs, call service functions, and format responses.
+
+### Service Modules
+
+| Module | Key Functions |
+|--------|--------------|
+| `captures.ts` | `captureThought`, `searchThoughts`, `listCaptures`, `getCapture`, `archiveCapture` |
+| `comments.ts` | `addComment`, `listComments`, `getComment`, `updateComment`, `deleteComment` |
+| `consolidation.ts` | `runConsolidation`, `getConsolidationLogs` |
+| `facts.ts` | `getFact`, `listFacts`, `updateFact`, `approveRejectFact`, `reviewPendingFacts` |
+| `insights.ts` | `getInsight`, `listInsights`, `updateInsight`, `approveRejectInsight` |
+| `profile.ts` | `getUserProfile`, `getBrainStats` |
+| `reminders.ts` | `createReminder`, `listReminders`, `getReminderDetail`, `updateReminder`, `completeReminder`, `deleteReminder`, `reparentReminder`, `resolveReminderId`, `listProjects` |
+| `tags.ts` | `updateTags`, `getAllowedTags` |
+
+**Rule:** No business logic in adapters. All three surfaces (REST, MCP, Telegram) call service functions. Services import DB modules and providers. Adapters never import each other.
+
+---
+
 ## MCP Tool Surface
 
-21 tools exposed via JSON-RPC 2.0 (13 profiler + 8 reminders):
+23 tools exposed via JSON-RPC 2.0 (13 profiler + 10 reminders):
 
 ### AI Client Setup
 
@@ -500,7 +521,7 @@ B-tree ON created_at DESC
 
 Comments get embeddings for cross-type semantic search — "What progress have I made on the research engine?" should pull from comments, not just task titles.
 
-### MCP Tools (8 reminder tools)
+### MCP Tools (10 reminder tools)
 
 | Tool | Purpose | Parameters |
 |------|---------|-----------|
@@ -512,6 +533,8 @@ Comments get embeddings for cross-type semantic search — "What progress have I
 | `delete_reminder` | Delete a task and cascade-delete subtasks + comments | `id` (required) |
 | `add_reminder_comment` | Add a progress comment to a task | `id` (required), `content` (required) |
 | `list_projects` | List all projects with summary stats (task counts by status) | none |
+| `edit_comment` | Edit the text of an existing comment (re-embeds content) | `id` (required — comment UUID), `content` (required — new text) |
+| `delete_comment` | Delete a comment by ID; returns the deleted comment content | `id` (required — comment UUID) |
 
 ### Telegram Support
 
@@ -527,7 +550,7 @@ Comments get embeddings for cross-type semantic search — "What progress have I
 
 **Natural language interface:** All plain text messages are routed through an LLM-powered intent classifier that can create, list, complete, update, comment, move, or undo tasks without slash commands. Each interpreted action shows a confirmation with undo hint.
 
-**Action menu:** Per-task inline keyboard (gear button) with edit, comment, move, delete, and subtask actions.
+**Action menu:** Per-task inline keyboard (gear button) with edit, comments (view + edit + delete), move, delete, and subtask actions. The Comments view shows each comment with edit and delete buttons per entry. Editing a comment sets `pendingAction` to `comment-edit`; the next message replaces the comment content.
 
 ### Subtask Behavior
 
@@ -663,6 +686,26 @@ Future providers can be added without modifying any business logic.
 | LLM (retrieval synthesis) | Gemini Flash (Google API) |
 | Bot | Telegram Bot API |
 | Protocol | MCP (Model Context Protocol) 2024-11-05 |
+
+## REST API
+
+The REST API (`src/app.ts`, Hono framework) provides comprehensive CRUD for all resources. It is a thin adapter over the service layer — routes parse inputs, call service functions, and return JSON. No business logic lives in routes.
+
+### Endpoint Summary
+
+**Captures:** `GET/POST /api/v1/captures`, `GET /api/v1/captures/:id`, `PATCH /api/v1/captures/:id/tags`, `POST /api/v1/captures/:id/archive`, `POST /api/v1/captures/:id/unarchive`
+
+**Facts:** `GET /api/v1/facts`, `GET /api/v1/facts/:id`, `PUT /api/v1/facts/:id`, `PATCH /api/v1/facts/:id/tags`, `POST /api/v1/facts/:id/archive`, `POST /api/v1/facts/:id/unarchive`, `POST /api/v1/facts/:id/approve`, `POST /api/v1/facts/:id/reject`
+
+**Insights:** `GET /api/v1/insights`, `GET /api/v1/insights/:id`, `PUT /api/v1/insights/:id`, `PATCH /api/v1/insights/:id/tags`, `POST /api/v1/insights/:id/archive`, `POST /api/v1/insights/:id/unarchive`, `POST /api/v1/insights/:id/approve`, `POST /api/v1/insights/:id/reject`
+
+**Reminders:** `GET/POST /api/v1/reminders`, `GET /api/v1/reminders/:id`, `PATCH /api/v1/reminders/:id`, `POST /api/v1/reminders/:id/complete`, `DELETE /api/v1/reminders/:id`, `POST /api/v1/reminders/:id/reparent`
+
+**Comments:** `GET/POST /api/v1/reminders/:id/comments`, `GET /api/v1/comments/:id`, `PUT /api/v1/comments/:id`, `DELETE /api/v1/comments/:id`
+
+**Other:** `POST /api/v1/search`, `GET /api/v1/profile`, `GET /api/v1/stats`, `GET /api/v1/review/pending`, `GET /api/v1/projects`, `GET /api/v1/consolidation/logs`, `POST /api/v1/consolidation/trigger`
+
+---
 
 ## API Authentication
 

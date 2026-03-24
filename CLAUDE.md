@@ -148,7 +148,17 @@ GEMINI_API_KEY=<key> npx vitest run tests/integration/nl-reminder-parsing.test.t
 
 ```
 src/
-├── telegram/        # Bot (split into 6 modules for testability)
+├── services/        # Service layer — ALL business logic lives here (hexagonal architecture)
+│   ├── index.ts            # ServiceDeps interface — dependency injection contract
+│   ├── captures.ts         # captureThought, searchThoughts, listCaptures, archive/unarchive
+│   ├── comments.ts         # addComment, listComments, getComment, updateComment, deleteComment
+│   ├── consolidation.ts    # runConsolidation, getConsolidationLogs
+│   ├── facts.ts            # getFact, listFacts, updateFact, approveRejectFact, reviewPendingFacts
+│   ├── insights.ts         # getInsight, listInsights, updateInsight, approveRejectInsight
+│   ├── profile.ts          # getUserProfile (LLM synthesis), getBrainStats
+│   ├── reminders.ts        # Full CRUD + createReminder (depth validation, embedding), completeReminder (cascade)
+│   └── tags.ts             # updateTags (allowlist validation + routing), getAllowedTags
+├── telegram/        # Bot adapter (thin — calls service layer)
 │   ├── webhook.ts          # Entry point — wires everything
 │   ├── command-handlers.ts # /remind, /todos, /done, /delete, /edit, /move, /comment, /subtask, callback handlers
 │   ├── nl-router.ts        # NL intent classifier + action handlers + media handlers
@@ -163,15 +173,26 @@ src/
 │   └── tags.ts             # ALLOWED_TAGS (14 tags), TAG_DESCRIPTIONS, validateTags(), isValidTag()
 ├── consolidation/   # 3-phase consolidation (DBSCAN → Opus → embed)
 ├── retrieval/       # Profile synthesis + tiered search
-├── mcp/             # MCP server + 21 tools
+├── mcp/             # MCP server + 23 tools (thin adapter over service layer)
 ├── db/              # PostgreSQL query modules (6 tables)
+│   └── reminder-comments.ts  # includes getCommentById, updateComment, deleteComment
 ├── providers/       # AI provider abstraction (Gemini, Anthropic)
 ├── storage/         # Azure Blob Storage
 ├── notifications/   # Formatting, review, digest, due date checker
 ├── config.ts        # Zod-validated environment config
-├── app.ts           # Hono HTTP server + REST API
+├── app.ts           # Hono HTTP server + REST API (thin adapter over service layer)
 └── server.ts        # Entry point (migration, App Insights, background checkers)
 ```
+
+### Service Layer Pattern
+
+**All business logic goes through `src/services/`.** The three adapter surfaces — REST API (`src/app.ts`), MCP tools (`src/mcp/`), and Telegram bot (`src/telegram/`) — are thin wrappers. They parse input, call a service function, and format the response. They contain no business logic.
+
+This means:
+- To add a new operation, add a function to the appropriate `src/services/*.ts` module first.
+- Call that function from any adapter that needs it — don't re-implement in each adapter.
+- Service functions take `ServiceDeps` as first argument, making them trivially unit-testable with mocks.
+- Never import adapter code from services. The dependency direction is: adapters → services → DB/providers.
 
 ### Tag System
 
@@ -188,26 +209,30 @@ src/
 The bot uses three per-chat state maps for multi-step interactions:
 
 - `pendingSubtask` — set by `/subtask` button or `action-subtask`, cleared when next text message creates the subtask
-- `pendingAction` — set by `action-edit/comment/move` buttons, cleared when next text message executes the action
+- `pendingAction` — set by `action-edit/comment/move/comment-edit` buttons, cleared when next text message executes the action. The `comment-edit` variant also stores `commentId` alongside `reminderId`.
 - `lastActions` — tracks the most recent action per chat for undo support
+
+The `action-comments:{id}` callback shows the comment list for a reminder with per-comment ✏ Edit and 🗑 Delete buttons. Editing sets `pendingAction` to `comment-edit`; deleting runs immediately.
 
 Check order in `message:text` handler: pendingSubtask → pendingAction → undo fast-path → LLM intent classifier → capture thought (default)
 
 ### Adding a New Telegram Command
 
-1. Add the handler in `src/telegram/command-handlers.ts`
-2. Register it with `bot.command('name', handler)`
-3. Add undo support if the action is reversible (`lastActions.set(...)`)
-4. Add short ID resolution if it takes a reminder ID (`resolveReminderId`)
-5. Add tests in `tests/integration/telegram-pipeline.test.ts` or a new split file
-6. Update `ARCHITECTURE.md` and the design spec
+1. Add or update the business logic in `src/services/` first — never put logic directly in the handler
+2. Add the handler in `src/telegram/command-handlers.ts`
+3. Register it with `bot.command('name', handler)`
+4. Add undo support if the action is reversible (`lastActions.set(...)`)
+5. Add short ID resolution if it takes a reminder ID (`resolveReminderId`)
+6. Add tests in `tests/integration/telegram-pipeline.test.ts` or a new split file
+7. Update `ARCHITECTURE.md` and the design spec
 
 ### Adding a New MCP Tool
 
-1. Add the tool registration in `src/mcp/profiler-tools.ts` or `src/mcp/reminder-tools.ts`
-2. Use Zod for parameter validation
-3. Add an E2E test in `tests/e2e/api-e2e.test.ts`
-4. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table
+1. Add or update the business logic in `src/services/` first — MCP tools should be thin wrappers
+2. Add the tool registration in `src/mcp/profiler-tools.ts` or `src/mcp/reminder-tools.ts`
+3. Use Zod for parameter validation
+4. Add an E2E test in `tests/e2e/api-e2e.test.ts`
+5. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table (currently 23)
 
 ### MCP Server Instructions
 
