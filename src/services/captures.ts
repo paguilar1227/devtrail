@@ -63,15 +63,24 @@ export async function getCapture(
 }
 
 /**
- * List captures by status. Defaults to 'pending' if no status provided.
+ * List captures. If status provided, filters by it. Otherwise returns all non-archived.
+ * Results in reverse chronological order (newest first).
  */
 export async function listCaptures(
   deps: ServiceDeps,
   limit?: number,
   status?: string,
 ): Promise<CaptureRow[]> {
-  const rows = await findCapturesByStatus(deps.db, status ?? 'pending');
-  return limit ? rows.slice(0, limit) : rows;
+  if (status) {
+    const rows = await findCapturesByStatus(deps.db, status);
+    return limit ? rows.slice(0, limit) : rows;
+  }
+  // No status filter — list all non-archived in reverse chronological order
+  const result = await deps.db.query(
+    `SELECT * FROM captures WHERE archived = false ORDER BY created_at DESC LIMIT $1`,
+    [limit ?? 100],
+  );
+  return result.rows;
 }
 
 /**
