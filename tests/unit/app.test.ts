@@ -1,21 +1,33 @@
 // tests/unit/app.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createApp } from '../../src/app.js';
-import { runCapturePipeline } from '../../src/capture/pipeline.js';
+import * as capturesSvc from '../../src/services/captures.js';
 
-// Mock all dependencies that app.ts will import
-vi.mock('../../src/capture/pipeline.js', () => ({
-  runCapturePipeline: vi.fn(),
+// Mock the service layer (app.ts routes through services now)
+vi.mock('../../src/services/captures.js', () => ({
+  captureThought: vi.fn(),
+  searchThoughts: vi.fn(),
+  getCapture: vi.fn(),
+  listCaptures: vi.fn(),
+  archiveCapture: vi.fn(),
+  unarchiveCapture: vi.fn(),
 }));
+vi.mock('../../src/services/facts.js', () => ({ getFact: vi.fn(), listFacts: vi.fn(), updateFact: vi.fn(), archiveFact: vi.fn(), unarchiveFact: vi.fn(), reviewPendingFacts: vi.fn(), approveRejectFact: vi.fn() }));
+vi.mock('../../src/services/insights.js', () => ({ getInsight: vi.fn(), listInsights: vi.fn(), updateInsight: vi.fn(), archiveInsight: vi.fn(), unarchiveInsight: vi.fn(), reviewPendingInsights: vi.fn(), approveRejectInsight: vi.fn() }));
+vi.mock('../../src/services/reminders.js', () => ({ createReminder: vi.fn(), listReminders: vi.fn(), getReminder: vi.fn(), getReminderDetail: vi.fn(), updateReminder: vi.fn(), completeReminder: vi.fn(), deleteReminder: vi.fn(), reparentReminder: vi.fn(), listProjects: vi.fn(), findActiveReminders: vi.fn(), findAllReminders: vi.fn(), findSubtasks: vi.fn(), findRemindersDueOnDate: vi.fn(), findOverdueReminders: vi.fn(), findRecentlyCompletedReminders: vi.fn(), resolveReminderId: vi.fn() }));
+vi.mock('../../src/services/comments.js', () => ({ addComment: vi.fn(), listComments: vi.fn(), getComment: vi.fn(), updateComment: vi.fn(), deleteComment: vi.fn() }));
+vi.mock('../../src/services/profile.js', () => ({ getUserProfile: vi.fn(), getBrainStats: vi.fn() }));
+vi.mock('../../src/services/consolidation.js', () => ({ runConsolidation: vi.fn(), getConsolidationLogs: vi.fn() }));
+vi.mock('../../src/services/tags.js', () => ({ updateTags: vi.fn(), getAllowedTags: vi.fn() }));
 
 vi.mock('../../src/telegram/webhook.js', () => ({
   setupTelegramWebhook: vi.fn(),
 }));
 
-const mockRunCapturePipeline = vi.mocked(runCapturePipeline);
+const mockCaptureThought = vi.mocked(capturesSvc.captureThought);
 
 beforeEach(() => {
-  mockRunCapturePipeline.mockReset();
+  vi.clearAllMocks();
 });
 
 describe('Hono app', () => {
@@ -32,15 +44,14 @@ describe('Hono app', () => {
   });
 
   it('accepts requests with valid Bearer token', async () => {
-    mockRunCapturePipeline.mockResolvedValueOnce({
-      success: true,
-      captureId: 'cap-1',
-    });
+    mockCaptureThought.mockResolvedValueOnce({ captureId: 'cap-1' });
 
     const deps = {
       db: { pool: {}, query: vi.fn(), transaction: vi.fn(), close: vi.fn() },
       embeddingProvider: { embed: vi.fn().mockResolvedValue([]), dimensions: 3072 },
       metadataLLM: { complete: vi.fn() },
+      consolidationLLM: { complete: vi.fn() },
+      retrievalLLM: { complete: vi.fn() },
       blobStorage: { upload: vi.fn(), exists: vi.fn(), getUrl: vi.fn() },
       config: { apiKey: 'test-key-123' },
     };
@@ -58,22 +69,25 @@ describe('Hono app', () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.captureId).toBe('cap-1');
-    // Verify source is hardcoded to ['api'] — callers cannot override
-    expect(mockRunCapturePipeline).toHaveBeenCalledWith(
-      expect.objectContaining({ source: ['api'] }),
+    // Source is hardcoded to ['api']
+    expect(mockCaptureThought).toHaveBeenCalledWith(
+      expect.anything(),
+      'I love TypeScript',
+      [],
+      undefined,
+      ['api'],
     );
   });
 
-  it('accepts optional tags and passes them validated to the pipeline', async () => {
-    mockRunCapturePipeline.mockResolvedValueOnce({
-      success: true,
-      captureId: 'cap-2',
-    });
+  it('accepts optional tags and passes them through to the service', async () => {
+    mockCaptureThought.mockResolvedValueOnce({ captureId: 'cap-2' });
 
     const deps = {
       db: { pool: {}, query: vi.fn(), transaction: vi.fn(), close: vi.fn() },
       embeddingProvider: { embed: vi.fn().mockResolvedValue([]), dimensions: 3072 },
       metadataLLM: { complete: vi.fn() },
+      consolidationLLM: { complete: vi.fn() },
+      retrievalLLM: { complete: vi.fn() },
       blobStorage: { upload: vi.fn(), exists: vi.fn(), getUrl: vi.fn() },
       config: { apiKey: 'test-key-123' },
     };
@@ -89,15 +103,19 @@ describe('Hono app', () => {
     });
 
     expect(res.status).toBe(201);
-    // Only valid tags should be passed through
-    expect(mockRunCapturePipeline).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ['preference'] }),
+    // Raw tags are passed to the service (validation happens inside captureThought)
+    expect(mockCaptureThought).toHaveBeenCalledWith(
+      expect.anything(),
+      'I prefer TypeScript',
+      [],
+      ['preference', 'invalid-tag'],
+      ['api'],
     );
   });
 
   it('returns 409 for duplicate captures', async () => {
-    mockRunCapturePipeline.mockResolvedValueOnce({
-      success: false,
+    mockCaptureThought.mockResolvedValueOnce({
+      error: true,
       reason: 'Semantic duplicate detected',
     });
 
@@ -105,6 +123,8 @@ describe('Hono app', () => {
       db: { pool: {}, query: vi.fn(), transaction: vi.fn(), close: vi.fn() },
       embeddingProvider: { embed: vi.fn().mockResolvedValue([]), dimensions: 3072 },
       metadataLLM: { complete: vi.fn() },
+      consolidationLLM: { complete: vi.fn() },
+      retrievalLLM: { complete: vi.fn() },
       blobStorage: { upload: vi.fn(), exists: vi.fn(), getUrl: vi.fn() },
       config: { apiKey: 'test-key-123' },
     };
