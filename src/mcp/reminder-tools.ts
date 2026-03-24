@@ -104,7 +104,7 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       if (!detail) {
         return { content: [{ type: 'text' as const, text: `Reminder ${id} not found` }] };
       }
-      const text = formatReminderDetailMarkdown(detail, detail.comments, detail.subtasks);
+      const text = formatReminderDetailMarkdown(detail, detail.comments, detail.subtasks, deps.config.timezone);
       return { content: [{ type: 'text' as const, text }] };
     },
   );

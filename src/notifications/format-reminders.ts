@@ -214,6 +214,7 @@ export function formatReminderDetailMarkdown(
   reminder: ReminderRow,
   comments: ReminderCommentRow[],
   subtasks: ReminderRow[],
+  timezone?: string,
 ): string {
   const lines: string[] = [];
 
@@ -232,7 +233,7 @@ export function formatReminderDetailMarkdown(
   }
 
   const created = (reminder.created_at instanceof Date ? reminder.created_at : new Date(reminder.created_at))
-    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(timezone && { timeZone: timezone }) });
   lines.push(`  Status: ${reminder.status} | Created: ${created}`);
 
   // Subtasks block
@@ -251,7 +252,7 @@ export function formatReminderDetailMarkdown(
     lines.push('  Comments:');
     for (const c of comments) {
       const date = (c.created_at instanceof Date ? c.created_at : new Date(c.created_at))
-        .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        .toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(timezone && { timeZone: timezone }) });
       lines.push(`    ${date} — ${c.content}`);
     }
   }

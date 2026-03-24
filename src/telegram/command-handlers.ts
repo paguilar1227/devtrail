@@ -270,6 +270,7 @@ export function registerCommandHandlers(
         comments.forEach((c, i) => {
           const date = new Date(c.created_at).toLocaleString('en-US', {
             month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            timeZone: deps.config.timezone,
           });
           commentText += `${i + 1}. ${c.content}\n   ${date}\n\n`;
         });

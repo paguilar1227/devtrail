@@ -330,7 +330,9 @@ describe('formatReminderDetailMarkdown', () => {
     });
     const result = formatReminderDetailMarkdown(r, [comment], []);
     expect(result).toContain('Comments:');
-    expect(result).toContain('Mar 15 — Found a great recipe blog');
+    // Format now includes time, e.g. "Mar 15, 7:00 AM — Found a great recipe blog"
+    expect(result).toContain('Found a great recipe blog');
+    expect(result).toMatch(/Mar 15.*Found a great recipe blog/);
   });
 
   it('omits subtasks section when there are none', () => {
