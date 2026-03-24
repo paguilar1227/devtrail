@@ -2,12 +2,14 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AppDeps } from '../app.js';
-import { getCaptureById, setCaptureArchived, updateCaptureTags } from '../db/captures.js';
-import { getFactById, setFactArchived, setFactReviewStatus, userEditFact, findPendingReviewFacts, updateFactTags } from '../db/facts.js';
-import { getInsightById, setInsightArchived, setInsightReviewStatus, findPendingReviewInsights, updateInsightTags } from '../db/insights.js';
-import { runCapturePipeline } from '../capture/pipeline.js';
-import { runConsolidation } from '../consolidation/runner.js';
-import { ALLOWED_TAGS, validateTags, isValidTag } from '../capture/tags.js';
+import type { ServiceDeps } from '../services/index.js';
+import { ALLOWED_TAGS } from '../capture/tags.js';
+import * as capturesSvc from '../services/captures.js';
+import * as profileSvc from '../services/profile.js';
+import * as factsSvc from '../services/facts.js';
+import * as insightsSvc from '../services/insights.js';
+import * as consolidationSvc from '../services/consolidation.js';
+import * as tagsSvc from '../services/tags.js';
 
 const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowledge system that maintains a living profile about me.
 
@@ -245,6 +247,9 @@ Omit tags to search across all knowledge types.
 Don't wait for the user to say "remember this." If you notice a pattern, preference, or significant decision during normal interaction, capture it. The user has opted into this — Open Brain exists specifically for this purpose. Just don't interrupt the conversation flow to announce it.`;
 
 export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
+  // AppDeps and ServiceDeps have the same shape — cast once and use throughout
+  const svcDeps: ServiceDeps = deps;
+
   // 0a. brain_help — usage guide for AI clients
   server.tool(
     'brain_help',
@@ -271,9 +276,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
     'Session bootstrap — returns a synthesized profile summary of who this person is right now',
     {},
     async () => {
-      // Delegates to retrieval/profile.ts (implemented in Task 27)
-      const { getUserProfile } = await import('../retrieval/profile.js');
-      const profile = await getUserProfile(deps.db, deps.retrievalLLM);
+      const profile = await profileSvc.getUserProfile(svcDeps);
       return { content: [{ type: 'text' as const, text: profile }] };
     },
   );
@@ -289,8 +292,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       tags: z.array(z.string()).optional().describe('Filter by tags (AND — must have all). Available: ' + ALLOWED_TAGS.join(', ')),
     },
     async ({ query, threshold, limit, tags }) => {
-      const { searchThoughts } = await import('../retrieval/search.js');
-      const results = await searchThoughts(deps.db, deps.embeddingProvider, query, threshold, limit, tags);
+      const results = await capturesSvc.searchThoughts(svcDeps, query, threshold, limit, tags);
       return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
     },
   );
@@ -305,6 +307,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       tags: z.array(z.string()).optional().describe('Semantic tags from allowlist: ' + ALLOWED_TAGS.join(', ') + '. If omitted, auto-classified.'),
     },
     async ({ content, file_urls, tags }) => {
+      // File download stays in the MCP adapter (channel-specific logic)
       const files: Array<{ data: Buffer; contentType: string; filename: string }> = [];
       if (file_urls) {
         for (const url of file_urls) {
@@ -315,18 +318,9 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         }
       }
 
-      const result = await runCapturePipeline({
-        db: deps.db,
-        embeddingProvider: deps.embeddingProvider,
-        metadataLLM: deps.metadataLLM,
-        blobStorage: deps.blobStorage,
-        content,
-        files,
-        source: ['mcp'],
-        tags: tags ? validateTags(tags) : undefined,
-      });
+      const result = await capturesSvc.captureThought(svcDeps, content, files, tags, ['mcp']);
 
-      if (!result.success) {
+      if ('error' in result) {
         return { content: [{ type: 'text' as const, text: `Skipped: ${result.reason}` }], isError: true };
       }
       const warningText = result.warnings?.length ? `\nWarnings:\n${result.warnings.map((w) => `- ${w}`).join('\n')}` : '';
@@ -340,53 +334,7 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
     'Dashboard — counts, types, topics, confidence distribution',
     {},
     async () => {
-      const stats = await deps.db.query(`
-        SELECT
-          (SELECT count(*) FROM captures WHERE archived = false) AS captures_count,
-          (SELECT count(*) FROM facts WHERE archived = false) AS facts_count,
-          (SELECT count(*) FROM insights WHERE archived = false) AS insights_count,
-          (SELECT count(*) FROM reminders WHERE archived = false) AS reminders_count,
-          (SELECT count(*) FROM facts WHERE review_status = 'pending_review') AS facts_pending,
-          (SELECT count(*) FROM insights WHERE review_status = 'pending_review') AS insights_pending
-      `);
-
-      const factTags = await deps.db.query(`
-        SELECT unnest(tags) AS tag, count(*) as count FROM facts
-        WHERE archived = false AND review_status != 'user_rejected'
-        GROUP BY tag ORDER BY count DESC
-      `);
-
-      const insightTags = await deps.db.query(`
-        SELECT unnest(tags) AS tag, count(*) as count FROM insights
-        WHERE archived = false AND review_status != 'user_rejected'
-        GROUP BY tag ORDER BY count DESC
-      `);
-
-      const capturesBySource = await deps.db.query(`
-        SELECT unnest(source) AS src, count(*) as count FROM captures
-        WHERE archived = false
-        GROUP BY src ORDER BY count DESC
-      `);
-
-      const capturesByTag = await deps.db.query(`
-        SELECT unnest(tags) AS tag, count(*) as count FROM captures
-        WHERE archived = false
-        GROUP BY tag ORDER BY count DESC
-      `);
-
-      const row = stats.rows[0];
-      const result = {
-        captures: parseInt(row.captures_count),
-        facts: parseInt(row.facts_count),
-        insights: parseInt(row.insights_count),
-        reminders: parseInt(row.reminders_count),
-        pendingReview: parseInt(row.facts_pending) + parseInt(row.insights_pending),
-        factsByTag: factTags.rows,
-        insightsByTag: insightTags.rows,
-        capturesBySource: capturesBySource.rows,
-        capturesByTag: capturesByTag.rows,
-      };
-
+      const result = await profileSvc.getBrainStats(svcDeps);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
   );
@@ -400,9 +348,9 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       type: z.enum(['capture', 'fact', 'insight']).describe('Which table'),
     },
     async ({ id, type }) => {
-      if (type === 'capture') await setCaptureArchived(deps.db, id, true);
-      else if (type === 'fact') await setFactArchived(deps.db, id, true);
-      else await setInsightArchived(deps.db, id, true);
+      if (type === 'capture') await capturesSvc.archiveCapture(svcDeps, id);
+      else if (type === 'fact') await factsSvc.archiveFact(svcDeps, id);
+      else await insightsSvc.archiveInsight(svcDeps, id);
       return { content: [{ type: 'text' as const, text: `Archived ${type} ${id}` }] };
     },
   );
@@ -416,9 +364,9 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       type: z.enum(['capture', 'fact', 'insight']).describe('Which table'),
     },
     async ({ id, type }) => {
-      if (type === 'capture') await setCaptureArchived(deps.db, id, false);
-      else if (type === 'fact') await setFactArchived(deps.db, id, false);
-      else await setInsightArchived(deps.db, id, false);
+      if (type === 'capture') await capturesSvc.unarchiveCapture(svcDeps, id);
+      else if (type === 'fact') await factsSvc.unarchiveFact(svcDeps, id);
+      else await insightsSvc.unarchiveInsight(svcDeps, id);
       return { content: [{ type: 'text' as const, text: `Unarchived ${type} ${id}` }] };
     },
   );
@@ -432,18 +380,12 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       content: z.string().describe('New content for the fact'),
     },
     async ({ id, content }) => {
-      const existing = await getFactById(deps.db, id);
-      if (!existing) {
-        return { content: [{ type: 'text' as const, text: `No fact found with id ${id}` }], isError: true };
+      try {
+        await factsSvc.updateFact(svcDeps, id, content);
+        return { content: [{ type: 'text' as const, text: `Fact ${id} updated. Origin set to user_edited, confidence set to 1.0.` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: String(err) }], isError: true };
       }
-      await userEditFact(deps.db, id, content);
-      // Re-embed the updated fact
-      const embedding = await deps.embeddingProvider.embed(content);
-      await deps.db.query(
-        `UPDATE facts SET embedding = $1 WHERE id = $2`,
-        [JSON.stringify(embedding), id],
-      );
-      return { content: [{ type: 'text' as const, text: `Fact ${id} updated. Origin set to user_edited, confidence set to 1.0.` }] };
     },
   );
 
@@ -459,14 +401,14 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       const items: Array<{ id: string; type: string; content: string; tags: string[]; confidence: number }> = [];
 
       if (!type || type === 'fact') {
-        const facts = await findPendingReviewFacts(deps.db, limit);
+        const facts = await factsSvc.reviewPendingFacts(svcDeps, limit);
         for (const f of facts) {
           items.push({ id: f.id, type: 'fact', content: f.content, tags: f.tags, confidence: f.confidence });
         }
       }
 
       if (!type || type === 'insight') {
-        const insights = await findPendingReviewInsights(deps.db, limit);
+        const insights = await insightsSvc.reviewPendingInsights(svcDeps, limit);
         for (const i of insights) {
           items.push({ id: i.id, type: 'insight', content: i.content, tags: i.tags, confidence: i.confidence });
         }
@@ -490,38 +432,29 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
         return { content: [{ type: 'text' as const, text: 'content is required when action is edit' }], isError: true };
       }
 
-      // Try facts first, then insights (UUIDs are globally unique)
-      const fact = await getFactById(deps.db, id);
+      // Routing logic: look up whether the ID belongs to a fact or insight, then dispatch
+      const fact = await factsSvc.getFact(svcDeps, id);
       if (fact) {
         if (fact.review_status !== 'pending_review' && action !== 'approve') {
           return { content: [{ type: 'text' as const, text: `Fact ${id} is not in pending_review status. Use update_fact to edit approved facts.` }], isError: true };
         }
-        if (action === 'approve') {
-          await setFactReviewStatus(deps.db, id, 'user_approved');
-        } else if (action === 'reject') {
-          await setFactReviewStatus(deps.db, id, 'user_rejected');
-        } else {
-          await userEditFact(deps.db, id, content!);
-          await setFactReviewStatus(deps.db, id, 'user_approved');
-          const embedding = await deps.embeddingProvider.embed(content!);
-          await deps.db.query(`UPDATE facts SET embedding = $1 WHERE id = $2`, [JSON.stringify(embedding), id]);
+        try {
+          await factsSvc.approveRejectFact(svcDeps, id, action, content);
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: String(err) }], isError: true };
         }
         return { content: [{ type: 'text' as const, text: `Fact ${id}: ${action}d` }] };
       }
 
-      const insight = await getInsightById(deps.db, id);
+      const insight = await insightsSvc.getInsight(svcDeps, id);
       if (insight) {
         if (insight.review_status !== 'pending_review' && action !== 'approve') {
           return { content: [{ type: 'text' as const, text: `Insight ${id} is not in pending_review status.` }], isError: true };
         }
-        if (action === 'approve') {
-          await setInsightReviewStatus(deps.db, id, 'user_approved');
-        } else if (action === 'reject') {
-          await setInsightReviewStatus(deps.db, id, 'user_rejected');
-        } else {
-          await setInsightReviewStatus(deps.db, id, 'user_approved', content);
-          const embedding = await deps.embeddingProvider.embed(content!);
-          await deps.db.query(`UPDATE insights SET embedding = $1 WHERE id = $2`, [JSON.stringify(embedding), id]);
+        try {
+          await insightsSvc.approveRejectInsight(svcDeps, id, action, content);
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: String(err) }], isError: true };
         }
         return { content: [{ type: 'text' as const, text: `Insight ${id}: ${action}d` }] };
       }
@@ -537,16 +470,9 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
     {},
     async () => {
       try {
-        await runConsolidation({
-          db: deps.db,
-          consolidationLLM: deps.consolidationLLM,
-          embeddingProvider: deps.embeddingProvider,
-          reviewMode: deps.config.reviewMode,
-        });
-        const logResult = await deps.db.query(
-          `SELECT * FROM consolidation_log ORDER BY run_at DESC LIMIT 1`,
-        );
-        const log = logResult.rows[0];
+        await consolidationSvc.runConsolidation(svcDeps);
+        const logs = await consolidationSvc.getConsolidationLogs(svcDeps, 1);
+        const log = logs[0];
         if (!log) {
           return { content: [{ type: 'text' as const, text: 'Consolidation completed but no log entry found.' }] };
         }
@@ -576,40 +502,12 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
       tags: z.array(z.string()).describe('New tags (replaces existing). Allowed: ' + ALLOWED_TAGS.join(', ')),
     },
     async ({ id, tier, tags: rawTags }) => {
-      const invalidTags = rawTags.filter((t) => !isValidTag(t));
-      if (invalidTags.length > 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid tags: ${invalidTags.join(', ')}. Allowed: ${ALLOWED_TAGS.join(', ')}` }],
-          isError: true,
-        };
+      try {
+        const result = await tagsSvc.updateTags(svcDeps, id, tier, rawTags);
+        return { content: [{ type: 'text' as const, text: `Tags updated: [${result.old.join(', ')}] → [${result.new.join(', ')}]` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: String(err) }], isError: true };
       }
-      const validTags = validateTags(rawTags);
-
-      let oldTags: string[] | undefined;
-      if (tier === 'capture') {
-        const existing = await getCaptureById(deps.db, id);
-        if (!existing) {
-          return { content: [{ type: 'text' as const, text: `No capture found with id ${id}` }], isError: true };
-        }
-        oldTags = existing.tags;
-        await updateCaptureTags(deps.db, id, validTags);
-      } else if (tier === 'fact') {
-        const existing = await getFactById(deps.db, id);
-        if (!existing) {
-          return { content: [{ type: 'text' as const, text: `No fact found with id ${id}` }], isError: true };
-        }
-        oldTags = existing.tags;
-        await updateFactTags(deps.db, id, validTags);
-      } else {
-        const existing = await getInsightById(deps.db, id);
-        if (!existing) {
-          return { content: [{ type: 'text' as const, text: `No insight found with id ${id}` }], isError: true };
-        }
-        oldTags = existing.tags;
-        await updateInsightTags(deps.db, id, validTags);
-      }
-
-      return { content: [{ type: 'text' as const, text: `Tags updated: [${(oldTags ?? []).join(', ')}] → [${validTags.join(', ')}]` }] };
     },
   );
 }

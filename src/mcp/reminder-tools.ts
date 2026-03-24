@@ -2,23 +2,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AppDeps } from '../app.js';
-import {
-  insertReminder,
-  listReminders,
-  updateReminder,
-  completeReminder,
-  deleteReminder,
-  getReminderById,
-  getReminderDetail,
-  listProjects,
-} from '../db/reminders.js';
-import { insertComment } from '../db/reminder-comments.js';
+import type { ServiceDeps } from '../services/index.js';
+import * as remindersSvc from '../services/reminders.js';
+import * as commentsSvc from '../services/comments.js';
 import {
   formatRemindersMarkdown,
   formatReminderDetailMarkdown,
 } from '../notifications/format-reminders.js';
 
 export function registerReminderTools(server: McpServer, deps: AppDeps): void {
+  // AppDeps and ServiceDeps have the same shape — cast once and use throughout
+  const svcDeps: ServiceDeps = deps;
+
   // 1. create_reminder
   server.tool(
     'create_reminder',
@@ -34,34 +29,22 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       source_context: z.string().optional().describe('Context of the conversation that triggered this'),
     },
     async ({ content, project, section, parent_id, category, priority, due_date, source_context }) => {
-      let depth = 0;
-
-      if (parent_id) {
-        const parent = await getReminderById(deps.db, parent_id);
-        if (!parent) {
-          return { content: [{ type: 'text' as const, text: `Error: parent reminder ${parent_id} not found` }] };
-        }
-        depth = parent.depth + 1;
-        if (depth >= 4) {
-          return { content: [{ type: 'text' as const, text: 'Error: maximum subtask depth (4 levels) exceeded' }] };
-        }
+      try {
+        const result = await remindersSvc.createReminder(svcDeps, {
+          content,
+          project: project ?? null,
+          section: section ?? null,
+          parentId: parent_id ?? null,
+          category: category ?? null,
+          priority: priority ?? null,
+          dueDate: due_date ? new Date(due_date) : null,
+          source: 'mcp',
+          sourceContext: source_context ?? null,
+        });
+        return { content: [{ type: 'text' as const, text: `Reminder created: ${result.id}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Error: ${String(err)}` }] };
       }
-
-      const embedding = await deps.embeddingProvider.embed(content);
-      const result = await insertReminder(deps.db, {
-        content,
-        embedding,
-        category: category ?? null,
-        project: project ?? null,
-        section: section ?? null,
-        parentId: parent_id ?? null,
-        depth,
-        priority: priority ?? null,
-        source: 'mcp',
-        sourceContext: source_context ?? null,
-        dueDate: due_date ? new Date(due_date) : null,
-      });
-      return { content: [{ type: 'text' as const, text: `Reminder created: ${result.id}` }] };
     },
   );
 
@@ -82,7 +65,7 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       limit: z.number().int().positive().default(20).describe('Max results'),
     },
     async ({ project, section, status, priority, category, due_before, due_after, include_done, top_level_only, limit }) => {
-      const reminders = await listReminders(deps.db, {
+      const reminders = await remindersSvc.listReminders(svcDeps, {
         project,
         section,
         status,
@@ -97,19 +80,10 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
 
       // Build subtask map for display
       const subtasksMap = new Map<string, import('../db/reminders.js').ReminderRow[]>();
-      if (reminders.length > 0) {
-        const ids = reminders.map((r) => r.id);
-        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-        const result = await deps.db.query(
-          `SELECT * FROM reminders
-           WHERE parent_id IN (${placeholders}) AND archived = false
-           ORDER BY created_at ASC`,
-          ids,
-        );
-        for (const row of result.rows) {
-          const parentId = row.parent_id as string;
-          if (!subtasksMap.has(parentId)) subtasksMap.set(parentId, []);
-          subtasksMap.get(parentId)!.push(row);
+      for (const reminder of reminders) {
+        const subtasks = await remindersSvc.findSubtasks(svcDeps, reminder.id);
+        if (subtasks.length > 0) {
+          subtasksMap.set(reminder.id, subtasks);
         }
       }
 
@@ -126,7 +100,7 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       id: z.string().uuid().describe('Reminder UUID'),
     },
     async ({ id }) => {
-      const detail = await getReminderDetail(deps.db, id);
+      const detail = await remindersSvc.getReminderDetail(svcDeps, id);
       if (!detail) {
         return { content: [{ type: 'text' as const, text: `Reminder ${id} not found` }] };
       }
@@ -149,7 +123,7 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       section: z.string().optional().describe('Move to a different section'),
     },
     async ({ id, status, priority, content, due_date, project, section }) => {
-      await updateReminder(deps.db, id, {
+      await remindersSvc.updateReminder(svcDeps, id, {
         status,
         priority,
         content,
@@ -157,11 +131,6 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
         project,
         section,
       });
-      // Re-embed if content changed
-      if (content) {
-        const embedding = await deps.embeddingProvider.embed(content);
-        await deps.db.query(`UPDATE reminders SET embedding = $1 WHERE id = $2`, [JSON.stringify(embedding), id]);
-      }
       return { content: [{ type: 'text' as const, text: `Reminder ${id} updated` }] };
     },
   );
@@ -169,12 +138,12 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
   // 5. complete_reminder
   server.tool(
     'complete_reminder',
-    'Shortcut for marking a reminder as done. Does NOT auto-complete subtasks — each is completed independently.',
+    'Shortcut for marking a reminder as done. Auto-cascades to all subtasks.',
     {
       id: z.string().uuid().describe('Reminder UUID'),
     },
     async ({ id }) => {
-      await completeReminder(deps.db, id);
+      await remindersSvc.completeReminder(svcDeps, id);
       return { content: [{ type: 'text' as const, text: `Reminder ${id} marked as done` }] };
     },
   );
@@ -187,7 +156,7 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       id: z.string().uuid().describe('Reminder UUID'),
     },
     async ({ id }) => {
-      await deleteReminder(deps.db, id);
+      await remindersSvc.deleteReminder(svcDeps, id);
       return { content: [{ type: 'text' as const, text: `Reminder ${id} and all subtasks/comments deleted` }] };
     },
   );
@@ -201,18 +170,12 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
       content: z.string().describe('Comment text'),
     },
     async ({ id, content }) => {
-      const reminder = await getReminderById(deps.db, id);
-      if (!reminder) {
-        return { content: [{ type: 'text' as const, text: `Error: reminder ${id} not found` }] };
+      try {
+        const result = await commentsSvc.addComment(svcDeps, id, content, 'mcp');
+        return { content: [{ type: 'text' as const, text: `Comment added: ${result.id}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Error: ${String(err)}` }] };
       }
-      const embedding = await deps.embeddingProvider.embed(content);
-      const result = await insertComment(deps.db, {
-        content,
-        embedding,
-        reminderId: id,
-        source: 'mcp',
-      });
-      return { content: [{ type: 'text' as const, text: `Comment added: ${result.id}` }] };
     },
   );
 
@@ -222,8 +185,43 @@ export function registerReminderTools(server: McpServer, deps: AppDeps): void {
     'List all distinct projects with task count stats (by status)',
     {},
     async () => {
-      const projects = await listProjects(deps.db);
+      const projects = await remindersSvc.listProjects(svcDeps);
       return { content: [{ type: 'text' as const, text: JSON.stringify(projects, null, 2) }] };
+    },
+  );
+
+  // 9. edit_comment
+  server.tool(
+    'edit_comment',
+    'Edit the text of an existing comment on a reminder',
+    {
+      id: z.string().uuid().describe('Comment UUID'),
+      content: z.string().describe('New comment text'),
+    },
+    async ({ id, content }) => {
+      try {
+        await commentsSvc.updateComment(svcDeps, id, content);
+        return { content: [{ type: 'text' as const, text: `Comment ${id} updated` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Error: ${String(err)}` }], isError: true };
+      }
+    },
+  );
+
+  // 10. delete_comment
+  server.tool(
+    'delete_comment',
+    'Delete a comment from a reminder. Returns the deleted comment content.',
+    {
+      id: z.string().uuid().describe('Comment UUID'),
+    },
+    async ({ id }) => {
+      try {
+        const deleted = await commentsSvc.deleteComment(svcDeps, id);
+        return { content: [{ type: 'text' as const, text: `Comment ${id} deleted. Content was: "${deleted.content}"` }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Error: ${String(err)}` }], isError: true };
+      }
     },
   );
 }
