@@ -59,3 +59,26 @@ export async function deleteCommentsByReminderId(
     [reminderId],
   );
 }
+
+export async function getCommentById(
+  db: DbClient,
+  id: string,
+): Promise<ReminderCommentRow | null> {
+  const result = await db.query(
+    `SELECT * FROM reminder_comments WHERE id = $1`,
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function updateComment(
+  db: DbClient,
+  id: string,
+  content: string,
+  embedding: number[],
+): Promise<void> {
+  await db.query(
+    `UPDATE reminder_comments SET content = $1, embedding = $2 WHERE id = $3`,
+    [content, JSON.stringify(embedding), id],
+  );
+}
