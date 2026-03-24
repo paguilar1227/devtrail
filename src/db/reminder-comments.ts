@@ -71,6 +71,23 @@ export async function getCommentById(
   return result.rows[0] ?? null;
 }
 
+export async function countCommentsByReminderIds(
+  db: DbClient,
+  reminderIds: string[],
+): Promise<Map<string, number>> {
+  if (reminderIds.length === 0) return new Map();
+  const result = await db.query(
+    `SELECT reminder_id, count(*)::int as count FROM reminder_comments
+     WHERE reminder_id = ANY($1) GROUP BY reminder_id`,
+    [reminderIds],
+  );
+  const map = new Map<string, number>();
+  for (const row of result.rows) {
+    map.set(row.reminder_id, row.count);
+  }
+  return map;
+}
+
 export async function updateComment(
   db: DbClient,
   id: string,

@@ -6,6 +6,7 @@ import * as remindersSvc from '../services/reminders.js';
 import * as commentsSvc from '../services/comments.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { resolveReminderId } from '../db/reminders.js';
+import { countCommentsByReminderIds } from '../db/reminder-comments.js';
 import { handleCommentCommand } from './handlers.js';
 import { formatRemindersMarkdown, formatSingleReminder } from '../notifications/format-reminders.js';
 import { buildReminderParserPrompt } from './prompts.js';
@@ -49,7 +50,11 @@ export async function buildTodosMessage(
     }
   }
 
-  const text = formatRemindersMarkdown(reminders, subtasksMap);
+  // Fetch comment counts for all top-level reminders in one query
+  const topLevelIds = reminders.filter(r => r.depth === 0).map(r => r.id);
+  const commentCounts = await countCommentsByReminderIds(deps.db, topLevelIds);
+
+  const text = formatRemindersMarkdown(reminders, subtasksMap, commentCounts);
 
   const keyboard = new InlineKeyboard();
   // Status cycle: not_started → in_progress → paused → blocked → not_started (loops)

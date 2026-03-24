@@ -98,6 +98,7 @@ export function formatSingleReminder(r: ReminderRow): string {
 export function formatRemindersMarkdown(
   reminders: ReminderRow[],
   subtasks: Map<string, ReminderRow[]> = new Map(),
+  commentCounts: Map<string, number> = new Map(),
 ): string {
   if (reminders.length === 0) {
     return 'No active reminders.';
@@ -155,7 +156,8 @@ export function formatRemindersMarkdown(
         const pTag = priorityTag(r.priority);
         const due = r.due_date ? ` — due ${formatDueDate(r.due_date)}` : '';
         const id = ` (${r.id.slice(0, 8)})`;
-        lines.push(`${indent}${globalNum}. ${icon} ${r.content}${pTag}${due}${id}`);
+        const commentIndicator = (commentCounts.get(r.id) ?? 0) > 0 ? ' 💬' : '';
+        lines.push(`${indent}${globalNum}. ${icon} ${r.content}${pTag}${due}${commentIndicator}${id}`);
 
         // Show subtasks indented under parent
         const children = subtasks.get(r.id) ?? [];
