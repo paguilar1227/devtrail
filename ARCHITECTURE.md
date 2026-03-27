@@ -535,9 +535,9 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 
 2. **`get_user_prompt` tool (portable):** For non-MCP clients (ChatGPT, raw API usage, etc.), the `get_user_prompt` tool returns the same behavioral instructions as a copyable system prompt. Users paste it into their AI client's custom instructions or system prompt field once, and any AI client gains the same proactive behavior.
 
-### Tools (23 total)
+### Tools (24 total)
 
-**Profiler tools (13):**
+**Profiler tools (14):**
 
 | # | Tool | Description |
 |---|------|-------------|
@@ -554,21 +554,22 @@ Open Brain uses two complementary mechanisms to teach AI clients how to use it:
 | 11 | `approve_reject` | Approve, reject, or edit pending review items (looks up by UUID across facts and insights) |
 | 12 | `run_consolidation` | Manually trigger consolidation pipeline |
 | 13 | `update_tags` | Replace tags on any tier item (capture, fact, insight) by UUID. Validates against allowlist. |
+| 14 | `daily_checkin` | Returns a reflective questionnaire with recent activity context for scheduled Claude check-in sessions |
 
 **Reminder tools (10):**
 
 | # | Tool | Description |
 |---|------|-------------|
-| 14 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
-| 15 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
-| 16 | `get_reminder_detail` | Single task with all comments and full subtask tree |
-| 17 | `update_reminder` | Change status, priority, content, due date, move project/section |
-| 18 | `complete_reminder` | Mark done (cascades to all subtasks) |
-| 19 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
-| 20 | `add_reminder_comment` | Add a timestamped progress comment |
-| 21 | `list_projects` | All projects with task count stats by status |
-| 22 | `edit_comment` | Edit the text of an existing comment (re-embeds content) |
-| 23 | `delete_comment` | Delete a comment by ID; returns the deleted comment content |
+| 15 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
+| 16 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
+| 17 | `get_reminder_detail` | Single task with all comments and full subtask tree |
+| 18 | `update_reminder` | Change status, priority, content, due date, move project/section |
+| 19 | `complete_reminder` | Mark done (cascades to all subtasks) |
+| 20 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
+| 21 | `add_reminder_comment` | Add a timestamped progress comment |
+| 22 | `list_projects` | All projects with task count stats by status |
+| 23 | `edit_comment` | Edit the text of an existing comment (re-embeds content) |
+| 24 | `delete_comment` | Delete a comment by ID; returns the deleted comment content |
 
 ### brain_help
 
@@ -881,6 +882,7 @@ open-brain-v2/
       profile.ts                      getUserProfile (LLM synthesis), getBrainStats (dashboard counts).
       reminders.ts                    Full CRUD + createReminder (validates depth, embeds), completeReminder (cascade), reparentReminder.
       tags.ts                         updateTags (validates allowlist, routes to correct DB table), getAllowedTags.
+      checkin.ts                      getDailyCheckinContext — gathers 24h activity, reminder stats, and reflective questionnaire for check-in sessions.
 
     db/
       client.ts                       PostgreSQL pool + pgvector type registration + transaction helper.
@@ -899,7 +901,7 @@ open-brain-v2/
 
     mcp/
       server.ts                       MCP server setup (McpServer + streamable HTTP transport + auth middleware).
-      profiler-tools.ts               13 profiler tools including brain_help, get_user_profile, capture, search, review.
+      profiler-tools.ts               14 profiler tools including brain_help, get_user_profile, capture, search, review, daily_checkin.
       reminder-tools.ts               10 reminder tools: CRUD, comments (add/edit/delete), projects.
 
     telegram/
@@ -916,7 +918,7 @@ open-brain-v2/
       format-reminders.ts             Reminder display formatting. Groups by project/section, subtask indentation, status icons.
       review.ts                       getPendingReviewCount (facts + insights).
       digest.ts                       Daily digest message formatter + Telegram sender.
-      due-date-checker.ts             Due date polling (60s), daily report at configured time, timezone-aware date math.
+      due-date-checker.ts             Due date polling (60s), daily report with brain activity stats at configured time, timezone-aware date math.
 
     storage/
       blob.ts                         Azure Blob Storage wrapper (upload, exists, getUrl).

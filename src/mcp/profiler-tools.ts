@@ -10,6 +10,7 @@ import * as factsSvc from '../services/facts.js';
 import * as insightsSvc from '../services/insights.js';
 import * as consolidationSvc from '../services/consolidation.js';
 import * as tagsSvc from '../services/tags.js';
+import * as checkinSvc from '../services/checkin.js';
 
 const USER_SYSTEM_PROMPT = `You have access to Open Brain — a personal knowledge system that maintains a living profile about me.
 
@@ -241,6 +242,7 @@ Omit tags to search across all knowledge types.
 - **create_reminder** / **list_reminders** / **complete_reminder** / **update_reminder** — task management
 - **run_consolidation** — manually process pending captures into facts/insights
 - **review_pending** / **approve_reject** — review AI-generated facts and insights
+- **daily_checkin** — returns a reflective questionnaire with recent activity context; designed for scheduled Claude sessions to conduct conversational check-ins
 
 ## Proactive Capture
 
@@ -492,7 +494,18 @@ export function registerProfilerTools(server: McpServer, deps: AppDeps): void {
     },
   );
 
-  // 11. update_tags — replace tags on any tier item
+  // 11. daily_checkin — returns context + questionnaire for a reflective check-in
+  server.tool(
+    'daily_checkin',
+    'Returns a daily check-in questionnaire with recent activity context. Designed for a Claude session to conduct a reflective conversation — ask questions one at a time, capture meaningful answers via capture_thought.',
+    {},
+    async () => {
+      const context = await checkinSvc.getDailyCheckinContext(svcDeps);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(context, null, 2) }] };
+    },
+  );
+
+  // 12. update_tags — replace tags on any tier item
   server.tool(
     'update_tags',
     'Update semantic tags on a capture, fact, or insight',

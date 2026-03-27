@@ -117,6 +117,15 @@ export async function findPendingReviewInsights(db: DbClient, limit: number): Pr
   return result.rows;
 }
 
+export async function findInsightsCreatedSince(db: DbClient, since: Date): Promise<InsightRow[]> {
+  const result = await db.query(
+    `SELECT * FROM insights WHERE generated_at >= $1 AND archived = false
+     ORDER BY generated_at DESC`,
+    [since],
+  );
+  return result.rows;
+}
+
 export async function findAllInsights(db: DbClient): Promise<InsightRow[]> {
   const result = await db.query(
     `SELECT * FROM insights WHERE archived = false AND review_status != 'user_rejected'

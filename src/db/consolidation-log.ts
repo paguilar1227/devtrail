@@ -59,6 +59,16 @@ export async function getLatestConsolidationRun(
   return result.rows[0] ?? null;
 }
 
+export async function getConsolidationLogsSince(
+  db: DbClient, since: Date,
+): Promise<ConsolidationLogRow[]> {
+  const result = await db.query(
+    `SELECT * FROM consolidation_log WHERE run_at >= $1 ORDER BY run_at DESC`,
+    [since],
+  );
+  return result.rows;
+}
+
 export async function getConsolidationStats(
   db: DbClient,
 ): Promise<{ totalRuns: number; lastRunAt: Date | null; lastStatus: string | null }> {

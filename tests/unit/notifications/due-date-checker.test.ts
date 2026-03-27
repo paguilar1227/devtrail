@@ -173,22 +173,60 @@ describe('checkDailyReport', () => {
     _resetLastReportDate();
   });
 
-  it('sends report when time matches and there are due reminders', async () => {
+  // Helper: mock all 9 parallel queries that checkDailyReport runs
+  function mockDailyReportQueries(
+    db: DbClient,
+    opts: {
+      dueToday?: ReminderRow[];
+      overdue?: ReminderRow[];
+      consolidationLogs?: Array<{ status: string }>;
+      facts?: Array<{ id: string; content: string; tags: string[] }>;
+      insights?: Array<{ id: string; content: string; tags: string[] }>;
+      capturesNew?: number;
+      capturesArchived?: number;
+      pendingFacts?: unknown[];
+      pendingInsights?: unknown[];
+    } = {},
+  ) {
+    const emptyResult = { rows: [], command: 'SELECT' as const, rowCount: 0, oid: 0, fields: [] };
+    const queryMock = vi.mocked(db.query);
+    // The 9 Promise.all queries resolve in parallel, so mock in order:
+    // 1. due today, 2. overdue, 3. consolidation logs, 4. facts since,
+    // 5. insights since, 6. captures new count, 7. captures archived count,
+    // 8. pending facts, 9. pending insights
+    queryMock
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.dueToday ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.overdue ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.consolidationLogs ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.facts ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.insights ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: [{ count: opts.capturesNew ?? 0 }] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: [{ count: opts.capturesArchived ?? 0 }] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.pendingFacts ?? [] })
+      .mockResolvedValueOnce({ ...emptyResult, rows: opts.pendingInsights ?? [] });
+  }
+
+  it('sends report at configured time with brain activity', async () => {
     const db = mockDb();
     const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
     const now = new Date('2026-03-15T09:00:30Z');
 
-    const reminder = makeReminder({ content: 'Due today task' });
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [reminder], command: 'SELECT', rowCount: 1, oid: 0, fields: [] }) // due today
-      .mockResolvedValueOnce({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] }); // overdue
+    mockDailyReportQueries(db, {
+      dueToday: [makeReminder({ content: 'Due today task' })],
+      consolidationLogs: [{ status: 'success' }],
+      capturesNew: 3,
+    });
 
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const sent = await checkDailyReport({ db, config, sendMessage }, now);
 
     expect(sent).toBe(true);
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith('bot-token', '12345', expect.stringContaining('Daily Report'));
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('Daily Report');
+    expect(msg).toContain('Brain Activity');
+    expect(msg).toContain('1 runs');
+    expect(msg).toContain('3 new');
   });
 
   it('does not send when time does not match', async () => {
@@ -208,13 +246,9 @@ describe('checkDailyReport', () => {
     const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
     const now = new Date('2026-03-15T09:00:00Z');
 
-    const reminder = makeReminder({ content: 'Task' });
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [reminder], command: 'SELECT', rowCount: 1, oid: 0, fields: [] })
-      .mockResolvedValueOnce({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] });
+    mockDailyReportQueries(db);
 
     const sendMessage = vi.fn().mockResolvedValue(undefined);
-
     await checkDailyReport({ db, config, sendMessage }, now);
     const sent2 = await checkDailyReport({ db, config, sendMessage }, now);
 
@@ -222,20 +256,22 @@ describe('checkDailyReport', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('returns false when no reminders are due or overdue', async () => {
+  it('always sends even with no reminders or activity', async () => {
     const db = mockDb();
     const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
     const now = new Date('2026-03-15T09:00:00Z');
 
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] })
-      .mockResolvedValueOnce({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] });
+    mockDailyReportQueries(db); // all zeros/empty
 
-    const sendMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
     const sent = await checkDailyReport({ db, config, sendMessage }, now);
 
-    expect(sent).toBe(false);
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sent).toBe(true);
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('Brain Activity');
+    expect(msg).toContain('0 runs');
+    expect(msg).toContain('0 new, 0 archived');
+    expect(msg).toContain('No reminders due today');
   });
 
   it('includes overdue section when there are overdue reminders', async () => {
@@ -243,10 +279,9 @@ describe('checkDailyReport', () => {
     const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
     const now = new Date('2026-03-15T09:00:00Z');
 
-    const overdueReminder = makeReminder({ content: 'Overdue task', due_date: new Date('2026-03-13T10:00:00Z') });
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] }) // due today
-      .mockResolvedValueOnce({ rows: [overdueReminder], command: 'SELECT', rowCount: 1, oid: 0, fields: [] }); // overdue
+    mockDailyReportQueries(db, {
+      overdue: [makeReminder({ content: 'Overdue task', due_date: new Date('2026-03-13T10:00:00Z') })],
+    });
 
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const sent = await checkDailyReport({ db, config, sendMessage }, now);
@@ -256,5 +291,144 @@ describe('checkDailyReport', () => {
       'bot-token', '12345',
       expect.stringContaining('Overdue'),
     );
+  });
+
+  it('shows fact and insight summaries in brain activity', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db, {
+      facts: [
+        { id: 'f1', content: 'Alex prefers TypeScript over JavaScript', tags: ['preference'] },
+      ],
+      insights: [
+        { id: 'i1', content: 'Alex consistently favors tools with first-class TS support', tags: ['pattern'] },
+      ],
+      consolidationLogs: [{ status: 'success' }, { status: 'no-op' }],
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('Facts: 1 new');
+    expect(msg).toContain('Alex prefers TypeScript');
+    expect(msg).toContain('Insights: 1 new');
+    expect(msg).toContain('Alex consistently favors');
+    expect(msg).toContain('1 success');
+    expect(msg).toContain('1 skipped');
+  });
+
+  it('shows pending review count', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db, {
+      pendingFacts: [{ id: 'pf1' }, { id: 'pf2' }],
+      pendingInsights: [{ id: 'pi1' }],
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('3 items need your review');
+  });
+
+  it('truncates fact/insight content longer than 80 characters', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    const longContent = 'Alex has a very specific and detailed preference about how to structure TypeScript projects with monorepos and shared libraries';
+    mockDailyReportQueries(db, {
+      facts: [{ id: 'f1', content: longContent, tags: ['preference'] }],
+      insights: [{ id: 'i1', content: longContent, tags: ['pattern'] }],
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    // Should end with "..." and NOT contain the full 125-char string
+    expect(msg).not.toContain(longContent);
+    expect(msg).toContain(longContent.slice(0, 77) + '...');
+  });
+
+  it('shows correct consolidation breakdown with success, skipped, and failed', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db, {
+      consolidationLogs: [
+        { status: 'success' },
+        { status: 'success' },
+        { status: 'no-op' },
+        { status: 'failed' },
+        { status: 'partial' },
+      ],
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('5 runs');
+    expect(msg).toContain('2 success');
+    expect(msg).toContain('1 skipped');
+    expect(msg).toContain('2 failed'); // failed + partial both count as failed
+  });
+
+  it('omits consolidation detail parenthetical when there are 0 runs', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db); // zero consolidation logs
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    // Should say "0 runs" but NOT have a "()" breakdown
+    expect(msg).toContain('Consolidations: 0 runs');
+    expect(msg).not.toMatch(/0 runs \(/);
+  });
+
+  it('omits pending review line when count is 0', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db); // no pending review items
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).not.toContain('items need your review');
+  });
+
+  it('shows both due today and overdue sections when both exist', async () => {
+    const db = mockDb();
+    const config = makeConfig({ timezone: 'UTC', dailyReportTime: '09:00' });
+    const now = new Date('2026-03-15T09:00:00Z');
+
+    mockDailyReportQueries(db, {
+      dueToday: [makeReminder({ content: 'Ship feature' })],
+      overdue: [makeReminder({ content: 'Pay invoice', due_date: new Date('2026-03-13T10:00:00Z') })],
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await checkDailyReport({ db, config, sendMessage }, now);
+
+    const msg = sendMessage.mock.calls[0][2];
+    expect(msg).toContain('Overdue (1)');
+    expect(msg).toContain('Due Today (1)');
+    // Should NOT show "No reminders due today" when there ARE reminders
+    expect(msg).not.toContain('No reminders due today');
   });
 });

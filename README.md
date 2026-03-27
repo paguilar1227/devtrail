@@ -24,7 +24,7 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 - **Cascade behaviors:** completing a parent auto-completes children; deleting cascades to subtasks + comments
 - **Reparenting/move:** move tasks between parents or to root level, children follow
 - **Short IDs:** use first 8 characters of UUID for commands (e.g., `/done 4e0bd1b2`)
-- **Due date notifications:** per-reminder alerts when due + daily report at configured time
+- **Due date notifications:** per-reminder alerts when due + daily report with brain activity stats at configured time
 - **Profile feedback loop:** completed reminders feed into consolidation as profile signal
 
 ### Telegram Bot
@@ -38,9 +38,9 @@ Open Brain 2.0 transforms the original thought-capture tool into a personal sear
 - **Media capture:** photos, voice memos, and documents are captured with AI summarization
 - **MIME detection:** 25 file extension mappings when Telegram sends `application/octet-stream`
 
-### MCP Tools (23 total)
+### MCP Tools (24 total)
 
-**Profiler (13 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation, update_tags
+**Profiler (14 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation, update_tags, daily_checkin
 
 **Reminders (10 tools):** create_reminder, list_reminders, get_reminder_detail, update_reminder, complete_reminder, delete_reminder, add_reminder_comment, list_projects, edit_comment, delete_comment
 
@@ -96,7 +96,7 @@ The server auto-runs migrations on startup. No manual `psql` needed.
 
 ## Testing
 
-345 tests across 44 files: unit, integration (mocked bot + real handlers), LLM integration (real Gemini calls), and E2E (real PostgreSQL).
+453 tests across 47 files: unit, integration (mocked bot + real handlers), LLM integration (real Gemini calls), and E2E (real PostgreSQL).
 
 ```bash
 # Unit + integration tests (uses vitest forks pool to avoid OOM)

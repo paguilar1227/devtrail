@@ -125,6 +125,23 @@ export async function getCaptureById(
   return result.rows[0] ?? null;
 }
 
+export async function countCapturesCreatedSince(db: DbClient, since: Date): Promise<number> {
+  const result = await db.query(
+    `SELECT count(*)::int as count FROM captures WHERE created_at >= $1 AND archived = false`,
+    [since],
+  );
+  return result.rows[0].count;
+}
+
+export async function countCapturesArchivedSince(db: DbClient, since: Date): Promise<number> {
+  // Uses updated_at as proxy for archive time (archived=true sets updated_at=now())
+  const result = await db.query(
+    `SELECT count(*)::int as count FROM captures WHERE archived = true AND updated_at >= $1`,
+    [since],
+  );
+  return result.rows[0].count;
+}
+
 export async function findCapturesByHashes(
   db: DbClient,
   hashes: string[],

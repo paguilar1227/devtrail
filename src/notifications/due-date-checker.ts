@@ -3,6 +3,12 @@ import type { DbClient } from '../db/client.js';
 import type { Config } from '../config.js';
 import type { ReminderRow } from '../db/reminders.js';
 import { formatRemindersMarkdown } from './format-reminders.js';
+import { getConsolidationLogsSince } from '../db/consolidation-log.js';
+import { findFactsCreatedSince } from '../db/facts.js';
+import { findInsightsCreatedSince } from '../db/insights.js';
+import { countCapturesCreatedSince, countCapturesArchivedSince } from '../db/captures.js';
+import { findPendingReviewFacts } from '../db/facts.js';
+import { findPendingReviewInsights } from '../db/insights.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,39 +174,91 @@ export async function checkDailyReport(deps: DailyReportDeps, now?: Date): Promi
   }
 
   const { start, end } = getDayBoundsInTimezone(config.timezone, now);
+  const since = new Date((now ?? new Date()).getTime() - 24 * 60 * 60 * 1000);
 
-  // Reminders due today
-  const dueToday = await db.query(
-    `SELECT * FROM reminders
-     WHERE due_date IS NOT NULL
-       AND due_date >= $1 AND due_date <= $2
-       AND status NOT IN ('done', 'cancelled')
-       AND archived = false
-     ORDER BY due_date ASC`,
-    [start, end],
-  );
-
-  // Overdue reminders (due before today and not done)
-  const overdue = await db.query(
-    `SELECT * FROM reminders
-     WHERE due_date IS NOT NULL
-       AND due_date < $1
-       AND status NOT IN ('done', 'cancelled')
-       AND archived = false
-     ORDER BY due_date ASC`,
-    [start],
-  );
+  // Run all queries in parallel
+  const [
+    dueToday,
+    overdue,
+    consolidationLogs,
+    newFacts,
+    newInsights,
+    capturesNew,
+    capturesArchived,
+    pendingFacts,
+    pendingInsights,
+  ] = await Promise.all([
+    db.query(
+      `SELECT * FROM reminders
+       WHERE due_date IS NOT NULL
+         AND due_date >= $1 AND due_date <= $2
+         AND status NOT IN ('done', 'cancelled')
+         AND archived = false
+       ORDER BY due_date ASC`,
+      [start, end],
+    ),
+    db.query(
+      `SELECT * FROM reminders
+       WHERE due_date IS NOT NULL
+         AND due_date < $1
+         AND status NOT IN ('done', 'cancelled')
+         AND archived = false
+       ORDER BY due_date ASC`,
+      [start],
+    ),
+    getConsolidationLogsSince(db, since),
+    findFactsCreatedSince(db, since),
+    findInsightsCreatedSince(db, since),
+    countCapturesCreatedSince(db, since),
+    countCapturesArchivedSince(db, since),
+    findPendingReviewFacts(db, 100),
+    findPendingReviewInsights(db, 100),
+  ]);
 
   const dueTodayReminders: ReminderRow[] = dueToday.rows;
   const overdueReminders: ReminderRow[] = overdue.rows;
-
-  if (dueTodayReminders.length === 0 && overdueReminders.length === 0) {
-    lastReportDate = todayStr;
-    return false; // Nothing to report
-  }
+  const pendingReview = pendingFacts.length + pendingInsights.length;
 
   const lines: string[] = ['📋 *Daily Report*', ''];
 
+  // Brain activity section (always shown)
+  const successCount = consolidationLogs.filter(l => l.status === 'success').length;
+  const noOpCount = consolidationLogs.filter(l => l.status === 'no-op').length;
+  const failedCount = consolidationLogs.filter(l => l.status === 'failed' || l.status === 'partial').length;
+
+  lines.push('🧠 *Brain Activity (last 24h)*');
+
+  const consolidationParts = [`${consolidationLogs.length} runs`];
+  if (consolidationLogs.length > 0) {
+    const details: string[] = [];
+    if (successCount > 0) details.push(`${successCount} success`);
+    if (noOpCount > 0) details.push(`${noOpCount} skipped`);
+    if (failedCount > 0) details.push(`${failedCount} failed`);
+    consolidationParts.push(`(${details.join(', ')})`);
+  }
+  lines.push(`  Consolidations: ${consolidationParts.join(' ')}`);
+  lines.push(`  Captures: ${capturesNew} new, ${capturesArchived} archived`);
+
+  lines.push(`  Facts: ${newFacts.length} new`);
+  for (const f of newFacts) {
+    // Truncate long facts to keep the report readable
+    const summary = f.content.length > 80 ? f.content.slice(0, 77) + '...' : f.content;
+    lines.push(`    • ${summary}`);
+  }
+
+  lines.push(`  Insights: ${newInsights.length} new`);
+  for (const i of newInsights) {
+    const summary = i.content.length > 80 ? i.content.slice(0, 77) + '...' : i.content;
+    lines.push(`    • ${summary}`);
+  }
+
+  if (pendingReview > 0) {
+    lines.push(`  ⚡ ${pendingReview} items need your review`);
+  }
+
+  lines.push('');
+
+  // Reminders section
   if (overdueReminders.length > 0) {
     lines.push(`🔴 *Overdue (${overdueReminders.length})*`);
     lines.push(formatRemindersMarkdown(overdueReminders));
@@ -210,9 +268,14 @@ export async function checkDailyReport(deps: DailyReportDeps, now?: Date): Promi
   if (dueTodayReminders.length > 0) {
     lines.push(`📅 *Due Today (${dueTodayReminders.length})*`);
     lines.push(formatRemindersMarkdown(dueTodayReminders));
+    lines.push('');
   }
 
-  lines.push('');
+  if (overdueReminders.length === 0 && dueTodayReminders.length === 0) {
+    lines.push('📅 No reminders due today');
+    lines.push('');
+  }
+
   lines.push(`_${todayStr} | ${config.timezone}_`);
 
   await send(config.telegramBotToken, config.telegramChatId, lines.join('\n'));

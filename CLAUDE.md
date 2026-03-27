@@ -10,7 +10,7 @@ Never push untested code to production. The cycle is:
 
 1. Write/modify code
 2. Run `npx tsc --noEmit` — catch type errors before anything else
-3. Run `npx vitest run` — unit + integration tests (303 tests)
+3. Run `npx vitest run` — unit + integration tests (453 tests)
 4. Run `npm run test:e2e` — end-to-end against real PostgreSQL (requires `docker compose up -d`)
 5. Only then commit and push
 
@@ -157,7 +157,8 @@ src/
 │   ├── insights.ts         # getInsight, listInsights, updateInsight, approveRejectInsight
 │   ├── profile.ts          # getUserProfile (LLM synthesis), getBrainStats
 │   ├── reminders.ts        # Full CRUD + createReminder (depth validation, embedding), completeReminder (cascade)
-│   └── tags.ts             # updateTags (allowlist validation + routing), getAllowedTags
+│   ├── tags.ts             # updateTags (allowlist validation + routing), getAllowedTags
+│   └── checkin.ts          # getDailyCheckinContext — 24h activity + reflective questionnaire for check-in sessions
 ├── telegram/        # Bot adapter (thin — calls service layer)
 │   ├── webhook.ts          # Entry point — wires everything
 │   ├── command-handlers.ts # /remind, /todos, /done, /delete, /edit, /move, /comment, /subtask, callback handlers
@@ -173,7 +174,7 @@ src/
 │   └── tags.ts             # ALLOWED_TAGS (14 tags), TAG_DESCRIPTIONS, validateTags(), isValidTag()
 ├── consolidation/   # 3-phase consolidation (DBSCAN → Opus → embed)
 ├── retrieval/       # Profile synthesis + tiered search
-├── mcp/             # MCP server + 23 tools (thin adapter over service layer)
+├── mcp/             # MCP server + 24 tools (thin adapter over service layer)
 ├── db/              # PostgreSQL query modules (6 tables)
 │   └── reminder-comments.ts  # includes getCommentById, updateComment, deleteComment
 ├── providers/       # AI provider abstraction (Gemini, Anthropic)
@@ -232,7 +233,7 @@ Check order in `message:text` handler: pendingSubtask → pendingAction → undo
 2. Add the tool registration in `src/mcp/profiler-tools.ts` or `src/mcp/reminder-tools.ts`
 3. Use Zod for parameter validation
 4. Add an E2E test in `tests/e2e/api-e2e.test.ts`
-5. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table (currently 23)
+5. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table (currently 24)
 
 ### MCP Server Instructions
 

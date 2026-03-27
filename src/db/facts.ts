@@ -151,6 +151,15 @@ export async function findPendingReviewFacts(db: DbClient, limit: number): Promi
   return result.rows;
 }
 
+export async function findFactsCreatedSince(db: DbClient, since: Date): Promise<FactRow[]> {
+  const result = await db.query(
+    `SELECT * FROM facts WHERE created_at >= $1 AND archived = false
+     ORDER BY created_at DESC`,
+    [since],
+  );
+  return result.rows;
+}
+
 export async function addSourceCaptureIds(
   db: DbClient, id: string, captureIds: string[],
 ): Promise<void> {

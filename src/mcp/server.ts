@@ -41,6 +41,9 @@ Combine a semantic query with a tag filter for precise retrieval:
 - search_thoughts("past bugs in auth", { tags: ["problem-solution"] })
 - Tags use AND semantics — all provided tags must match.
 
+DAILY CHECK-IN:
+Call daily_checkin to get a reflective questionnaire with recent activity context. Ask the questions one at a time, capture meaningful answers via capture_thought.
+
 NEVER capture purely operational exchanges. Capture preferences, decisions, skills, goals, patterns, opinions, milestones, AND technical learnings about projects.`,
     },
   );
