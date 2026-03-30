@@ -630,6 +630,21 @@ export function createApp(deps: AppDeps) {
     return c.json({ reset: result.rows.length });
   });
 
+  // GET /api/v1/captures/diagnostics — Check embedding health
+  app.get('/api/v1/captures/diagnostics', async (c) => {
+    const result = await deps.db.query(`
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE embedding IS NULL)::int AS missing_embedding,
+        count(*) FILTER (WHERE status = 'pending')::int AS pending,
+        count(*) FILTER (WHERE status = 'consolidated')::int AS consolidated,
+        count(*) FILTER (WHERE status = 'pending' AND embedding IS NULL)::int AS pending_no_embedding,
+        count(*) FILTER (WHERE status = 'pending' AND embedding IS NOT NULL)::int AS pending_with_embedding
+      FROM captures WHERE archived = false
+    `);
+    return c.json(result.rows[0]);
+  });
+
   // MCP routes
   mountMcpRoutes(app, deps);
 
