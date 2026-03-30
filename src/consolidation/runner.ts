@@ -81,9 +81,22 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       const withEmbeddings = allInputs.filter((c) => c.embedding?.length > 0);
       console.log(`[consolidation] Inputs: ${allInputs.length} total, ${withEmbeddings.length} with embeddings, ${allInputs.length - withEmbeddings.length} skipped (no embedding)`);
 
-      const clusters = dbscan(withEmbeddings, { eps: 0.3, minSamples: 2 });
+      const rawClusters = dbscan(withEmbeddings, { eps: 0.3, minSamples: 2 });
+
+      // Split large clusters into batches of MAX_CLUSTER_SIZE to prevent
+      // output token exhaustion (each action ~150 tokens, maxTokens=4096)
+      const MAX_CLUSTER_SIZE = 10;
+      const clusters = rawClusters.flatMap((cluster) => {
+        if (cluster.length <= MAX_CLUSTER_SIZE) return [cluster];
+        const batches = [];
+        for (let i = 0; i < cluster.length; i += MAX_CLUSTER_SIZE) {
+          batches.push(cluster.slice(i, i + MAX_CLUSTER_SIZE));
+        }
+        return batches;
+      });
+
       const singletons = clusters.filter((c) => c.length === 1).length;
-      console.log(`[consolidation] DBSCAN: ${clusters.length} clusters (${singletons} singletons, ${clusters.length - singletons} multi-capture), ${existingFacts.length} existing facts`);
+      console.log(`[consolidation] DBSCAN: ${rawClusters.length} raw clusters → ${clusters.length} batches (${singletons} singletons, ${clusters.length - singletons} multi-capture), ${existingFacts.length} existing facts`);
 
       let phase1Tokens = 0;
       let clustersProcessed = 0;
