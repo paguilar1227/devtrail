@@ -26,7 +26,7 @@ function emptyResult(rows: unknown[] = []) {
   return { rows, rowCount: rows.length, command: 'SELECT', oid: 0, fields: [] } as any;
 }
 
-// Helper: mock all 8 parallel queries getDailyCheckinContext runs
+// Helper: mock all 9 parallel queries getDailyCheckinContext runs
 function mockCheckinQueries(
   db: DbClient,
   opts: {
@@ -38,6 +38,7 @@ function mockCheckinQueries(
     pendingFacts?: unknown[];
     pendingInsights?: unknown[];
     reminderStats?: { active: number; due_today: number; overdue: number };
+    totals?: { captures: number; facts: number; insights: number };
   } = {},
 ) {
   const queryMock = vi.mocked(db.query);
@@ -49,7 +50,8 @@ function mockCheckinQueries(
     .mockResolvedValueOnce(emptyResult([{ count: opts.capturesArchived ?? 0 }]))
     .mockResolvedValueOnce(emptyResult(opts.pendingFacts ?? []))
     .mockResolvedValueOnce(emptyResult(opts.pendingInsights ?? []))
-    .mockResolvedValueOnce(emptyResult([opts.reminderStats ?? { active: 0, due_today: 0, overdue: 0 }]));
+    .mockResolvedValueOnce(emptyResult([opts.reminderStats ?? { active: 0, due_today: 0, overdue: 0 }]))
+    .mockResolvedValueOnce(emptyResult([opts.totals ?? { captures: 0, facts: 0, insights: 0 }]));
 }
 
 describe('getDailyCheckinContext', () => {

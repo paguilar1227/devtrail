@@ -1,6 +1,7 @@
 import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
 import { validateTags, ALLOWED_TAGS, TAG_DESCRIPTIONS } from '../capture/tags.js';
+import { extractJson } from '../providers/json-utils.js';
 
 export interface Phase2Input {
   facts: Array<{ id: string; content: string; tags: string[]; confidence: number; source: string[] }>;
@@ -62,11 +63,15 @@ export async function runPhase2(
   );
 
   result.tokensUsed = response.tokensUsed.total;
+  console.log(`[phase2] ${input.facts.length} facts, ${input.existingInsights.length} existing insights, tokens: ${response.tokensUsed.total}`);
 
   let parsed: any;
   try {
-    parsed = JSON.parse(response.content);
-  } catch {
+    const cleaned = extractJson(response.content);
+    parsed = JSON.parse(cleaned);
+    console.log(`[phase2] Parsed keys: [${Object.keys(parsed).join(', ')}], insights: ${parsed.insights?.length ?? 0}, updates: ${parsed.updates?.length ?? 0}, invalidations: ${parsed.invalidations?.length ?? 0}`);
+  } catch (err) {
+    console.error(`[phase2] JSON parse failed. Error: ${err}. Raw response (first 500): ${response.content.slice(0, 500)}`);
     return result;
   }
 

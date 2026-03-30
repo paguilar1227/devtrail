@@ -2,6 +2,7 @@ import type { DbClient } from '../db/client.js';
 import type { LLMProvider } from '../providers/types.js';
 import type { FactRow } from '../db/facts.js';
 import { validateTags, ALLOWED_TAGS, TAG_DESCRIPTIONS } from '../capture/tags.js';
+import { extractJson } from '../providers/json-utils.js';
 
 export interface ClusterInput {
   captures: Array<{ id: string; content: string; embedding: number[]; source?: string[]; tags?: string[] }>;
@@ -90,11 +91,22 @@ export async function processCluster(
 
   result.tokensUsed = response.tokensUsed.total;
 
+  const captureIds = input.captures.map((c) => c.id.slice(0, 8)).join(', ');
+  console.log(`[phase1] Cluster of ${input.captures.length} captures [${captureIds}], tokens used: ${response.tokensUsed.total}`);
+
   let actions: any[];
   try {
-    const parsed = JSON.parse(response.content);
+    const cleaned = extractJson(response.content);
+    const parsed = JSON.parse(cleaned);
     actions = Array.isArray(parsed.actions) ? parsed.actions : [];
-  } catch {
+    if (actions.length === 0) {
+      console.warn(`[phase1] LLM returned 0 actions for cluster. Parsed keys: [${Object.keys(parsed).join(', ')}]. Raw response (first 500): ${response.content.slice(0, 500)}`);
+    } else {
+      const actionTypes = actions.map((a: any) => a.action);
+      console.log(`[phase1] Actions: ${JSON.stringify(actionTypes)}`);
+    }
+  } catch (err) {
+    console.error(`[phase1] JSON parse failed for cluster [${captureIds}]. Error: ${err}. Raw response (first 500): ${response.content.slice(0, 500)}`);
     actions = [];
   }
 
@@ -179,12 +191,16 @@ export async function processCluster(
       }
     }
 
-    // Mark all captures in this cluster as consolidated
-    for (const capture of input.captures) {
-      await txClient.query(
-        `UPDATE captures SET status = 'consolidated', updated_at = now() WHERE id = $1`,
-        [capture.id],
-      );
+    // Only mark captures as consolidated if we actually produced actions
+    if (actions.length > 0) {
+      for (const capture of input.captures) {
+        await txClient.query(
+          `UPDATE captures SET status = 'consolidated', updated_at = now() WHERE id = $1`,
+          [capture.id],
+        );
+      }
+    } else {
+      console.warn(`[phase1] Leaving ${input.captures.length} captures as pending — no actions produced`);
     }
   });
 

@@ -11,6 +11,7 @@ export interface CheckinContext {
   date: string;
   timezone: string;
   activity: {
+    totals: { captures: number; facts: number; insights: number };
     capturesNew: number;
     capturesArchived: number;
     consolidationRuns: number;
@@ -80,6 +81,7 @@ export async function getDailyCheckinContext(deps: ServiceDeps): Promise<Checkin
     pendingFacts,
     pendingInsights,
     reminderStats,
+    totals,
   ] = await Promise.all([
     getConsolidationLogsSince(deps.db, since),
     findFactsCreatedSince(deps.db, since),
@@ -89,12 +91,14 @@ export async function getDailyCheckinContext(deps: ServiceDeps): Promise<Checkin
     findPendingReviewFacts(deps.db, 100),
     findPendingReviewInsights(deps.db, 100),
     getReminderStats(deps, todayStr),
+    getTotals(deps),
   ]);
 
   return {
     date: todayStr,
     timezone: deps.config.timezone,
     activity: {
+      totals,
       capturesNew,
       capturesArchived,
       consolidationRuns: consolidationLogs.length,
@@ -108,6 +112,18 @@ export async function getDailyCheckinContext(deps: ServiceDeps): Promise<Checkin
     questions: CHECKIN_QUESTIONS,
     instructions: CHECKIN_INSTRUCTIONS,
   };
+}
+
+async function getTotals(
+  deps: ServiceDeps,
+): Promise<{ captures: number; facts: number; insights: number }> {
+  const result = await deps.db.query(`
+    SELECT
+      (SELECT count(*)::int FROM captures WHERE archived = false) AS captures,
+      (SELECT count(*)::int FROM facts WHERE archived = false) AS facts,
+      (SELECT count(*)::int FROM insights WHERE archived = false) AS insights
+  `);
+  return result.rows[0];
 }
 
 async function getReminderStats(
