@@ -635,11 +635,11 @@ export function createApp(deps: AppDeps) {
     const result = await deps.db.query(`
       SELECT
         count(*)::int AS total,
-        count(*) FILTER (WHERE embedding IS NULL)::int AS missing_embedding,
-        count(*) FILTER (WHERE status = 'pending')::int AS pending,
-        count(*) FILTER (WHERE status = 'consolidated')::int AS consolidated,
-        count(*) FILTER (WHERE status = 'pending' AND embedding IS NULL)::int AS pending_no_embedding,
-        count(*) FILTER (WHERE status = 'pending' AND embedding IS NOT NULL)::int AS pending_with_embedding
+        sum(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END)::int AS missing_embedding,
+        sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)::int AS pending,
+        sum(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END)::int AS consolidated,
+        sum(CASE WHEN status = 'pending' AND embedding IS NULL THEN 1 ELSE 0 END)::int AS pending_no_embedding,
+        sum(CASE WHEN status = 'pending' AND embedding IS NOT NULL THEN 1 ELSE 0 END)::int AS pending_with_embedding
       FROM captures WHERE archived = false
     `);
     return c.json(result.rows[0]);
