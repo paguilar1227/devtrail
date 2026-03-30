@@ -619,6 +619,17 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // POST /api/v1/captures/reset-consolidated — Reset consolidated captures back to pending
+  app.post('/api/v1/captures/reset-consolidated', async (c) => {
+    const result = await deps.db.query(
+      `UPDATE captures SET status = 'pending', updated_at = now()
+       WHERE status = 'consolidated' AND archived = false
+       RETURNING id`,
+    );
+    console.log(`[admin] Reset ${result.rows.length} consolidated captures to pending`);
+    return c.json({ reset: result.rows.length });
+  });
+
   // MCP routes
   mountMcpRoutes(app, deps);
 
