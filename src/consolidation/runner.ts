@@ -78,17 +78,22 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
 
     if (allInputs.length > 0) {
       const existingFacts = await findActiveFacts(db, 0.0);
-      const clusters = dbscan(
-        allInputs.filter((c) => c.embedding?.length > 0),
-        { eps: 0.3, minSamples: 2 },
-      );
+      const withEmbeddings = allInputs.filter((c) => c.embedding?.length > 0);
+      console.log(`[consolidation] Inputs: ${allInputs.length} total, ${withEmbeddings.length} with embeddings, ${allInputs.length - withEmbeddings.length} skipped (no embedding)`);
+
+      const clusters = dbscan(withEmbeddings, { eps: 0.3, minSamples: 2 });
+      const singletons = clusters.filter((c) => c.length === 1).length;
+      console.log(`[consolidation] DBSCAN: ${clusters.length} clusters (${singletons} singletons, ${clusters.length - singletons} multi-capture), ${existingFacts.length} existing facts`);
 
       let phase1Tokens = 0;
+      let clustersProcessed = 0;
+      let clustersSkipped = 0;
       for (const cluster of clusters) {
         // Estimate next call cost: ~500 tokens per capture + ~200 per existing fact
         const estimatedCost = cluster.length * 500 + existingFacts.length * 200;
         if (phase1Tokens + estimatedCost > PHASE1_TOKEN_BUDGET) {
-          // Remaining captures stay 'pending' for next run
+          clustersSkipped = clusters.length - clustersProcessed;
+          console.warn(`[consolidation] Budget limit: processed ${clustersProcessed}/${clusters.length} clusters (${phase1Tokens} tokens used, next estimate ${estimatedCost}, budget ${PHASE1_TOKEN_BUDGET}). ${clustersSkipped} clusters deferred.`);
           break;
         }
 
@@ -105,7 +110,9 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
         totalFactsCreated += clusterResult.factsCreated;
         totalFactsUpdated += clusterResult.factsUpdated;
         totalItemsFlagged += clusterResult.itemsFlagged;
+        clustersProcessed++;
       }
+      console.log(`[consolidation] Phase 1 done: ${clustersProcessed} clusters processed, ${totalFactsCreated} facts created, ${totalFactsUpdated} updated, ${phase1Tokens} tokens`);
       totalTokens += phase1Tokens;
     }
   } catch (err) {
