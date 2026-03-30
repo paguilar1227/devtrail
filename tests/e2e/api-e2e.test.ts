@@ -346,9 +346,20 @@ describe('REST API E2E', () => {
     beforeEach(truncateAll);
 
     it('returns facts created by consolidation', async () => {
-      // Capture thoughts
-      await captureThought('Pedro prefers TypeScript for all projects');
-      await captureThought('Pedro uses Hono framework for APIs');
+      // Insert captures with similar embeddings so they cluster (2+ required for fact creation)
+      const { insertCapture } = await import('../../src/db/captures.js');
+      const baseEmb = new Array(EMBEDDING_DIM).fill(0.1);
+      const similarEmb = [...baseEmb]; similarEmb[0] = 0.11;
+      await insertCapture(db, {
+        content: 'Pedro prefers TypeScript for all projects', contentTypes: ['text'],
+        fileUrls: null, fileHashes: null, embedding: baseEmb,
+        metadata: {}, source: ['test'], tags: ['preference'],
+      });
+      await insertCapture(db, {
+        content: 'Pedro uses Hono framework for APIs', contentTypes: ['text'],
+        fileUrls: null, fileHashes: null, embedding: similarEmb,
+        metadata: {}, source: ['test'], tags: ['preference'],
+      });
 
       // Trigger consolidation
       await app.request('/api/v1/consolidation/trigger', {
@@ -961,9 +972,20 @@ describe('MCP Tool E2E', () => {
 
   // ── run_consolidation ──────────────────────────────────────────────────
   it('MCP — run_consolidation: capture → consolidate → verify facts created', async () => {
-    // Insert captures via pipeline
-    await captureThought('Pedro uses Vitest for testing');
-    await captureThought('Pedro prefers minimal dependencies');
+    // Insert captures with similar embeddings so DBSCAN clusters them (2+ required for fact creation)
+    const { insertCapture } = await import('../../src/db/captures.js');
+    const baseEmb = new Array(EMBEDDING_DIM).fill(0.1);
+    const similarEmb = [...baseEmb]; similarEmb[0] = 0.11; // cosine distance < eps=0.3
+    await insertCapture(db, {
+      content: 'Pedro uses Vitest for testing', contentTypes: ['text'],
+      fileUrls: null, fileHashes: null, embedding: baseEmb,
+      metadata: {}, source: ['test'], tags: ['preference'],
+    });
+    await insertCapture(db, {
+      content: 'Pedro prefers minimal dependencies', contentTypes: ['text'],
+      fileUrls: null, fileHashes: null, embedding: similarEmb,
+      metadata: {}, source: ['test'], tags: ['preference'],
+    });
 
     // Run consolidation
     const { runConsolidation } = await import('../../src/consolidation/runner.js');
@@ -994,7 +1016,7 @@ describe('MCP Tool E2E', () => {
     const embedding = new Array(EMBEDDING_DIM).fill(0.3);
     const { id: reminderId } = await insertReminder(db, {
       content: 'Learn Rust programming',
-      embedding,
+      embedding: [...embedding],
       category: 'learning',
       project: 'skills',
       section: null,
@@ -1006,6 +1028,15 @@ describe('MCP Tool E2E', () => {
       dueDate: null,
     });
     await completeReminder(db, reminderId);
+
+    // Add a pending capture with similar embedding so the reminder clusters with it (2+ required)
+    const { insertCapture } = await import('../../src/db/captures.js');
+    const similarEmb = new Array(EMBEDDING_DIM).fill(0.3); similarEmb[0] = 0.31;
+    await insertCapture(db, {
+      content: 'Started learning Rust basics', contentTypes: ['text'],
+      fileUrls: null, fileHashes: null, embedding: similarEmb,
+      metadata: {}, source: ['test'], tags: ['skill'],
+    });
 
     // Verify it's done
     const { getReminderById } = await import('../../src/db/reminders.js');
