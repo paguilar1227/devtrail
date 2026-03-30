@@ -116,81 +116,82 @@ export async function processCluster(
   // Process actions within a transaction (per-cluster commit)
   await db.transaction(async (txClient) => {
     for (const action of actions) {
-      if (action.action === 'create_fact') {
-        const actionTags = validateTags(action.tags ?? []);
-        const reviewStatus = shouldAutoApprove(actionTags, input.reviewMode)
-          ? 'auto_approved'
-          : 'pending_review';
+      try {
+        if (action.action === 'create_fact') {
+          const actionTags = validateTags(action.tags ?? []);
+          const reviewStatus = shouldAutoApprove(actionTags, input.reviewMode)
+            ? 'auto_approved'
+            : 'pending_review';
+          const captureIds = action.source_capture_ids ?? input.captures.map((c) => c.id);
 
-        await txClient.query(
-          `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
-           VALUES ($1, $2, $3, $4, $5, 'consolidation', $6)`,
-          [action.content, actionTags, factSource, action.confidence, action.source_capture_ids ?? input.captures.map((c) => c.id), reviewStatus],
-        );
-        result.factsCreated++;
-        if (reviewStatus === 'pending_review') result.itemsFlagged++;
-
-      } else if (action.action === 'update_fact') {
-        const existingFact = input.existingFacts.find((f) => f.id === action.fact_id);
-        if (!existingFact) {
-          console.warn(`[phase1] update_fact: fact_id ${action.fact_id} not found in existing facts, skipping`);
-          continue;
-        }
-        if (existingFact.origin === 'user_edited') {
-          // Flag for review instead of updating — preserve existing tags
           await txClient.query(
             `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
-             VALUES ($1, $2, $3, $4, $5, 'consolidation', 'pending_review')`,
-            [action.content, existingFact.tags, factSource, action.confidence,
-             input.captures.map((c) => c.id)],
+             VALUES ($1, $2, $3::text[], $4, $5::uuid[], 'consolidation', $6)`,
+            [String(action.content ?? ''), actionTags, factSource, Number(action.confidence ?? 0.5), captureIds, reviewStatus],
+          );
+          result.factsCreated++;
+          if (reviewStatus === 'pending_review') result.itemsFlagged++;
+
+        } else if (action.action === 'update_fact') {
+          const existingFact = input.existingFacts.find((f) => f.id === action.fact_id);
+          if (!existingFact) {
+            console.warn(`[phase1] update_fact: fact_id ${action.fact_id} not found, skipping`);
+            continue;
+          }
+          if (existingFact.origin === 'user_edited') {
+            await txClient.query(
+              `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
+               VALUES ($1, $2, $3::text[], $4, $5::uuid[], 'consolidation', 'pending_review')`,
+              [String(action.content ?? ''), existingFact.tags, factSource, Number(action.confidence ?? 0.5),
+               input.captures.map((c) => c.id)],
+            );
+            result.itemsFlagged++;
+          } else {
+            const confidenceShift = Math.abs(Number(action.confidence ?? 0.5) - existingFact.confidence);
+            const reviewStatus = confidenceShift > 0.15 ? 'pending_review' : 'auto_approved';
+
+            await txClient.query(
+              `UPDATE facts SET
+                 previous_versions = previous_versions || jsonb_build_array(
+                   jsonb_build_object('content', content, 'confidence', confidence,
+                                      'changed_at', now()::text, 'reason', $1::text)
+                 ),
+                 content = $2, confidence = $3, embedding = NULL, updated_at = now(),
+                 review_status = $4
+               WHERE id = $5`,
+              [String(action.reason ?? ''), String(action.content ?? ''), Number(action.confidence ?? 0.5), reviewStatus, String(action.fact_id)],
+            );
+            result.factsUpdated++;
+            if (reviewStatus === 'pending_review') result.itemsFlagged++;
+          }
+
+        } else if (action.action === 'flag_review') {
+          await txClient.query(
+            `UPDATE facts SET review_status = 'pending_review' WHERE id = $1`,
+            [String(action.fact_id)],
           );
           result.itemsFlagged++;
-        } else {
-          // Normal update with version tracking
-          const confidenceShift = existingFact
-            ? Math.abs(action.confidence - existingFact.confidence)
-            : 0;
-          const reviewStatus = confidenceShift > 0.15 ? 'pending_review' : 'auto_approved';
 
+        } else if (action.action === 'merge_facts') {
           await txClient.query(
             `UPDATE facts SET
-               previous_versions = previous_versions || jsonb_build_array(
-                 jsonb_build_object('content', content, 'confidence', confidence,
-                                    'changed_at', now()::text, 'reason', $1)
+               content = $1, confidence = $2,
+               source_capture_ids = array_cat(
+                 (SELECT source_capture_ids FROM facts WHERE id = $3),
+                 (SELECT source_capture_ids FROM facts WHERE id = $4)
                ),
-               content = $2, confidence = $3, embedding = NULL, updated_at = now(),
-               review_status = $4
-             WHERE id = $5`,
-            [action.reason ?? '', action.content, action.confidence, reviewStatus, action.fact_id],
+               embedding = NULL, updated_at = now()
+             WHERE id = $3`,
+            [String(action.merged_content ?? ''), Number(action.confidence ?? 0.5), String(action.keep_id), String(action.archive_id)],
           );
-          result.factsUpdated++;
-          if (reviewStatus === 'pending_review') result.itemsFlagged++;
+          await txClient.query(
+            `UPDATE facts SET archived = true, updated_at = now() WHERE id = $1`,
+            [String(action.archive_id)],
+          );
         }
-
-      } else if (action.action === 'flag_review') {
-        await txClient.query(
-          `UPDATE facts SET review_status = 'pending_review' WHERE id = $1`,
-          [action.fact_id],
-        );
-        result.itemsFlagged++;
-
-      } else if (action.action === 'merge_facts') {
-        // Keep higher-confidence version, combine source_capture_ids, archive duplicate
-        await txClient.query(
-          `UPDATE facts SET
-             content = $1, confidence = $2,
-             source_capture_ids = array_cat(
-               (SELECT source_capture_ids FROM facts WHERE id = $3),
-               (SELECT source_capture_ids FROM facts WHERE id = $4)
-             ),
-             embedding = NULL, updated_at = now()
-           WHERE id = $3`,
-          [action.merged_content, action.confidence, action.keep_id, action.archive_id],
-        );
-        await txClient.query(
-          `UPDATE facts SET archived = true, updated_at = now() WHERE id = $1`,
-          [action.archive_id],
-        );
+      } catch (err) {
+        console.error(`[phase1] Action failed: ${JSON.stringify(action)}. Error: ${err}`);
+        throw err;
       }
     }
 
