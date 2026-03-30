@@ -142,17 +142,22 @@ export function createApp(deps: AppDeps) {
 
   // GET /api/v1/captures/diagnostics — Check embedding health
   app.get('/api/v1/captures/diagnostics', async (c) => {
-    const result = await deps.db.query(`
-      SELECT
-        count(*)::int AS total,
-        sum(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END)::int AS missing_embedding,
-        sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)::int AS pending,
-        sum(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END)::int AS consolidated,
-        sum(CASE WHEN status = 'pending' AND embedding IS NULL THEN 1 ELSE 0 END)::int AS pending_no_embedding,
-        sum(CASE WHEN status = 'pending' AND embedding IS NOT NULL THEN 1 ELSE 0 END)::int AS pending_with_embedding
-      FROM captures WHERE archived = false
-    `);
-    return c.json(result.rows[0]);
+    try {
+      const result = await deps.db.query(`
+        SELECT
+          count(*)::int AS total,
+          sum(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END)::int AS missing_embedding,
+          sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)::int AS pending,
+          sum(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END)::int AS consolidated,
+          sum(CASE WHEN status = 'pending' AND embedding IS NULL THEN 1 ELSE 0 END)::int AS pending_no_embedding,
+          sum(CASE WHEN status = 'pending' AND embedding IS NOT NULL THEN 1 ELSE 0 END)::int AS pending_with_embedding
+        FROM captures WHERE archived = false
+      `);
+      return c.json(result.rows[0]);
+    } catch (err) {
+      console.error('[diagnostics] Query failed:', err);
+      return c.json({ error: String(err) }, 500);
+    }
   });
 
   // GET /api/v1/captures/:id — Get a single capture
