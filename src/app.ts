@@ -650,6 +650,37 @@ export function createApp(deps: AppDeps) {
     return c.json({ reset: result.rows.length });
   });
 
+  // POST /api/v1/facts/cleanup-singletons — Archive facts with ≤1 source capture, reset their captures
+  app.post('/api/v1/facts/cleanup-singletons', async (c) => {
+    try {
+      // Archive single-capture facts
+      const archived = await deps.db.query(
+        `UPDATE facts SET archived = true, updated_at = now()
+         WHERE archived = false AND (source_capture_ids IS NULL OR array_length(source_capture_ids, 1) <= 1)
+         RETURNING id, source_capture_ids`,
+      );
+
+      // Collect all capture IDs from archived facts and reset them to pending
+      const captureIds = archived.rows.flatMap((r: any) => r.source_capture_ids ?? []);
+      let capturesReset = 0;
+      if (captureIds.length > 0) {
+        const resetResult = await deps.db.query(
+          `UPDATE captures SET status = 'pending', updated_at = now()
+           WHERE id = ANY($1::uuid[]) AND archived = false
+           RETURNING id`,
+          [captureIds],
+        );
+        capturesReset = resetResult.rows.length;
+      }
+
+      console.log(`[admin] Archived ${archived.rows.length} single-capture facts, reset ${capturesReset} captures to pending`);
+      return c.json({ factsArchived: archived.rows.length, capturesReset });
+    } catch (err) {
+      console.error('[admin] Cleanup failed:', err);
+      return c.json({ error: String(err) }, 500);
+    }
+  });
+
   // MCP routes
   mountMcpRoutes(app, deps);
 

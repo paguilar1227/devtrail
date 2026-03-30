@@ -23,28 +23,24 @@ ALLOWED TAGS (use ONLY these):
 ${ALLOWED_TAGS.map((t) => `- "${t}": ${TAG_DESCRIPTIONS[t]}`).join('\n')}
 `;
 
-const NOISE_CRITERIA_PROMPT = `You are a profile consolidation engine for a personal knowledge system. Your job is to extract profile facts about the user from their captured thoughts. You should be AGGRESSIVE about creating facts — this system exists to build a living profile, and every signal matters.
+const NOISE_CRITERIA_PROMPT = `You are a profile consolidation engine for a personal knowledge system. Your job is to extract profile facts about the user from clusters of corroborating captured thoughts.
+
+IMPORTANT: You are only given clusters of 2+ captures that are semantically related. Your job is to find the common signal across captures and distill it into facts. A fact should represent something corroborated by multiple captures, not a rephrasing of a single capture.
 
 Given a cluster of captures and any existing facts, determine what new profile facts should be created or existing ones updated.
 
-EXAMPLES of what SHOULD become facts:
-- "I love TypeScript" → create_fact: "Prefers TypeScript" (tags: ["preference"], confidence: 0.7)
-- "I am interested in healthy high-protein foods" → create_fact: "Interested in healthy high-protein foods" (tags: ["preference", "interest"], confidence: 0.7)
-- "I love this style of pizza" → create_fact: "Enjoys pizza" (tags: ["interest"], confidence: 0.5)
-- "Working on a new AI project" → create_fact: "Working on an AI project" (tags: ["goal"], confidence: 0.5)
+EXAMPLES of what SHOULD become facts (when corroborated by multiple captures):
+- Two captures about TypeScript → create_fact: "Prefers TypeScript" (tags: ["preference"], confidence: 0.8)
+- Captures about protein foods + fitness → create_fact: "Focused on high-protein nutrition for fitness goals" (tags: ["health", "goal"], confidence: 0.8)
+- Multiple captures about Azure deployments → create_fact: "Experienced with Azure cloud infrastructure" (tags: ["skill"], confidence: 0.85)
 
-NOISE CRITERIA — ONLY discard a capture if ALL of these are true:
-1. Contains no preference, opinion, or value judgment
-2. Contains no information about a person or relationship
-3. Contains no habit, routine, or behavioral pattern
-4. Contains no skill, tool, or technology association
-5. Contains no goal, aspiration, or plan
-6. Contains no emotional response or reaction
-7. Is purely transactional with no recurring significance
+CONFIDENCE GUIDELINES:
+- 2 corroborating captures: 0.6-0.7
+- 3-5 corroborating captures: 0.7-0.85
+- 6+ corroborating captures: 0.85-0.95
+- Corroborates an existing fact (update_fact): boost confidence by 0.05-0.1
 
-Examples of ACTUAL noise: "test", "Hello", "ok", "query: show me all captures with file_urls" — these are operational messages with zero profile signal.
-
-YOUR DEFAULT SHOULD BE TO CREATE A FACT. Only discard if a capture is truly meaningless noise. When in doubt, create a fact with low confidence (0.3-0.4). It is far worse to miss a real signal than to create a low-confidence fact that gets refined later.
+Discard captures that are operational noise ("test", "Hello", "ok") or that don't contribute meaningful profile signal even in context of the cluster.
 
 IMPORTANT: Never modify facts with origin "user_edited". If new evidence contradicts a user_edited fact, flag it for review instead.
 ${TAG_ALLOWLIST_SECTION}
