@@ -125,15 +125,18 @@ export async function processCluster(
         await txClient.query(
           `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
            VALUES ($1, $2, $3, $4, $5, 'consolidation', $6)`,
-          [action.content, actionTags, factSource, action.confidence, action.source_capture_ids, reviewStatus],
+          [action.content, actionTags, factSource, action.confidence, action.source_capture_ids ?? input.captures.map((c) => c.id), reviewStatus],
         );
         result.factsCreated++;
         if (reviewStatus === 'pending_review') result.itemsFlagged++;
 
       } else if (action.action === 'update_fact') {
-        // Check if the fact is user_edited
         const existingFact = input.existingFacts.find((f) => f.id === action.fact_id);
-        if (existingFact?.origin === 'user_edited') {
+        if (!existingFact) {
+          console.warn(`[phase1] update_fact: fact_id ${action.fact_id} not found in existing facts, skipping`);
+          continue;
+        }
+        if (existingFact.origin === 'user_edited') {
           // Flag for review instead of updating — preserve existing tags
           await txClient.query(
             `INSERT INTO facts (content, tags, source, confidence, source_capture_ids, origin, review_status)
@@ -158,7 +161,7 @@ export async function processCluster(
                content = $2, confidence = $3, embedding = NULL, updated_at = now(),
                review_status = $4
              WHERE id = $5`,
-            [action.reason, action.content, action.confidence, reviewStatus, action.fact_id],
+            [action.reason ?? '', action.content, action.confidence, reviewStatus, action.fact_id],
           );
           result.factsUpdated++;
           if (reviewStatus === 'pending_review') result.itemsFlagged++;
