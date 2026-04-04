@@ -42,12 +42,15 @@ export async function checkSemanticDedup(
   const similar = await findSimilarCaptures(db, embedding, SEMANTIC_DEDUP_THRESHOLD);
 
   if (similar.length > 0) {
+    console.log(`[dedup] Semantic duplicate found — similarity: ${similar[0].similarity.toFixed(3)}, existing: ${similar[0].id.slice(0, 8)}, threshold: ${SEMANTIC_DEDUP_THRESHOLD}`);
     return {
       isDuplicate: true,
       similarity: similar[0].similarity,
       existingId: similar[0].id,
     };
   }
+
+  console.log(`[dedup] Passed — no matches above ${SEMANTIC_DEDUP_THRESHOLD} threshold`);
 
   return { isDuplicate: false, similarity: null, existingId: null };
 }

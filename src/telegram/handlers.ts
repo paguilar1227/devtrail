@@ -80,7 +80,9 @@ export async function handlePhotoMessage(
   capture: CaptureFn,
   downloadFile: DownloadFn,
 ): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
+  console.log(`[telegram] Photo received — fileId: ${input.fileId.slice(0, 20)}..., caption: ${input.caption ? `"${input.caption.slice(0, 60)}"` : 'none'}`);
   const photoBuffer = await downloadFile(input.fileId);
+  console.log(`[telegram] Photo downloaded — ${(photoBuffer.length / 1024).toFixed(1)} KB`);
 
   return capture({
     content: input.caption ?? 'Photo capture',
@@ -95,8 +97,11 @@ export async function handleVoiceMessage(
   downloadFile: DownloadFn,
   transcribe: (audio: Buffer) => Promise<string>,
 ): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
+  console.log(`[telegram] Voice received — fileId: ${input.fileId.slice(0, 20)}...`);
   const audioBuffer = await downloadFile(input.fileId);
+  console.log(`[telegram] Voice downloaded — ${(audioBuffer.length / 1024).toFixed(1)} KB`);
   const transcription = await transcribe(audioBuffer);
+  console.log(`[telegram] Voice transcribed — ${transcription.length} chars: "${transcription.slice(0, 100)}..."`);
 
   return capture({
     content: transcription,
@@ -111,8 +116,11 @@ export async function handleDocumentMessage(
   downloadFile: DownloadFn,
   summarize: (content: Buffer, mimeType: string) => Promise<string>,
 ): Promise<{ success: boolean; captureId?: string; reason?: string; warnings?: string[] }> {
+  console.log(`[telegram] Document received — file: ${input.fileName}, mime: ${input.mimeType}`);
   const fileBuffer = await downloadFile(input.fileId);
+  console.log(`[telegram] Document downloaded — ${(fileBuffer.length / 1024).toFixed(1)} KB`);
   const summary = await summarize(fileBuffer, input.mimeType);
+  console.log(`[telegram] Document summarized — ${summary.length} chars: "${summary.slice(0, 100)}..."`);
 
   return capture({
     content: summary,

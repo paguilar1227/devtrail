@@ -87,7 +87,13 @@ export async function extractMetadata(
 
     console.log(`[metadata] LLM response — tokens: ${response.tokensUsed.total}, raw length: ${response.content.length}`);
 
-    const parsed = JSON.parse(response.content);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(response.content);
+    } catch (parseErr) {
+      console.error(`[metadata] JSON parse failed — raw response (first 500): ${response.content.slice(0, 500)}`);
+      return FALLBACK_METADATA;
+    }
     const extractedText = typeof parsed.extracted_text === 'string' && parsed.extracted_text.trim()
       ? parsed.extracted_text.trim()
       : null;
@@ -102,7 +108,7 @@ export async function extractMetadata(
       extracted_text: extractedText,
     };
 
-    console.log(`[metadata] Result — type: ${result.type}, tags: [${result.tags.join(', ')}], topics: [${result.topics.join(', ')}], extracted_text: ${extractedText ? `${extractedText.length} chars` : 'null'}`);
+    console.log(`[metadata] Result — type: ${result.type}, tags: [${result.tags.join(', ')}], topics: [${result.topics.join(', ')}], people: [${result.people.join(', ')}], extracted_text: ${extractedText ? `${extractedText.length} chars — "${extractedText.slice(0, 150)}${extractedText.length > 150 ? '...' : ''}"` : 'null'}`);
     return result;
   } catch (err) {
     console.error(`[metadata] Extraction failed — files: ${fileCount}, error:`, err);

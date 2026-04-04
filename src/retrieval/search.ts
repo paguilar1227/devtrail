@@ -29,7 +29,7 @@ export async function searchThoughts(
   // Tier 1: Search insights first
   const insights = await findSimilarInsights(db, queryEmbedding, threshold, limit, tags);
   if (insights.length > 0) {
-    console.log(`[search] Tier 1 hit — ${insights.length} insight(s)`);
+    console.log(`[search] Tier 1 hit — ${insights.length} insight(s): ${insights.map((i) => `"${i.content.slice(0, 60)}" (sim: ${(i as any).similarity?.toFixed(3)}, conf: ${i.confidence})`).join('; ')}`);
     // Trace back: insight → source_fact_ids → facts → source_capture_ids → captures → file_urls
     const allFactIds = [...new Set(insights.flatMap((i) => i.source_fact_ids ?? []))];
     const fileUrlMap = allFactIds.length > 0
@@ -51,10 +51,12 @@ export async function searchThoughts(
     });
   }
 
+  console.log(`[search] Tier 1 miss — no insights above threshold`);
+
   // Tier 2: Search facts
   const facts = await findSimilarFacts(db, queryEmbedding, threshold, limit, tags);
   if (facts.length > 0) {
-    console.log(`[search] Tier 2 hit — ${facts.length} fact(s)`);
+    console.log(`[search] Tier 2 hit — ${facts.length} fact(s): ${facts.map((f) => `"${f.content.slice(0, 60)}" (sim: ${(f as any).similarity?.toFixed(3)}, conf: ${f.confidence})`).join('; ')}`);
     // Trace back: fact → source_capture_ids → captures → file_urls
     const allCaptureIds = [...new Set(facts.flatMap((f) => f.source_capture_ids ?? []))];
     const captureFileUrls = allCaptureIds.length > 0
@@ -90,10 +92,16 @@ export async function searchThoughts(
     return results;
   }
 
+  console.log(`[search] Tier 2 miss — no facts above threshold`);
+
   // Tier 3: Fall back to raw captures
   const captures = await findSimilarCaptures(db, queryEmbedding, threshold, limit, tags);
+  if (captures.length === 0) {
+    console.log(`[search] No results at any tier for query "${query.slice(0, 80)}"`);
+    return [];
+  }
   const withFiles = captures.filter((c) => c.file_urls?.length);
-  console.log(`[search] Tier 3 fallback — ${captures.length} capture(s)${withFiles.length > 0 ? `, ${withFiles.length} with files` : ''}`);
+  console.log(`[search] Tier 3 fallback — ${captures.length} capture(s)${withFiles.length > 0 ? `, ${withFiles.length} with files` : ''}: ${captures.slice(0, 3).map((c) => `"${c.content.slice(0, 50)}" (sim: ${c.similarity.toFixed(3)}${c.file_urls?.length ? ', files: ' + c.file_urls.length : ''})`).join('; ')}`);
   return captures.slice(0, limit).map((c) => ({
     tier: 'capture' as const,
     confidence: null,

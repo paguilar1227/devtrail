@@ -36,6 +36,11 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   const { db, embeddingProvider, metadataLLM, blobStorage, content, files, source } = input;
   const validTags = input.tags ? validateTags(input.tags) : null;
 
+  const fileSummary = files.length > 0
+    ? files.map((f) => `${f.filename} (${f.contentType}, ${(f.data.length / 1024).toFixed(1)} KB)`).join(', ')
+    : 'none';
+  console.log(`[pipeline] Starting — source: [${source}], content: ${content.length} chars, files: ${files.length} [${fileSummary}], caller tags: ${validTags ? `[${validTags.join(', ')}]` : 'none'}`);
+
   // Step 1: Compute file hashes
   const fileHashes = files.map((f) => computeFileHash(f.data));
   const contentTypes = files.length > 0
@@ -70,12 +75,15 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
             const converted = await convertForEmbedding(f.data, f.contentType);
             // If ffmpeg wasn't available the returned buffer is empty — skip that file
             if (converted.data.length === 0) {
+              console.warn(`[pipeline] Conversion produced empty buffer — ${f.filename} (${f.contentType}), skipping embed`);
               warnings.push(`File "${f.filename}" (${f.contentType}): conversion failed, stored but not embedded.`);
               return null;
             }
+            console.log(`[pipeline] Converted ${f.filename}: ${f.contentType} → ${converted.mimeType} (${(f.data.length / 1024).toFixed(1)} KB → ${(converted.data.length / 1024).toFixed(1)} KB)`);
             return { data: converted.data, mimeType: converted.mimeType };
-          } catch {
+          } catch (err) {
             // Unsupported type — skip embedding this file, embed text only
+            console.warn(`[pipeline] Conversion failed — ${f.filename} (${f.contentType}): ${err instanceof Error ? err.message : err}`);
             warnings.push(`File "${f.filename}" (${f.contentType}): unsupported type for embedding, stored but not embedded.`);
             return null;
           }
