@@ -70,6 +70,19 @@ async function runMigrations() {
       console.log('Migration 002 complete.');
     }
 
+    // Migration 003: extracted_text column for media text extraction
+    const m003Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'captures' AND column_name = 'extracted_text'`,
+    );
+    if (parseInt(m003Check.rows[0].count) === 0) {
+      console.log('Running database migration 003...');
+      const migrationPath = join(__dirname, '..', 'migrations', '003_extracted_text.sql');
+      const sql = readFileSync(migrationPath, 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 003 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

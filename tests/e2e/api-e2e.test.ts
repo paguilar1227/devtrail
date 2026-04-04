@@ -38,6 +38,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const MIGRATION_001_PATH = join(__dirname, '../../migrations/001_initial_schema.sql');
 const MIGRATION_002_PATH = join(__dirname, '../../migrations/002_tags_and_source_array.sql');
+const MIGRATION_003_PATH = join(__dirname, '../../migrations/003_extracted_text.sql');
 
 // ---------------------------------------------------------------------------
 // Mock providers
@@ -211,6 +212,8 @@ beforeAll(async () => {
   await db.pool.query(migration001);
   const migration002 = readFileSync(MIGRATION_002_PATH, 'utf-8');
   await db.pool.query(migration002);
+  const migration003 = readFileSync(MIGRATION_003_PATH, 'utf-8');
+  await db.pool.query(migration003);
 
   // Build app with real DB + mock providers
   const embeddingProvider = mockEmbeddingProvider();

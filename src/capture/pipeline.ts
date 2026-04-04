@@ -63,7 +63,7 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
   // NOTE: conversion happens AFTER hash check so we always hash the original bytes.
   //       The original file (not converted) is what gets uploaded to blob storage.
   const warnings: string[] = [];
-  const embeddingFiles = files.length > 0
+  const convertedFiles = files.length > 0
     ? await Promise.all(
         files.map(async (f) => {
           try {
@@ -85,18 +85,9 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
         return valid.length > 0 ? valid : undefined;
       })
     : undefined;
-  const embedding = await embeddingProvider.embed(content, embeddingFiles);
 
-  // Step 4: Semantic dedup check (against ALL captures)
-  const dedup = await checkSemanticDedup(db, embedding);
-  if (dedup.isDuplicate) {
-    return {
-      success: false,
-      reason: `Semantic duplicate detected (similarity: ${dedup.similarity?.toFixed(3)}). Existing capture: ${dedup.existingId}`,
-    };
-  }
-
-  // Steps 5 & 6: Upload files + Extract metadata (in parallel)
+  // Step 4: Upload files + Extract metadata (in parallel)
+  // Metadata extraction now receives files for multimodal analysis + text extraction
   const [fileUrls, metadata] = await Promise.all([
     // Upload files that don't already exist
     Promise.all(
@@ -109,9 +100,26 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
         return blobStorage.upload(blobName, file.data, file.contentType);
       }),
     ),
-    // Extract metadata
-    extractMetadata(metadataLLM, content),
+    // Extract metadata + text from content and files
+    extractMetadata(metadataLLM, content, convertedFiles),
   ]);
+
+  // Step 5: Generate embedding — include extracted_text so the vector captures media content
+  const embeddingText = metadata.extracted_text
+    ? `${content}\n\n${metadata.extracted_text}`
+    : content;
+  console.log(`[pipeline] Embedding text length: ${embeddingText.length} (content: ${content.length}${metadata.extracted_text ? `, extracted: ${metadata.extracted_text.length}` : ''}), files for embed: ${convertedFiles?.length ?? 0}`);
+  const embedding = await embeddingProvider.embed(embeddingText, convertedFiles);
+
+  // Step 6: Semantic dedup check (against ALL captures)
+  const dedup = await checkSemanticDedup(db, embedding);
+  if (dedup.isDuplicate) {
+    console.log(`[pipeline] Semantic duplicate — similarity: ${dedup.similarity?.toFixed(3)}, existing: ${dedup.existingId}`);
+    return {
+      success: false,
+      reason: `Semantic duplicate detected (similarity: ${dedup.similarity?.toFixed(3)}). Existing capture: ${dedup.existingId}`,
+    };
+  }
 
   // Step 7: Determine final tags — caller-provided tags win; fall back to LLM-extracted tags
   const finalTags = (validTags && validTags.length > 0) ? validTags : metadata.tags ?? [];
@@ -126,7 +134,9 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     metadata: metadata as unknown as Record<string, unknown>,
     source,
     tags: finalTags,
+    extractedText: metadata.extracted_text,
   });
 
+  console.log(`[pipeline] Captured ${result.id} — source: [${source}], tags: [${finalTags.join(', ')}], files: ${fileUrls.length}, extracted_text: ${metadata.extracted_text ? `${metadata.extracted_text.length} chars` : 'null'}`);
   return { success: true, captureId: result.id, warnings: warnings.length > 0 ? warnings : undefined };
 }

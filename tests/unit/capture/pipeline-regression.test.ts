@@ -18,6 +18,7 @@ vi.mock('../../../src/capture/metadata.js', () => ({
     dates: [],
     type: 'statement',
     tags: [],
+    extracted_text: null,
   }),
 }));
 
@@ -75,7 +76,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
     expect(result.success).toBe(true);
     expect(input.embeddingProvider.embed).toHaveBeenCalledWith('Test capture', undefined);
-    expect(mockExtractMetadata).toHaveBeenCalledWith(input.metadataLLM, 'Test capture');
+    expect(mockExtractMetadata).toHaveBeenCalledWith(input.metadataLLM, 'Test capture', undefined);
     expect(mockInsertCapture).toHaveBeenCalled();
   });
 
@@ -127,7 +128,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
   it('11.5 Similarity > 0.95 → returns {success: false}', async () => {
     mockFindSimilarCaptures.mockResolvedValueOnce([
-      { id: 'existing-cap', similarity: 0.98, content: 'similar', content_types: ['text'], file_urls: null, file_hashes: null, embedding: [], metadata: {}, source: ['api'], status: 'pending', archived: false, created_at: new Date(), updated_at: new Date() },
+      { id: 'existing-cap', similarity: 0.98, content: 'similar', content_types: ['text'], file_urls: null, file_hashes: null, embedding: [], metadata: {}, source: ['api'], tags: [], extracted_text: null, status: 'pending', archived: false, created_at: new Date(), updated_at: new Date() },
     ]);
 
     const input = makeInput();
@@ -205,7 +206,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
   it('11.11 Caller-provided valid tags are stored (bypass metadata tags)', async () => {
     mockExtractMetadata.mockResolvedValueOnce({
-      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill'],
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill'], extracted_text: null,
     });
 
     const input = makeInput({ tags: ['preference', 'goal'] });
@@ -220,7 +221,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
   it('11.12 No caller tags → uses tags from metadata extraction', async () => {
     mockExtractMetadata.mockResolvedValueOnce({
-      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill', 'interest'],
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['skill', 'interest'], extracted_text: null,
     });
 
     const input = makeInput(); // no tags field
@@ -235,7 +236,7 @@ describe('Section 11: Pipeline Regressions', () => {
 
   it('11.13 Empty caller tags array → falls back to metadata tags', async () => {
     mockExtractMetadata.mockResolvedValueOnce({
-      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['decision'],
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: ['decision'], extracted_text: null,
     });
 
     const input = makeInput({ tags: [] });
@@ -245,6 +246,101 @@ describe('Section 11: Pipeline Regressions', () => {
     expect(mockInsertCapture).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ tags: ['decision'] }),
+    );
+  });
+
+  // --- Multimodal metadata + extracted_text ---
+
+  it('11.14 Files are passed to extractMetadata for multimodal analysis', async () => {
+    const input = makeInput({
+      files: [{ data: Buffer.from('photo-bytes'), contentType: 'image/jpeg', filename: 'whiteboard.jpg' }],
+    });
+
+    const result = await runCapturePipeline(input);
+    expect(result.success).toBe(true);
+
+    // extractMetadata should receive the converted files (not original)
+    expect(mockExtractMetadata).toHaveBeenCalledWith(
+      input.metadataLLM,
+      'Test capture',
+      [{ data: Buffer.from('converted'), mimeType: 'image/jpeg' }],
+    );
+  });
+
+  it('11.15 extracted_text from metadata is stored in capture', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: ['Alice'], topics: ['meeting notes'], action_items: ['Follow up with Bob'],
+      dates: ['2026-04-04'], type: 'action', tags: ['resource'],
+      extracted_text: 'Meeting agenda: Q2 planning, Budget review, Team updates',
+    });
+
+    const input = makeInput();
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(mockInsertCapture).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        extractedText: 'Meeting agenda: Q2 planning, Budget review, Team updates',
+      }),
+    );
+  });
+
+  it('11.16 null extracted_text is stored as null', async () => {
+    // Default mock already returns extracted_text: null
+    const input = makeInput();
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(mockInsertCapture).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ extractedText: null }),
+    );
+  });
+
+  it('11.17 Embedding includes extracted_text concatenated with content', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: [], topics: [], action_items: [], dates: [], type: 'statement', tags: [],
+      extracted_text: 'OCR: Buy milk, eggs, bread',
+    });
+
+    const input = makeInput();
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    // embed() should receive content + extracted_text as the text portion
+    expect(input.embeddingProvider.embed).toHaveBeenCalledWith(
+      'Test capture\n\nOCR: Buy milk, eggs, bread',
+      undefined, // no files for text-only input
+    );
+  });
+
+  it('11.18 No extracted_text → embedding uses content only', async () => {
+    // Default mock returns extracted_text: null
+    const input = makeInput();
+    const result = await runCapturePipeline(input);
+
+    expect(result.success).toBe(true);
+    expect(input.embeddingProvider.embed).toHaveBeenCalledWith('Test capture', undefined);
+  });
+
+  it('11.19 File capture with extracted_text: embedding gets text+extracted + file bytes', async () => {
+    mockExtractMetadata.mockResolvedValueOnce({
+      people: [], topics: ['receipt'], action_items: [], dates: [], type: 'statement', tags: [],
+      extracted_text: 'Total: $42.50\nDate: April 4, 2026',
+    });
+
+    const input = makeInput({
+      files: [{ data: Buffer.from('receipt-img'), contentType: 'image/jpeg', filename: 'receipt.jpg' }],
+    });
+
+    const result = await runCapturePipeline(input);
+    expect(result.success).toBe(true);
+
+    // embed() gets concatenated text AND the converted file
+    expect(input.embeddingProvider.embed).toHaveBeenCalledWith(
+      'Test capture\n\nTotal: $42.50\nDate: April 4, 2026',
+      [{ data: Buffer.from('converted'), mimeType: 'image/jpeg' }],
     );
   });
 });

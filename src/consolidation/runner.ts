@@ -66,6 +66,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
       ...pendingCaptures.map((c) => ({
         id: c.id, content: c.content, embedding: c.embedding,
         source: c.source, tags: c.tags,
+        extracted_text: c.extracted_text,
       })),
       ...completedReminders.map((r) => ({
         id: r.id,
@@ -73,6 +74,7 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<void> {
         embedding: r.embedding,
         source: ['system'] as string[],
         tags: [] as string[],
+        extracted_text: null as string | null,
       })),
     ];
 

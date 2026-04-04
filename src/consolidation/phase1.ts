@@ -5,7 +5,7 @@ import { validateTags, ALLOWED_TAGS, TAG_DESCRIPTIONS } from '../capture/tags.js
 import { extractJson } from '../providers/json-utils.js';
 
 export interface ClusterInput {
-  captures: Array<{ id: string; content: string; embedding: number[]; source?: string[]; tags?: string[] }>;
+  captures: Array<{ id: string; content: string; embedding: number[]; source?: string[]; tags?: string[]; extracted_text?: string | null }>;
   existingFacts: Array<{ id: string; content: string; confidence: number; origin: string; tags: string[] }>;
   reviewMode: string;
 }
@@ -69,7 +69,11 @@ export async function processCluster(
   };
 
   const capturesText = input.captures
-    .map((c) => `[${c.id}]: ${c.content}`)
+    .map((c) => {
+      const parts = [`[${c.id}]: ${c.content}`];
+      if (c.extracted_text) parts.push(`[Extracted from media]: ${c.extracted_text}`);
+      return parts.join('\n');
+    })
     .join('\n\n');
 
   const factsText = input.existingFacts.length > 0

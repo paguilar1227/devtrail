@@ -9,6 +9,7 @@ export interface CaptureInsert {
   metadata: Record<string, unknown>;
   source: string[];
   tags: string[];
+  extractedText: string | null;
 }
 
 export interface CaptureRow {
@@ -21,6 +22,7 @@ export interface CaptureRow {
   metadata: Record<string, unknown>;
   source: string[];
   tags: string[];
+  extracted_text: string | null;
   status: string;
   archived: boolean;
   created_at: Date;
@@ -32,8 +34,8 @@ export async function insertCapture(
   capture: CaptureInsert,
 ): Promise<{ id: string }> {
   const result = await db.query(
-    `INSERT INTO captures (content, content_types, file_urls, file_hashes, embedding, metadata, source, tags)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO captures (content, content_types, file_urls, file_hashes, embedding, metadata, source, tags, extracted_text)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id`,
     [
       capture.content,
@@ -44,6 +46,7 @@ export async function insertCapture(
       JSON.stringify(capture.metadata),
       capture.source,
       capture.tags,
+      capture.extractedText,
     ],
   );
   return result.rows[0];

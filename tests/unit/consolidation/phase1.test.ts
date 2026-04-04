@@ -243,4 +243,74 @@ describe('phase1', () => {
 
     expect(insertedReviewStatus).toBe('auto_approved');
   });
+
+  it('includes extracted_text in the LLM prompt for media-originated captures', async () => {
+    const db = mockDb();
+    const llm = mockLLM();
+
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        actions: [{ action: 'discard', reason: 'Just a receipt' }],
+      }),
+      tokensUsed: { input: 500, output: 50, total: 550 },
+    });
+
+    vi.mocked(db.transaction).mockImplementation(async (fn) => fn({
+      query: vi.fn().mockResolvedValue({ rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [] }),
+      release: vi.fn(),
+    } as any));
+
+    const { processCluster } = await import('../../../src/consolidation/phase1.js');
+    await processCluster(db, llm, {
+      captures: [
+        {
+          id: 'cap-photo', content: 'Photo of grocery receipt',
+          embedding: [], source: ['telegram'],
+          extracted_text: 'Whole Foods Market\nOrganic Milk $5.99\nEggs $4.49\nTotal: $10.48',
+        },
+        {
+          id: 'cap-text', content: 'I prefer organic groceries',
+          embedding: [], source: ['mcp'],
+        },
+      ],
+      existingFacts: [],
+      reviewMode: 'hybrid',
+    });
+
+    // Verify the LLM received the extracted text in the prompt
+    const promptSent = vi.mocked(llm.complete).mock.calls[0][0][0].content as string;
+    expect(promptSent).toContain('[Extracted from media]: Whole Foods Market');
+    expect(promptSent).toContain('Organic Milk $5.99');
+    // Non-media capture should NOT have extracted text marker
+    expect(promptSent).toContain('[cap-text]: I prefer organic groceries');
+    expect(promptSent).not.toContain('[cap-text]:\n[Extracted from media]');
+  });
+
+  it('omits extracted_text marker when capture has no extracted text', async () => {
+    const db = mockDb();
+    const llm = mockLLM();
+
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ actions: [{ action: 'discard', reason: 'Noise' }] }),
+      tokensUsed: { input: 300, output: 30, total: 330 },
+    });
+
+    vi.mocked(db.transaction).mockImplementation(async (fn) => fn({
+      query: vi.fn().mockResolvedValue({ rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [] }),
+      release: vi.fn(),
+    } as any));
+
+    const { processCluster } = await import('../../../src/consolidation/phase1.js');
+    await processCluster(db, llm, {
+      captures: [
+        { id: 'cap-1', content: 'Plain text capture', embedding: [], source: ['api'], extracted_text: null },
+        { id: 'cap-2', content: 'Another text capture', embedding: [], source: ['api'] },
+      ],
+      existingFacts: [],
+      reviewMode: 'hybrid',
+    });
+
+    const promptSent = vi.mocked(llm.complete).mock.calls[0][0][0].content as string;
+    expect(promptSent).not.toContain('[Extracted from media]');
+  });
 });

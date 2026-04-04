@@ -92,5 +92,92 @@ describe('metadata extraction', () => {
     const { extractMetadata } = await import('../../../src/capture/metadata.js');
     const metadata = await extractMetadata(llm, 'Content');
     expect(metadata.tags).toEqual([]);
+    expect(metadata.extracted_text).toBeNull();
+  });
+
+  it('sends files as multimodal content parts to LLM', async () => {
+    const llm = mockLLM();
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        people: [], topics: ['whiteboard'], action_items: ['Review design'],
+        dates: [], type: 'action', tags: ['resource'],
+        extracted_text: 'Architecture diagram: API → Service → DB',
+      }),
+      tokensUsed: { input: 200, output: 80, total: 280 },
+    });
+
+    const { extractMetadata } = await import('../../../src/capture/metadata.js');
+    const files = [{ data: Buffer.from('img-bytes'), mimeType: 'image/jpeg' }];
+    const metadata = await extractMetadata(llm, 'Whiteboard photo', files);
+
+    // Verify LLM received multimodal content (array of parts, not plain string)
+    const callArgs = vi.mocked(llm.complete).mock.calls[0];
+    const messageContent = callArgs[0][0].content;
+    expect(Array.isArray(messageContent)).toBe(true);
+    const parts = messageContent as any[];
+    expect(parts[0]).toEqual({ type: 'text', text: 'Whiteboard photo' });
+    expect(parts[1].type).toBe('image');
+    expect(parts[1].data).toEqual(Buffer.from('img-bytes'));
+    expect(parts[1].mimeType).toBe('image/jpeg');
+
+    // Verify extracted_text is returned
+    expect(metadata.extracted_text).toBe('Architecture diagram: API → Service → DB');
+    expect(metadata.topics).toContain('whiteboard');
+  });
+
+  it('returns extracted_text from LLM response for media files', async () => {
+    const llm = mockLLM();
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        people: [], topics: ['grocery list'], action_items: [],
+        dates: [], type: 'statement', tags: [],
+        extracted_text: 'Milk\nEggs\nBread\nButter',
+      }),
+      tokensUsed: { input: 150, output: 60, total: 210 },
+    });
+
+    const { extractMetadata } = await import('../../../src/capture/metadata.js');
+    const metadata = await extractMetadata(llm, 'Shopping list photo', [
+      { data: Buffer.from('photo'), mimeType: 'image/png' },
+    ]);
+
+    expect(metadata.extracted_text).toBe('Milk\nEggs\nBread\nButter');
+  });
+
+  it('returns null extracted_text when LLM returns empty string', async () => {
+    const llm = mockLLM();
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        people: [], topics: [], action_items: [], dates: [],
+        type: 'statement', tags: [], extracted_text: '  ',
+      }),
+      tokensUsed: { input: 50, output: 30, total: 80 },
+    });
+
+    const { extractMetadata } = await import('../../../src/capture/metadata.js');
+    const metadata = await extractMetadata(llm, 'Some image', [
+      { data: Buffer.from('img'), mimeType: 'image/jpeg' },
+    ]);
+
+    expect(metadata.extracted_text).toBeNull();
+  });
+
+  it('returns null extracted_text when no files provided', async () => {
+    const llm = mockLLM();
+    vi.mocked(llm.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        people: [], topics: [], action_items: [], dates: [],
+        type: 'statement', tags: [],
+      }),
+      tokensUsed: { input: 50, output: 30, total: 80 },
+    });
+
+    const { extractMetadata } = await import('../../../src/capture/metadata.js');
+    const metadata = await extractMetadata(llm, 'Just text');
+
+    // No files → plain string message, no extracted_text field → null
+    const callArgs = vi.mocked(llm.complete).mock.calls[0];
+    expect(typeof callArgs[0][0].content).toBe('string');
+    expect(metadata.extracted_text).toBeNull();
   });
 });
