@@ -428,7 +428,7 @@ export function registerNlRouter(
         downloadFile,
         async (audio) => {
           const response = await deps.metadataLLM.complete(
-            [{ role: 'user', content: [{ type: 'text', text: 'Transcribe and summarize this voice message.' }, { type: 'image', data: audio, mimeType: 'audio/ogg' }] }],
+            [{ role: 'user', content: [{ type: 'text', text: 'Transcribe this voice message verbatim. Return ONLY the transcription — no preamble, no headers, no formatting, no summary. Just the words spoken.' }, { type: 'image', data: audio, mimeType: 'audio/ogg' }] }],
           );
           return response.content;
         },

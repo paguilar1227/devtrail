@@ -95,7 +95,17 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
     : undefined;
 
   // Step 4: Upload files + Extract metadata (in parallel)
-  // Metadata extraction now receives files for multimodal analysis + text extraction
+  // Only send visual files (images, PDFs) to metadata extraction — audio/video content
+  // is already captured as text (transcription/summary) so re-analyzing wastes tokens.
+  const metadataFiles = convertedFiles?.filter((f) =>
+    f.mimeType.startsWith('image/') || f.mimeType === 'application/pdf',
+  );
+  const metadataFilesOrUndef = metadataFiles && metadataFiles.length > 0 ? metadataFiles : undefined;
+  if (convertedFiles && metadataFiles) {
+    const skipped = convertedFiles.length - metadataFiles.length;
+    if (skipped > 0) console.log(`[pipeline] Skipping ${skipped} audio/video file(s) from metadata extraction (content already has transcription)`);
+  }
+
   const [fileUrls, metadata] = await Promise.all([
     // Upload files that don't already exist
     Promise.all(
@@ -108,8 +118,8 @@ export async function runCapturePipeline(input: PipelineInput): Promise<Pipeline
         return blobStorage.upload(blobName, file.data, file.contentType);
       }),
     ),
-    // Extract metadata + text from content and files
-    extractMetadata(metadataLLM, content, convertedFiles),
+    // Extract metadata + text from content and visual files only
+    extractMetadata(metadataLLM, content, metadataFilesOrUndef),
   ]);
 
   // Step 5: Generate embedding — include extracted_text so the vector captures media content

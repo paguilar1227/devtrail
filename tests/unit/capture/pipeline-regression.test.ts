@@ -324,7 +324,35 @@ describe('Section 11: Pipeline Regressions', () => {
     expect(input.embeddingProvider.embed).toHaveBeenCalledWith('Test capture', undefined);
   });
 
-  it('11.19 File capture with extracted_text: embedding gets text+extracted + file bytes', async () => {
+  it('11.19 Audio files are NOT sent to metadata extraction (content is already transcription)', async () => {
+    mockConvertForEmbedding.mockResolvedValueOnce({
+      data: Buffer.from('wav-bytes'),
+      mimeType: 'audio/wav',
+      originalMimeType: 'audio/ogg',
+    });
+
+    const input = makeInput({
+      content: 'One of my favorite foods is pizza',
+      files: [{ data: Buffer.from('ogg-audio'), contentType: 'audio/ogg', filename: 'voice.ogg' }],
+    });
+
+    const result = await runCapturePipeline(input);
+    expect(result.success).toBe(true);
+
+    // extractMetadata should receive NO files — audio is skipped
+    expect(mockExtractMetadata).toHaveBeenCalledWith(
+      input.metadataLLM,
+      'One of my favorite foods is pizza',
+      undefined,
+    );
+    // But embedding should still get the audio file
+    expect(input.embeddingProvider.embed).toHaveBeenCalledWith(
+      'One of my favorite foods is pizza',
+      [{ data: Buffer.from('wav-bytes'), mimeType: 'audio/wav' }],
+    );
+  });
+
+  it('11.20 File capture with extracted_text: embedding gets text+extracted + file bytes', async () => {
     mockExtractMetadata.mockResolvedValueOnce({
       people: [], topics: ['receipt'], action_items: [], dates: [], type: 'statement', tags: [],
       extracted_text: 'Total: $42.50\nDate: April 4, 2026',
