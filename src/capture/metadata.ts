@@ -35,7 +35,7 @@ Return JSON with these fields:
   - health: medical, fitness, dietary, or wellness information
   - dislike: something to avoid or never suggest
   - milestone: a significant achievement or turning point
-- extracted_text: if media files are present, extract ALL readable text (OCR for images, full text for PDFs, transcription for audio/video). Return null if no media or no text found in media. This should be the raw text content, not a summary.
+- extracted_text: if media files contain clearly legible text (documents, signs, whiteboards, printed/handwritten text, PDFs, captions in images), extract ALL of it verbatim. For audio/video, transcribe speech. Return null if the media does not contain readable text — photos of people, animals, scenery, food, objects, etc. should return null. Do NOT hallucinate or guess at text that isn't clearly there. This must be raw text content, not a summary or description.
 
 Return ONLY valid JSON, no markdown formatting.`;
 
