@@ -58,7 +58,17 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.delete('/api/v1/projects/:id', async (c) => {
-    await projectsSvc.deleteProject(deps, c.req.param('id'));
+    const hard = c.req.query('hard') === 'true';
+    if (hard) {
+      await projectsSvc.deleteProjectHard(deps, c.req.param('id'));
+      return c.json({ ok: true, mode: 'hard' });
+    }
+    await projectsSvc.archiveProject(deps, c.req.param('id'));
+    return c.json({ ok: true, mode: 'archived' });
+  });
+
+  app.post('/api/v1/projects/:id/restore', async (c) => {
+    await projectsSvc.unarchiveProject(deps, c.req.param('id'));
     return c.json({ ok: true });
   });
 
@@ -70,8 +80,8 @@ export function createApp(deps: ServiceDeps) {
     const project_id = c.req.query('project_id') ?? undefined;
     const tags = c.req.query('tags')?.split(',').filter(Boolean);
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
-    const items = await contentSvc.listContentItems(deps, { type, project_id, tags, limit });
-    // Don't leak the big embedding field
+    const include_archived = c.req.query('include_archived') === 'true';
+    const items = await contentSvc.listContentItems(deps, { type, project_id, tags, limit, include_archived });
     return c.json({ items: items.map(stripEmbedding) });
   });
 
@@ -154,7 +164,17 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.delete('/api/v1/content/:id', async (c) => {
+    const hard = c.req.query('hard') === 'true';
+    if (hard) {
+      await contentSvc.deleteContentItemHardById(deps, c.req.param('id'));
+      return c.json({ ok: true, mode: 'hard' });
+    }
     await contentSvc.archiveContentItemById(deps, c.req.param('id'));
+    return c.json({ ok: true, mode: 'archived' });
+  });
+
+  app.post('/api/v1/content/:id/restore', async (c) => {
+    await contentSvc.unarchiveContentItemById(deps, c.req.param('id'));
     return c.json({ ok: true });
   });
 
@@ -166,12 +186,14 @@ export function createApp(deps: ServiceDeps) {
     const status = c.req.query('status');
     const priority = c.req.query('priority');
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
+    const include_archived = c.req.query('include_archived') === 'true';
 
     const todos = await todosSvc.listTodos(deps, {
       project_id: projectId === 'null' ? null : projectId ?? undefined,
       status: status ?? undefined,
       priority: priority ?? undefined,
       limit,
+      include_archived,
     });
     return c.json({ todos: todos.map(stripEmbedding) });
   });
@@ -222,7 +244,17 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.delete('/api/v1/todos/:id', async (c) => {
+    const hard = c.req.query('hard') === 'true';
+    if (hard) {
+      await todosSvc.deleteTodoHardById(deps, c.req.param('id'));
+      return c.json({ ok: true, mode: 'hard' });
+    }
     await todosSvc.archiveTodoById(deps, c.req.param('id'));
+    return c.json({ ok: true, mode: 'archived' });
+  });
+
+  app.post('/api/v1/todos/:id/restore', async (c) => {
+    await todosSvc.unarchiveTodoById(deps, c.req.param('id'));
     return c.json({ ok: true });
   });
 

@@ -150,6 +150,10 @@ export async function archiveTodo(db: DbClient, id: string): Promise<void> {
   await db.query(`UPDATE todos SET archived = true, updated_at = now() WHERE id = $1`, [id]);
 }
 
+export async function unarchiveTodo(db: DbClient, id: string): Promise<void> {
+  await db.query(`UPDATE todos SET archived = false, updated_at = now() WHERE id = $1`, [id]);
+}
+
 export async function deleteTodoHard(db: DbClient, id: string): Promise<void> {
   await db.query(`DELETE FROM todos WHERE id = $1`, [id]);
 }

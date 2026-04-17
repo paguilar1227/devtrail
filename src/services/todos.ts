@@ -1,7 +1,8 @@
 import type { ServiceDeps } from './index.js';
 import {
   insertTodo, listTodos as dbListTodos, getTodoById,
-  updateTodo as dbUpdateTodo, archiveTodo, deleteTodoHard,
+  updateTodo as dbUpdateTodo,
+  archiveTodo, unarchiveTodo, deleteTodoHard,
   findChildTodos, findSimilarTodos,
   type TodoRow, type TodoInsert, type ListTodosFilters,
 } from '../db/todos.js';
@@ -79,7 +80,12 @@ export async function archiveTodoById(deps: ServiceDeps, id: string): Promise<vo
   await archiveTodo(deps.db, id);
 }
 
-export async function deleteTodo(deps: ServiceDeps, id: string): Promise<void> {
+export async function unarchiveTodoById(deps: ServiceDeps, id: string): Promise<void> {
+  await unarchiveTodo(deps.db, id);
+}
+
+/** Hard delete a todo. Subtasks cascade via FK. */
+export async function deleteTodoHardById(deps: ServiceDeps, id: string): Promise<void> {
   await deleteTodoHard(deps.db, id);
 }
 

@@ -148,6 +148,13 @@ export async function archiveContentItem(db: DbClient, id: string): Promise<void
   );
 }
 
+export async function unarchiveContentItem(db: DbClient, id: string): Promise<void> {
+  await db.query(
+    `UPDATE content_items SET archived = false, updated_at = now() WHERE id = $1`,
+    [id],
+  );
+}
+
 export async function deleteContentItemHard(db: DbClient, id: string): Promise<void> {
   await db.query(`DELETE FROM content_items WHERE id = $1`, [id]);
 }

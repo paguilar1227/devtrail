@@ -58,6 +58,35 @@ export async function updateProject(
   return result.rows[0] ?? null;
 }
 
-export async function deleteProject(db: DbClient, id: string): Promise<void> {
-  await db.query(`DELETE FROM projects WHERE id = $1`, [id]);
+export async function archiveProject(db: DbClient, id: string): Promise<void> {
+  await db.query(
+    `UPDATE projects SET status = 'archived', updated_at = now() WHERE id = $1`,
+    [id],
+  );
+}
+
+export async function unarchiveProject(db: DbClient, id: string): Promise<void> {
+  await db.query(
+    `UPDATE projects SET status = 'active', updated_at = now() WHERE id = $1`,
+    [id],
+  );
+}
+
+/**
+ * Hard delete: removes project UUID from every content_items.project_ids[],
+ * then deletes the project row. todos.project_id auto-nulls via FK cascade.
+ * Run both statements in a single transaction so there's no window where
+ * the project is deleted but stale UUIDs remain in arrays.
+ */
+export async function deleteProjectHard(db: DbClient, id: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.query(
+      `UPDATE content_items
+       SET project_ids = array_remove(project_ids, $1::uuid),
+           updated_at = now()
+       WHERE project_ids @> ARRAY[$1]::uuid[]`,
+      [id],
+    );
+    await tx.query(`DELETE FROM projects WHERE id = $1`, [id]);
+  });
 }

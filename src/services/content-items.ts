@@ -3,7 +3,9 @@ import type { ServiceDeps } from './index.js';
 import {
   insertContentItem, listContentItems as dbListContentItems,
   getContentItemById, updateContentItem as dbUpdate,
-  archiveContentItem, findByFileHash,
+  archiveContentItem, unarchiveContentItem,
+  deleteContentItemHard,
+  findByFileHash,
   type ContentItemRow, type ContentType, type ListContentItemsFilters,
 } from '../db/content-items.js';
 import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkType } from '../db/chunks.js';
@@ -217,4 +219,13 @@ export async function updateContentItem(
 
 export async function archiveContentItemById(deps: ServiceDeps, id: string): Promise<void> {
   await archiveContentItem(deps.db, id);
+}
+
+export async function unarchiveContentItemById(deps: ServiceDeps, id: string): Promise<void> {
+  await unarchiveContentItem(deps.db, id);
+}
+
+/** Hard delete a content item. Chunks cascade via FK. Does NOT remove blob storage files. */
+export async function deleteContentItemHardById(deps: ServiceDeps, id: string): Promise<void> {
+  await deleteContentItemHard(deps.db, id);
 }

@@ -1,7 +1,10 @@
 import type { ServiceDeps } from './index.js';
 import {
   insertProject, listProjects as dbListProjects, getProjectById,
-  updateProject as dbUpdateProject, deleteProject as dbDeleteProject,
+  updateProject as dbUpdateProject,
+  archiveProject as dbArchiveProject,
+  unarchiveProject as dbUnarchiveProject,
+  deleteProjectHard as dbDeleteHard,
   type ProjectRow,
 } from '../db/projects.js';
 
@@ -29,6 +32,18 @@ export async function updateProject(
   return dbUpdateProject(deps.db, id, patch);
 }
 
-export async function deleteProject(deps: ServiceDeps, id: string): Promise<void> {
-  return dbDeleteProject(deps.db, id);
+export async function archiveProject(deps: ServiceDeps, id: string): Promise<void> {
+  await dbArchiveProject(deps.db, id);
+}
+
+export async function unarchiveProject(deps: ServiceDeps, id: string): Promise<void> {
+  await dbUnarchiveProject(deps.db, id);
+}
+
+/**
+ * Permanently delete a project. Scrubs its UUID from every content_items.project_ids[]
+ * array, sets todos.project_id to NULL (via FK cascade), and removes the project row.
+ */
+export async function deleteProjectHard(deps: ServiceDeps, id: string): Promise<void> {
+  await dbDeleteHard(deps.db, id);
 }

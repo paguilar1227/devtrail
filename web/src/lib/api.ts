@@ -115,18 +115,29 @@ export const updateProject = (id: string, patch: Partial<Project>) =>
     body: JSON.stringify(patch),
   });
 
+export const archiveProject = (id: string) =>
+  request<{ ok: true; mode: 'archived' }>(`/api/v1/projects/${id}`, { method: 'DELETE' });
+
+export const deleteProjectHard = (id: string) =>
+  request<{ ok: true; mode: 'hard' }>(`/api/v1/projects/${id}?hard=true`, { method: 'DELETE' });
+
+export const restoreProject = (id: string) =>
+  request<{ ok: true }>(`/api/v1/projects/${id}/restore`, { method: 'POST' });
+
 // ----- Content -----
 export const listContent = (params: {
   type?: 'document' | 'note';
   project_id?: string;
   tags?: string[];
   limit?: number;
+  include_archived?: boolean;
 } = {}) => {
   const q = new URLSearchParams();
   if (params.type) q.set('type', params.type);
   if (params.project_id) q.set('project_id', params.project_id);
   if (params.tags?.length) q.set('tags', params.tags.join(','));
   if (params.limit) q.set('limit', String(params.limit));
+  if (params.include_archived) q.set('include_archived', 'true');
   return request<{ items: ContentItem[] }>(`/api/v1/content?${q}`);
 };
 
@@ -172,15 +183,26 @@ export const updateContent = (id: string, patch: Partial<ContentItem>) =>
     body: JSON.stringify(patch),
   });
 
+export const archiveContent = (id: string) =>
+  request<{ ok: true; mode: 'archived' }>(`/api/v1/content/${id}`, { method: 'DELETE' });
+
+export const deleteContentHard = (id: string) =>
+  request<{ ok: true; mode: 'hard' }>(`/api/v1/content/${id}?hard=true`, { method: 'DELETE' });
+
+export const restoreContent = (id: string) =>
+  request<{ ok: true }>(`/api/v1/content/${id}/restore`, { method: 'POST' });
+
 // ----- Todos -----
 export const listTodos = (params: {
   project_id?: string | null;
   status?: string;
+  include_archived?: boolean;
 } = {}) => {
   const q = new URLSearchParams();
   if (params.project_id === null) q.set('project_id', 'null');
   else if (params.project_id) q.set('project_id', params.project_id);
   if (params.status) q.set('status', params.status);
+  if (params.include_archived) q.set('include_archived', 'true');
   return request<{ todos: Todo[] }>(`/api/v1/todos?${q}`);
 };
 
@@ -195,6 +217,15 @@ export const updateTodo = (id: string, patch: Partial<Todo>) =>
     method: 'PUT',
     body: JSON.stringify(patch),
   });
+
+export const archiveTodo = (id: string) =>
+  request<{ ok: true; mode: 'archived' }>(`/api/v1/todos/${id}`, { method: 'DELETE' });
+
+export const deleteTodoHard = (id: string) =>
+  request<{ ok: true; mode: 'hard' }>(`/api/v1/todos/${id}?hard=true`, { method: 'DELETE' });
+
+export const restoreTodo = (id: string) =>
+  request<{ ok: true }>(`/api/v1/todos/${id}/restore`, { method: 'POST' });
 
 // ----- Search + RAG -----
 export const search = (payload: {
