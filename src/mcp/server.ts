@@ -6,21 +6,96 @@ import * as contentSvc from '../services/content-items.js';
 import * as todosSvc from '../services/todos.js';
 import * as searchSvc from '../services/search.js';
 
-const INSTRUCTIONS = `You are connected to Open Brain — a project-scoped personal knowledge base and productivity tool.
+const INSTRUCTIONS = `# Open Brain — Personal Knowledge Base + Productivity Tool
 
-The user organizes content into **projects** that contain documents, notes, and todos. Documents and notes can belong to multiple projects; todos belong to at most one project.
+Open Brain is a single-user personal knowledge system. Think NotebookLM crossed with a task manager. The user organizes knowledge into **projects**, each containing documents, notes, and todos. Semantic search spans everything.
 
-When the user asks you to find something, use \`search\` to do semantic retrieval. You can scope to a specific project, filter by entity types, or search globally.
+Use these tools actively. The user expects you to save conversation artifacts on their request, surface relevant prior knowledge before making things up, and turn intents into todos.
 
-When the user wants to save something mid-conversation ("save this to my Open Brain" / "add a todo for this" / "store this audio in my project"), use \`create\`:
-- Type 'document' for external reference material (PDFs, articles)
-- Type 'note' for structured self-authored content
-- Type 'quick_note' for fast thoughts and captures
-- Type 'todo' for actionable items
+## Entity model
 
-Projects are top-level. Use \`create_project\` to make one and \`list_projects\` to see what exists.
+- **Project** — top-level container. Has name, description, status (active/archived/completed). Most content belongs to 1+ projects.
+- **Document** — uploaded reference material (PDFs, images, audio, video, long-form text someone else wrote). Chunked for search.
+- **Note** — content the user authored themselves. Can be long-form. Chunked for search.
+- **Quick note** — a fast-captured thought. Stored as a note with an AI-generated title. Use this for mid-conversation saves when the user says "jot down…" / "save this idea…".
+- **Todo** — actionable item with status, priority (P1/P2/P3), optional due_date, optional parent for subtasks.
 
-The user's ID system uses UUIDs — use \`get(id)\` to fetch any entity's full content by its UUID.`;
+## Project membership (asymmetric — important)
+
+- Documents, notes, quick_notes use **\`project_ids\`** (array) — can belong to multiple projects or zero (empty array = personal/global scope).
+- Todos use **\`project_id\`** (single string) — belongs to one project or \`null\` (personal Inbox).
+- Content with no project membership is "personal" and lives in the Inbox.
+
+## Tags
+
+Flat labels for filtering (e.g. \`reference\`, \`meeting-notes\`, \`reading\`). Optional on all entities. Use lowercase kebab-case.
+
+## When to use which tool
+
+**Retrieval (always try this first when the user asks a question):**
+- Any "what did I save / read / note about X" → \`search(query)\`
+- In a project context → \`search(query, project_id)\`
+- Restrict to one entity type → \`search(query, entity_types: ['document'])\`
+- Filter by tag → \`search(query, tags: ['urgent'])\`
+
+**Creation (when the user explicitly wants to save):**
+- "Save this idea…" / "remember this…" → \`create(type: 'quick_note', content: …)\`
+- "Save this article / meeting notes / writeup…" → \`create(type: 'note' or 'document', content, title?, project_ids?)\`
+- "Add a todo / remind me / I need to…" → \`create(type: 'todo', content, project_id?, priority?, due_date?)\`
+
+**Browse and lookup:**
+- "What projects do I have?" → \`list_projects\`
+- "Show me todos in project X" → \`list(entity_type: 'todo', project_id: X)\`
+- "List my documents" → \`list(entity_type: 'document')\`
+- You have a UUID from a previous result → \`get(id)\` (auto-detects project / content / todo)
+
+## Project resolution
+
+If the user mentions a project by name ("save this to my 'Learning Rust' project"):
+1. Call \`list_projects()\` to find the ID by matching the name.
+2. If no match, offer to create it with \`create_project\` — confirm with the user first.
+3. Then use that project_id in your create / search call.
+
+Don't invent project UUIDs. Always get them from \`list_projects\` or a prior search result.
+
+## Concrete examples
+
+**User:** "Save this conversation about Rust async to my Learning Rust project."
+→ \`list_projects()\` to find "Learning Rust" ID
+→ \`create(type: 'note', title: 'Rust async patterns', content: <summary>, project_ids: [<that ID>])\`
+
+**User:** "Remind me to email John tomorrow."
+→ \`create(type: 'todo', content: 'Email John', due_date: '<tomorrow ISO>', priority: 'P2')\`
+→ Confirm: "Added to your todos with P2 priority, due tomorrow."
+
+**User:** "What did I save about pgvector?"
+→ \`search(query: 'pgvector', limit: 5)\`
+→ Summarize the top hits, cite them by title.
+
+**User (in Learning Rust context):** "What have I read about async?"
+→ \`search(query: 'async programming', project_id: <Learning Rust ID>)\`
+
+**User:** "Jot down that I hated the last meeting."
+→ \`create(type: 'quick_note', content: 'Hated the last meeting')\` — no project, personal scope.
+
+## Proactive behavior
+
+- When the user generates something worth keeping ("this is great" / "this is the plan"), offer to save it.
+- Before answering from training data, check Open Brain with \`search\` — the user's own notes are authoritative for questions about their work, preferences, decisions.
+- Scope to the current project when the conversation is project-specific.
+- After creating anything, confirm back with a short summary ("Saved to Learning Rust as 'Rust async patterns'.").
+
+## Anti-patterns
+
+- **Never fabricate UUIDs.** Only \`get(id)\` IDs you got from \`list_projects\`, \`list\`, or \`search\`.
+- **Don't create duplicate projects.** Always \`list_projects\` first; match by name.
+- **Don't auto-save trivial chatter.** Save only when the user asks or when the artifact clearly has durable value (and they confirm).
+- **Don't mix membership models.** \`project_ids\` (array) is for documents/notes/quick_notes. \`project_id\` (string) is for todos. Using the wrong one breaks the call.
+
+## Known limitations
+
+- **No update or delete via MCP.** You cannot mark a todo done, edit a note, archive a document, or rename a project through these tools. The web UI handles those. If the user asks to edit, say so and point them to the app.
+- **Documents are immutable after creation.** Chunks are generated at create time and not re-chunked on update.`;
 
 export function createMcpServer(deps: ServiceDeps): McpServer {
   const server = new McpServer(
@@ -31,10 +106,10 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
   // ---------- 1. list_projects ----------
   server.tool(
     'list_projects',
-    'List all projects in Open Brain.',
+    'List all projects. Returns an array of {id, name, description, status, timestamps}. Call this first whenever the user mentions a project by name — you need the UUID to scope further operations. Match project names case-insensitively.',
     {
       status: z.enum(['active', 'archived', 'completed']).optional()
-        .describe('Filter by status. Defaults to showing all.'),
+        .describe('Filter by status. Omit to see all.'),
     },
     async ({ status }) => {
       const projects = await projectsSvc.listProjects(deps, status);
@@ -45,10 +120,10 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
   // ---------- 2. create_project ----------
   server.tool(
     'create_project',
-    'Create a new project.',
+    'Create a new project. Only use this after confirming via list_projects that no suitable project exists. Returns the full project record including its id, which you should use for subsequent create/search calls.',
     {
-      name: z.string().describe('Project name'),
-      description: z.string().optional().describe('Optional description'),
+      name: z.string().describe('Short, descriptive project name (e.g., "Learning Rust", "Home Renovation")'),
+      description: z.string().optional().describe('Optional longer description of what this project is for'),
     },
     async ({ name, description }) => {
       const project = await projectsSvc.createProject(deps, name, description ?? null);
@@ -59,14 +134,14 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
   // ---------- 3. list (unified) ----------
   server.tool(
     'list',
-    'List content items (documents, notes) or todos, with optional filters.',
+    'Browse/filter entities by type and optional filters. Use when the user wants a structured view ("show me all my todos in project X" / "list my documents"). For freeform "what did I save about Y" use `search` instead — it does semantic retrieval across content. list is exact-filter-based; search is meaning-based.',
     {
       entity_type: z.enum(['document', 'note', 'todo']).describe('Which entity type to list'),
-      project_id: z.string().optional().describe('Scope to a specific project'),
-      tags: z.array(z.string()).optional().describe('Filter by tags (AND semantics)'),
+      project_id: z.string().optional().describe('Scope to a specific project UUID'),
+      tags: z.array(z.string()).optional().describe('Filter by tags (AND — item must have all listed tags)'),
       status: z.enum(['not_started', 'in_progress', 'paused', 'done']).optional()
-        .describe('Filter by status (todos only)'),
-      limit: z.number().int().positive().default(50),
+        .describe('Todo status filter (ignored for document/note)'),
+      limit: z.number().int().positive().default(50).describe('Max items to return'),
     },
     async ({ entity_type, project_id, tags, status, limit }) => {
       let data: unknown;
@@ -92,8 +167,8 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
   // ---------- 4. get ----------
   server.tool(
     'get',
-    'Fetch any entity by its UUID. Auto-detects whether it is a content item or todo.',
-    { id: z.string().describe('Entity UUID') },
+    'Fetch the full record of any entity (project, document, note, or todo) by UUID. Auto-detects the type. Use when you have an ID from a prior list/search and need the full content (e.g., to read a long note or to see all fields on a todo). Returns the raw entity record.',
+    { id: z.string().describe('UUID from a previous list/search result — do not invent IDs') },
     async ({ id }) => {
       // Try content item first, then todo
       const ci = await contentSvc.getContentItem(deps, id);
@@ -106,23 +181,40 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
     },
   );
 
-  // ---------- 5. create (typed union via enum + optional fields) ----------
+  // ---------- 5. create ----------
   server.tool(
     'create',
     `Create a new entity. Pick a type and supply the relevant fields.
 
-- type="document" or "note": creates chunked content. Requires 'content'. Optional 'title' (auto-generated if missing), 'project_ids' (multi), 'tags'.
-- type="quick_note": creates a lightweight captured thought. Stored as a note with AI-generated title. Requires 'content'.
-- type="todo": creates an actionable item. Requires 'content'. Optional 'project_id' (single), 'priority' (P1/P2/P3), 'due_date' (ISO 8601), 'tags'.`,
+REQUIRED PER TYPE:
+- document: content (the extracted text, reference material from outside sources). Optional: title (auto-generated from content if omitted), project_ids, tags.
+- note: content (self-authored text, potentially long). Optional: title, project_ids, tags. The user wrote this themselves.
+- quick_note: content (a short captured thought). AI auto-generates the title. Optional: project_ids, tags. Use for mid-conversation "jot this down" saves.
+- todo: content (the task description, e.g., "Email John"). Optional: project_id (SINGLE, not array), priority (P1/P2/P3), due_date (ISO 8601), tags.
+
+NOTES ON MEMBERSHIP:
+- document/note/quick_note use project_ids (ARRAY). Empty/omitted = personal/global scope.
+- todo uses project_id (SINGLE string). Omitted = personal Inbox.
+- Mixing these up will cause the call to fail. Double-check before submitting.
+
+Returns the created entity's id. For documents/notes, also returns chunkCount (how many chunks were generated).`,
     {
-      type: z.enum(['document', 'note', 'quick_note', 'todo']),
-      content: z.string().describe('Content text. For todos: the task description.'),
-      title: z.string().optional().describe('Optional title. Only for document/note types. Auto-generated if omitted.'),
-      project_id: z.string().optional().describe('For todos only: single project this belongs to.'),
-      project_ids: z.array(z.string()).optional().describe('For document/note/quick_note: multi-project membership.'),
-      tags: z.array(z.string()).optional(),
-      priority: z.enum(['P1', 'P2', 'P3']).optional().describe('For todos only.'),
-      due_date: z.string().optional().describe('For todos only. ISO 8601 timestamp.'),
+      type: z.enum(['document', 'note', 'quick_note', 'todo'])
+        .describe('Entity type. Determines which fields are used.'),
+      content: z.string()
+        .describe('The primary text. For todos: task description. For documents/notes/quick_notes: the body to save.'),
+      title: z.string().optional()
+        .describe('Optional. Used by document/note only. Auto-generated by an LLM if omitted.'),
+      project_id: z.string().optional()
+        .describe('TODO ONLY. Single project UUID this todo belongs to. Use null/omit for personal Inbox todos.'),
+      project_ids: z.array(z.string()).optional()
+        .describe('DOCUMENT/NOTE/QUICK_NOTE ONLY. Array of project UUIDs. Item can belong to multiple projects, or none (personal/global).'),
+      tags: z.array(z.string()).optional()
+        .describe('Flat organizational labels. Lowercase kebab-case conventional (e.g., "reference", "meeting-notes").'),
+      priority: z.enum(['P1', 'P2', 'P3']).optional()
+        .describe('TODO ONLY. P1 = urgent, P2 = normal, P3 = low. Omit for unprioritized.'),
+      due_date: z.string().optional()
+        .describe('TODO ONLY. ISO 8601 timestamp (e.g., "2026-04-20T17:00:00Z").'),
     },
     async (input) => {
       const { type } = input;
@@ -154,14 +246,28 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
   // ---------- 6. search ----------
   server.tool(
     'search',
-    'Semantic search across content items and todos. Returns ranked matches with scores.',
+    `Primary retrieval tool — semantic (meaning-based) search across the user's documents, notes, and todos.
+
+Use this whenever the user asks a question that their existing knowledge might answer ("what did I save about X", "have I read anything on Y", "when did I last mention Z"). Also use it BEFORE creating new content to check for duplicates.
+
+Returns ranked hits with similarity scores. For documents/notes, hits are at the chunk level (a relevant passage within the full item) — the result includes parent title, type, and content_item_id. For todos, the hit is the whole todo.
+
+Scoping:
+- Omit project_id for global search across all content.
+- Pass a project_id for in-project search (NotebookLM-style: "answer only from this project's content").
+- Narrow with entity_types when the user specifies (e.g., ['document'] to avoid todos polluting results).
+- Narrow with tags when appropriate.`,
     {
-      query: z.string().describe('Natural language search query'),
-      project_id: z.string().optional().describe('Scope search to a specific project'),
+      query: z.string()
+        .describe('Natural-language search query. Full sentences work well; no need for keyword-only formatting.'),
+      project_id: z.string().optional()
+        .describe('Optional. Scope results to a single project. Omit for global search across everything.'),
       entity_types: z.array(z.enum(['document', 'note', 'todo'])).optional()
-        .describe('Filter to specific entity types. Defaults to all.'),
-      tags: z.array(z.string()).optional().describe('Filter by tags (AND)'),
-      limit: z.number().int().positive().default(10),
+        .describe('Optional. Restrict result types. Omit to include all types.'),
+      tags: z.array(z.string()).optional()
+        .describe('Optional. AND-filter: results must have ALL listed tags.'),
+      limit: z.number().int().positive().default(10)
+        .describe('Max number of hits to return. Default 10.'),
     },
     async ({ query, project_id, entity_types, tags, limit }) => {
       const hits = await searchSvc.search(deps, query, {

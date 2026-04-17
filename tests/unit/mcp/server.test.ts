@@ -82,7 +82,7 @@ describe('MCP server', () => {
     expect(result.status).toBe(200);
     expect(result.body.result.serverInfo.name).toBe('open-brain');
     expect(result.body.result.serverInfo.version).toBe('2.0.0');
-    expect(result.body.result.instructions).toContain('project-scoped personal knowledge base');
+    expect(result.body.result.instructions).toContain('Personal Knowledge Base');
     expect(result.body.result.capabilities.tools).toBeDefined();
   });
 
