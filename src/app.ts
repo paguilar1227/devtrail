@@ -292,13 +292,21 @@ export function createApp(deps: ServiceDeps) {
   // MCP endpoint (stateless — new server instance per request)
   // ==========================================================================
   app.all('/mcp', async (c) => {
-    const server = createMcpServer(deps);
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-      enableJsonResponse: true,
-    });
-    await server.connect(transport);
-    return transport.handleRequest(c.req.raw);
+    console.log(`[mcp] ${c.req.method} incoming`);
+    try {
+      const server = createMcpServer(deps);
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableJsonResponse: true,
+      });
+      await server.connect(transport);
+      const response = await transport.handleRequest(c.req.raw);
+      console.log(`[mcp] responding with status ${response.status}`);
+      return response;
+    } catch (err) {
+      console.error(`[mcp] handler crashed:`, err);
+      return c.json({ error: 'MCP handler error', detail: err instanceof Error ? err.message : String(err) }, 500);
+    }
   });
 
   // ==========================================================================
