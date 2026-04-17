@@ -289,18 +289,21 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ==========================================================================
-  // MCP endpoint (stateless — new server instance per request)
+  // MCP endpoint — single long-lived transport that maintains sessions
+  // across requests (required by the protocol's initialize → session-id flow).
   // ==========================================================================
+  const mcpServer = createMcpServer(deps);
+  const mcpTransport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableJsonResponse: true,
+  });
+  const mcpConnectPromise = mcpServer.connect(mcpTransport);
+
   app.all('/mcp', async (c) => {
     console.log(`[mcp] ${c.req.method} incoming`);
     try {
-      const server = createMcpServer(deps);
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        enableJsonResponse: true,
-      });
-      await server.connect(transport);
-      const response = await transport.handleRequest(c.req.raw);
+      await mcpConnectPromise;
+      const response = await mcpTransport.handleRequest(c.req.raw);
       console.log(`[mcp] responding with status ${response.status}`);
       return response;
     } catch (err) {
