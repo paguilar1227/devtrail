@@ -289,10 +289,9 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ==========================================================================
-  // MCP endpoint
+  // MCP endpoint (stateless — new server instance per request)
   // ==========================================================================
   app.all('/mcp', async (c) => {
-    // Stateless: new server instance per request
     const server = createMcpServer(deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
@@ -300,27 +299,67 @@ export function createApp(deps: ServiceDeps) {
     });
     await server.connect(transport);
 
-    // Adapt Hono's request/response to Node's IncomingMessage/ServerResponse
-    const body = await c.req.raw.arrayBuffer();
+    // Parse body if present (JSON-RPC request body for POST; empty for GET)
+    const bodyBuffer = await c.req.raw.arrayBuffer();
+    const bodyText = bodyBuffer.byteLength > 0 ? Buffer.from(bodyBuffer).toString() : '';
+    let parsedBody: unknown = undefined;
+    if (bodyText) {
+      try {
+        parsedBody = JSON.parse(bodyText);
+      } catch (err) {
+        return c.json({ error: 'Invalid JSON body' }, 400);
+      }
+    }
+
+    // Adapt Hono's request/response to Node's IncomingMessage/ServerResponse.
+    // The transport calls res.end(chunk) when done — we resolve the promise at that point.
     const nodeReq: any = {
       method: c.req.method,
       headers: Object.fromEntries(c.req.raw.headers.entries()),
     };
-    let respBody = '';
-    let respStatus = 200;
-    const respHeaders: Record<string, string> = {};
-    const nodeRes: any = {
-      setHeader(k: string, v: string) { respHeaders[k] = v; },
-      writeHead(code: number, headers?: Record<string, string>) {
-        respStatus = code;
-        if (headers) Object.assign(respHeaders, headers);
-      },
-      end(chunk?: string) { if (chunk) respBody += chunk; },
-      write(chunk: string) { respBody += chunk; },
-    };
 
-    await transport.handleRequest(nodeReq, nodeRes, body ? JSON.parse(Buffer.from(body).toString()) : undefined);
-    return new Response(respBody, { status: respStatus, headers: respHeaders });
+    const result = await new Promise<{ body: string; status: number; headers: Record<string, string> }>((resolve, reject) => {
+      let respBody = '';
+      let respStatus = 200;
+      const respHeaders: Record<string, string> = {};
+      let ended = false;
+
+      const nodeRes: any = {
+        setHeader(k: string, v: string) { respHeaders[k.toLowerCase()] = v; },
+        getHeader(k: string) { return respHeaders[k.toLowerCase()]; },
+        writeHead(code: number, headers?: Record<string, string>) {
+          respStatus = code;
+          if (headers) {
+            for (const [k, v] of Object.entries(headers)) respHeaders[k.toLowerCase()] = v;
+          }
+          return nodeRes;
+        },
+        write(chunk: string | Buffer) {
+          respBody += typeof chunk === 'string' ? chunk : chunk.toString();
+          return true;
+        },
+        end(chunk?: string | Buffer) {
+          if (chunk) respBody += typeof chunk === 'string' ? chunk : chunk.toString();
+          if (!ended) {
+            ended = true;
+            resolve({ body: respBody, status: respStatus, headers: respHeaders });
+          }
+        },
+        on() { /* no-op */ },
+        once() { /* no-op */ },
+        emit() { /* no-op */ },
+      };
+
+      Promise.resolve(transport.handleRequest(nodeReq, nodeRes, parsedBody)).catch((err) => {
+        if (!ended) {
+          ended = true;
+          console.error('[mcp] handleRequest failed:', err);
+          reject(err);
+        }
+      });
+    });
+
+    return new Response(result.body, { status: result.status, headers: result.headers });
   });
 
   // ==========================================================================
