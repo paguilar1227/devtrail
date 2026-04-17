@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ServiceDeps } from './services/index.js';
 import { createMcpServer } from './mcp/server.js';
@@ -25,8 +26,7 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ----- health -----
-  app.get('/', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
-  app.get('/health', (c) => c.json({ ok: true }));
+  app.get('/health', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
 
   // ==========================================================================
   // PROJECTS
@@ -322,6 +322,12 @@ export function createApp(deps: ServiceDeps) {
     await transport.handleRequest(nodeReq, nodeRes, body ? JSON.parse(Buffer.from(body).toString()) : undefined);
     return new Response(respBody, { status: respStatus, headers: respHeaders });
   });
+
+  // ==========================================================================
+  // Static web UI (served last, after API + MCP so they take precedence)
+  // ==========================================================================
+  app.use('/*', serveStatic({ root: './web/dist' }));
+  app.get('*', serveStatic({ path: './web/dist/index.html' }));
 
   return app;
 }
