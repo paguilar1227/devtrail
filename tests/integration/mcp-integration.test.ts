@@ -90,10 +90,10 @@ describe('MCP endpoint via Hono app', () => {
     expect(text.length).toBeGreaterThan(0);
   });
 
-  it('maintains session across initialize → tools/list (regression for stateful session bug)', async () => {
-    // The bug: if we create a new transport per request, the session ID from
-    // initialize can't be used for subsequent calls — server reports "not initialized".
-    const initReq = new Request('http://localhost/mcp', {
+  it('stateless mode: initialize can be called on every request (regression for "already initialized" bug)', async () => {
+    // Stateless transport (sessionIdGenerator: undefined) means each request is self-contained.
+    // initialize can be called over and over without failing.
+    const makeInit = () => new Request('http://localhost/mcp', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
       body: JSON.stringify({
@@ -101,28 +101,31 @@ describe('MCP endpoint via Hono app', () => {
         params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } },
       }),
     });
-    const initRes = await app.fetch(initReq);
-    expect(initRes.status).toBe(200);
-    const sessionId = initRes.headers.get('mcp-session-id');
-    expect(sessionId).toBeTruthy();
 
-    // Second request uses the same session — must succeed with tools/list result
+    const r1 = await app.fetch(makeInit());
+    const r2 = await app.fetch(makeInit());
+    const r3 = await app.fetch(makeInit());
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(r3.status).toBe(200);
+
+    // Stateless: no mcp-session-id header issued
+    expect(r1.headers.get('mcp-session-id')).toBeNull();
+  });
+
+  it('stateless mode: tools/list works without needing a session ID', async () => {
+    // In stateless mode, subsequent calls don't need session IDs
     const listReq = new Request('http://localhost/mcp', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'accept': 'application/json, text/event-stream',
-        'mcp-session-id': sessionId!,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
-    const listRes = await app.fetch(listReq);
-    expect(listRes.status).toBe(200);
-    const listBody = JSON.parse(await listRes.text());
-    // Regression: this used to fail with "Server not initialized" because
-    // each request got a fresh transport, losing the session.
-    expect(listBody.result?.tools).toBeDefined();
-    expect(listBody.result.tools.length).toBe(6);
+    const res = await app.fetch(listReq);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body.result?.tools).toBeDefined();
+    expect(body.result.tools.length).toBe(6);
   });
 });
 

@@ -289,21 +289,21 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ==========================================================================
-  // MCP endpoint — single long-lived transport that maintains sessions
-  // across requests (required by the protocol's initialize → session-id flow).
+  // MCP endpoint — stateless mode (sessionIdGenerator: undefined).
+  // Each request gets a fresh server + transport. No session persistence,
+  // no "server already initialized" issues, no session-id header dance.
+  // Correct for simple per-request tool calls like what Claude.ai MCP uses.
   // ==========================================================================
-  const mcpServer = createMcpServer(deps);
-  const mcpTransport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    enableJsonResponse: true,
-  });
-  const mcpConnectPromise = mcpServer.connect(mcpTransport);
-
   app.all('/mcp', async (c) => {
     console.log(`[mcp] ${c.req.method} incoming`);
     try {
-      await mcpConnectPromise;
-      const response = await mcpTransport.handleRequest(c.req.raw);
+      const server = createMcpServer(deps);
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,   // stateless: no session tracking
+        enableJsonResponse: true,
+      });
+      await server.connect(transport);
+      const response = await transport.handleRequest(c.req.raw);
       console.log(`[mcp] responding with status ${response.status}`);
       return response;
     } catch (err) {
