@@ -1,0 +1,34 @@
+import type { ServiceDeps } from './index.js';
+import {
+  insertProject, listProjects as dbListProjects, getProjectById,
+  updateProject as dbUpdateProject, deleteProject as dbDeleteProject,
+  type ProjectRow,
+} from '../db/projects.js';
+
+export async function createProject(
+  deps: ServiceDeps,
+  name: string,
+  description: string | null,
+): Promise<ProjectRow> {
+  return insertProject(deps.db, { name, description });
+}
+
+export async function listProjects(deps: ServiceDeps, status?: string): Promise<ProjectRow[]> {
+  return dbListProjects(deps.db, status);
+}
+
+export async function getProject(deps: ServiceDeps, id: string): Promise<ProjectRow | null> {
+  return getProjectById(deps.db, id);
+}
+
+export async function updateProject(
+  deps: ServiceDeps,
+  id: string,
+  patch: { name?: string; description?: string | null; status?: string },
+): Promise<ProjectRow | null> {
+  return dbUpdateProject(deps.db, id, patch);
+}
+
+export async function deleteProject(deps: ServiceDeps, id: string): Promise<void> {
+  return dbDeleteProject(deps.db, id);
+}
