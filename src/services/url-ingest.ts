@@ -64,6 +64,14 @@ const GENERIC_TITLES = new Set([
   '',
 ]);
 
+/** Body-content patterns that indicate the page is a "no such article" stub (Wikipedia, etc). */
+const ERROR_BODY_PATTERNS = [
+  /wikipedia does not have an article with this exact name/i,
+  /no article exists with this name/i,
+  /the page you are looking for doesn['']t exist/i,
+  /this article does not yet exist/i,
+];
+
 export async function ingestFromUrl(
   deps: ServiceDeps,
   url: string,
@@ -259,12 +267,19 @@ async function handleHtml(
   opts: IngestFromUrlInput,
 ): Promise<IngestFromUrlResult> {
   const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
-  const { title, markdown } = await firecrawl.scrape(url);
-  console.log(`[url-ingest][html] scraped — title: "${title}", length: ${markdown.length}`);
+  const { title, markdown, statusCode } = await firecrawl.scrape(url);
+  console.log(`[url-ingest][html] scraped — title: "${title}", length: ${markdown.length}, status: ${statusCode ?? 'n/a'}`);
 
-  // Guard against saving placeholder pages and error pages. Wikipedia, example.com,
-  // and similar often return 200 OK with a tiny "not found"-style body; we need to
-  // detect those ourselves since HTTP status didn't help.
+  // Guard against saving placeholder pages and error pages. Three layers:
+  //   1. Firecrawl reports HTTP status — reject 4xx/5xx outright
+  //   2. Length guard — catches example.com and similar tiny-body pages
+  //   3. Title + body pattern guards — catches sites like Wikipedia whose
+  //      "article not found" pages have real chrome/nav but are still stubs.
+  if (statusCode !== undefined && statusCode >= 400) {
+    throw new Error(
+      `Upstream HTTP ${statusCode} at ${url}. Not saving ${title ? `("${title}")` : ''}`,
+    );
+  }
   if (markdown.length < MIN_HTML_CONTENT_CHARS) {
     throw new Error(
       `Scraped content from ${url} is suspiciously short (${markdown.length} chars, threshold ${MIN_HTML_CONTENT_CHARS}). ` +
@@ -274,6 +289,11 @@ async function handleHtml(
   if (ERROR_TITLE_PATTERNS.some((p) => p.test(title)) || GENERIC_TITLES.has(title.toLowerCase().trim())) {
     throw new Error(
       `Page title "${title}" indicates a 404/error/placeholder page at ${url}. Not saving.`,
+    );
+  }
+  if (ERROR_BODY_PATTERNS.some((p) => p.test(markdown))) {
+    throw new Error(
+      `Page content at ${url} matches a known "no such article" stub pattern. Not saving. Title was: "${title}"`,
     );
   }
 

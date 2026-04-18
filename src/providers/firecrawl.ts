@@ -10,6 +10,7 @@ import FirecrawlApp from '@mendable/firecrawl-js';
 export interface ScrapeResult {
   title: string;
   markdown: string;
+  statusCode?: number;
 }
 
 export class FirecrawlClient {
@@ -35,16 +36,17 @@ export class FirecrawlClient {
     }
 
     const doc = result as {
-      metadata?: { title?: string; ogTitle?: string };
+      metadata?: { title?: string; ogTitle?: string; statusCode?: number };
       markdown?: string;
     };
     const title = doc.metadata?.title ?? doc.metadata?.ogTitle ?? 'Untitled';
     const markdown = doc.markdown ?? '';
+    const statusCode = doc.metadata?.statusCode;
 
     if (!markdown.trim()) {
       throw new Error('Firecrawl returned empty markdown — page may be empty, blocked, or require auth.');
     }
 
-    return { title, markdown };
+    return { title, markdown, statusCode };
   }
 }
