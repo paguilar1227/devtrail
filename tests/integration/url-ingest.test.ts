@@ -181,7 +181,10 @@ describe('POST /api/v1/content/from-url', () => {
   });
 
   it('ingests HTML — uses Firecrawl markdown', async () => {
-    const firecrawlScrape = vi.fn().mockResolvedValue({ title: 'Blog Post', markdown: '# Blog Post\nContent here.' });
+    // Content must exceed MIN_HTML_CONTENT_CHARS (300) or the pipeline rejects it as a
+    // suspected placeholder/error page. Use a real-feeling body.
+    const longBody = '# Blog Post\n\n' + 'This is the content of a real blog post. '.repeat(15);
+    const firecrawlScrape = vi.fn().mockResolvedValue({ title: 'Blog Post', markdown: longBody });
     vi.mocked(FirecrawlClient).mockImplementation(() => ({ scrape: firecrawlScrape }) as any);
 
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
@@ -205,6 +208,97 @@ describe('POST /api/v1/content/from-url', () => {
     expect(firecrawlScrape).toHaveBeenCalledWith('https://example.com/article');
 
     globalFetch.mockRestore();
+  });
+
+  it('rejects HTML with placeholder-length body as likely 404 page', async () => {
+    const placeholderBody = '# Example Domain\n\nThis domain is for examples.';
+    const firecrawlScrape = vi.fn().mockResolvedValue({ title: 'Example Domain', markdown: placeholderBody });
+    vi.mocked(FirecrawlClient).mockImplementation(() => ({ scrape: firecrawlScrape }) as any);
+
+    const globalFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }),
+    );
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
+      method: 'POST', headers: AUTH,
+      body: JSON.stringify({ url: 'https://example.com/placeholder' }),
+    }));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    // Either the "short content" or "error title pattern" guard catches it.
+    expect(body.error).toMatch(/placeholder|error|short|Example Domain/i);
+
+    globalFetch.mockRestore();
+  });
+
+  it('dedup merges new project_ids into existing content_item', async () => {
+    // Prime findByUrl to return an existing item with project_ids: []
+    let updateCalled: any = null;
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: any[]) => {
+      if (sql.includes('source_url = $1')) {
+        return {
+          rows: [{
+            id: 'existing-1',
+            type: 'document',
+            title: 'Already saved',
+            source_url: 'https://youtu.be/abc123',
+            project_ids: [],      // previously saved without a project
+            tags: [],
+          }],
+        } as any;
+      }
+      if (sql.includes('UPDATE content_items')) {
+        updateCalled = params;
+        return { rows: [{ id: 'existing-1' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
+      method: 'POST', headers: AUTH,
+      body: JSON.stringify({
+        url: 'https://youtu.be/abc123',
+        project_ids: ['proj-xyz'],
+        tags: ['reference'],
+      }),
+    }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deduped).toBe(true);
+    // UPDATE must have run to merge the new project_id + tag
+    expect(updateCalled).not.toBeNull();
+    expect(updateCalled).toEqual(expect.arrayContaining([['proj-xyz']]));
+    expect(updateCalled).toEqual(expect.arrayContaining([['reference']]));
+  });
+
+  it('dedup returns correct url_type (not always "html")', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('source_url = $1')) {
+        return {
+          rows: [{
+            id: 'existing-yt',
+            type: 'document',
+            title: 'YT video',
+            source_url: 'https://youtu.be/abc123',
+            project_ids: ['proj-abc'],
+            tags: [],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
+      method: 'POST', headers: AUTH,
+      body: JSON.stringify({ url: 'https://youtu.be/abc123', project_ids: ['proj-abc'] }),
+    }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deduped).toBe(true);
+    expect(body.url_type).toBe('youtube'); // regression: was always 'html'
   });
 
   it('returns 400 with clear error when ALL THREE YouTube transcript paths fail', async () => {

@@ -46,7 +46,9 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.get('/api/v1/projects/:id', async (c) => {
-    const project = await projectsSvc.getProject(deps, c.req.param('id'));
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const project = await projectsSvc.getProject(deps, id);
     if (!project) return c.json({ error: 'Not found' }, 404);
     return c.json({ project });
   });
@@ -164,7 +166,9 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.get('/api/v1/content/:id', async (c) => {
-    const item = await contentSvc.getContentItem(deps, c.req.param('id'));
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const item = await contentSvc.getContentItem(deps, id);
     if (!item) return c.json({ error: 'Not found' }, 404);
     return c.json({ item: stripEmbedding(item) });
   });
@@ -245,7 +249,9 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.get('/api/v1/todos/:id', async (c) => {
-    const todo = await todosSvc.getTodo(deps, c.req.param('id'));
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const todo = await todosSvc.getTodo(deps, id);
     if (!todo) return c.json({ error: 'Not found' }, 404);
     return c.json({ todo: stripEmbedding(todo) });
   });
@@ -314,6 +320,7 @@ export function createApp(deps: ServiceDeps) {
       entity_types?: Array<'document' | 'note' | 'todo'>;
       tags?: string[];
       limit?: number;
+      threshold?: number;
     }>();
     if (!body.query) return c.json({ error: 'query is required' }, 400);
     const hits = await searchSvc.search(deps, body.query, {
@@ -321,6 +328,7 @@ export function createApp(deps: ServiceDeps) {
       entityTypes: body.entity_types,
       tags: body.tags,
       limit: body.limit ?? 10,
+      threshold: body.threshold,
     });
     return c.json({ hits });
   });
@@ -379,4 +387,9 @@ export function createApp(deps: ServiceDeps) {
 function stripEmbedding<T extends { embedding?: unknown }>(obj: T): Omit<T, 'embedding'> {
   const { embedding, ...rest } = obj;
   return rest;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(s: string): boolean {
+  return UUID_RE.test(s);
 }

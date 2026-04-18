@@ -28,7 +28,11 @@ export async function search(
   query: string,
   opts: SearchOptions = {},
 ): Promise<SearchHit[]> {
-  const { projectId, entityTypes, tags, limit = 10, threshold = 0.3 } = opts;
+  // Default 0.5 instead of 0.3 — 0.3 is way too permissive, it returned
+  // meaningful-looking similarity for unrelated queries (e.g., "llama farming
+  // in antarctica" matched unrelated content at sim 0.61). 0.5 is a more
+  // honest floor for "this is probably about the query".
+  const { projectId, entityTypes, tags, limit = 10, threshold = 0.5 } = opts;
   console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, tags: ${tags?.join(',') ?? 'none'}`);
 
   const queryEmbedding = await deps.embeddingProvider.embed(query);

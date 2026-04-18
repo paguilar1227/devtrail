@@ -92,10 +92,18 @@ describe('Projects API', () => {
     expect(body.projects).toHaveLength(2);
   });
 
-  it('returns 404 for missing project', async () => {
+  it('returns 404 for well-formed UUID that does not exist', async () => {
     vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects/missing', { headers: AUTH }));
+    // Use a well-formed UUID so it passes UUID validation and hits the DB lookup.
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/00000000-0000-4000-8000-000000000000', { headers: AUTH }));
     expect(res.status).toBe(404);
+  });
+
+  it('returns 400 for malformed UUID (not a raw Postgres error)', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/not-a-uuid', { headers: AUTH }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid UUID');
   });
 });
 

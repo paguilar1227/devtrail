@@ -11,6 +11,7 @@ import {
 import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkType } from '../db/chunks.js';
 import { extractMetadata } from '../capture/metadata.js';
 import { chunkText, approximateTokens } from '../capture/chunker.js';
+import { extractPdfText } from '../providers/pdf-extract.js';
 
 export interface CreateContentInput {
   type: ContentType;
@@ -73,14 +74,47 @@ export async function createContentItem(
     console.log(`[content] Uploaded to blob: ${blobUrl}`);
   }
 
-  // Step 3: metadata extraction (includes title + extracted_text from media)
-  const filesForMeta = input.file ? [{ data: input.file.data, mimeType: input.file.mimeType }] : undefined;
-  const metadata = await extractMetadata(deps.metadataLLM, input.content ?? '', filesForMeta);
+  // Step 2.5: for PDFs, extract text locally via pdf-parse BEFORE sending to Gemini.
+  // Flash's multimodal PDF handling was unreliable — arXiv papers were coming back
+  // with "Untitled" and 1 chunk of near-empty content. pdf-parse handles the bulk
+  // of text-heavy PDFs deterministically; Flash then produces metadata/title from
+  // the real content rather than from whatever partial view it parsed.
+  let pdfText: string | null = null;
+  if (input.file?.mimeType === 'application/pdf') {
+    try {
+      const pdf = await extractPdfText(input.file.data);
+      pdfText = pdf.text;
+      console.log(`[content] PDF extraction — ${pdf.pageCount} pages, ${pdfText.length} chars`);
+    } catch (err) {
+      console.warn(`[content] pdf-parse failed, falling back to Flash multimodal:`, err instanceof Error ? err.message : err);
+    }
+  }
 
-  // Step 4: final text (what gets chunked and embedded)
+  // Step 3: metadata extraction (title, tags, topics).
+  // For PDFs where we have extracted text, feed that to Flash (text-only) for
+  // fast metadata — don't resend the large PDF binary.
+  const filesForMeta = pdfText === null && input.file
+    ? [{ data: input.file.data, mimeType: input.file.mimeType }]
+    : undefined;
+  const contentForMeta = pdfText
+    ? `${input.content ?? ''}\n\n${pdfText}`.trim().slice(0, 50000) // cap prompt size
+    : input.content ?? '';
+  const metadata = await extractMetadata(deps.metadataLLM, contentForMeta, filesForMeta);
+
+  // Step 4: final text (what gets chunked and embedded).
+  // Priority:
+  //   1. If pdf-parse got text from a PDF, that's the authoritative source.
+  //   2. Else, input.content (user-provided or URL-fetched text).
+  //   3. Else, Flash's extracted_text from non-PDF media (images with OCR, etc.).
+  // Guards against duplication when Flash echoes the input content.
   const parts: string[] = [];
   if (input.content) parts.push(input.content);
-  if (metadata.extracted_text) parts.push(metadata.extracted_text);
+  if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
+    parts.push(pdfText);
+  }
+  if (input.file && !pdfText && metadata.extracted_text && metadata.extracted_text !== input.content) {
+    parts.push(metadata.extracted_text);
+  }
   const fullText = parts.join('\n\n').trim();
 
   // Step 5: resolve title and tags

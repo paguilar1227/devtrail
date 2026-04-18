@@ -16,12 +16,13 @@
 
 import type { ServiceDeps } from './index.js';
 import { fetchYouTubeTranscript } from '../providers/youtube-transcript.js';
-import { findByUrl } from '../db/content-items.js';
+import { findByUrl, updateContentItem as dbUpdate } from '../db/content-items.js';
 import { createContentItem } from './content-items.js';
 import { FirecrawlClient } from '../providers/firecrawl.js';
 import { XaiClient } from '../providers/xai.js';
 import {
   detectUrlType,
+  detectUrlTypeByPattern,
   extractYouTubeVideoId,
   normalizeUrl,
   type UrlType,
@@ -44,6 +45,24 @@ export interface IngestFromUrlResult {
 }
 
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024; // 100 MB guardrail for binary URLs
+const MIN_HTML_CONTENT_CHARS = 300; // reject Firecrawl results shorter than this (placeholder pages)
+
+/** Title patterns that indicate the URL resolved to an error/placeholder page, not real content. */
+const ERROR_TITLE_PATTERNS = [
+  /^example domain$/i,
+  /\b(not found|doesn't exist|page not found|article not found)\b/i,
+  /^404\b/i,
+  /^error\s+\d/i,
+];
+
+/** Title strings that are entirely generic — not a real article. */
+const GENERIC_TITLES = new Set([
+  'untitled',
+  'error',
+  'page not found',
+  '404',
+  '',
+]);
 
 export async function ingestFromUrl(
   deps: ServiceDeps,
@@ -53,17 +72,43 @@ export async function ingestFromUrl(
   const normalized = normalizeUrl(url);
   console.log(`[url-ingest] Starting — url: ${normalized}`);
 
-  // Dedup by source_url
+  // Dedup by source_url. On hit: merge incoming project_ids and tags into the
+  // existing item (previously we silently dropped them — user thought their
+  // save scoped to a project, but the item's project_ids stayed as-is).
   const existing = await findByUrl(deps.db, normalized);
   if (existing) {
-    console.log(`[url-ingest] Deduped — existing item: ${existing.id}`);
+    // Cheap URL-type detection for the response (no HEAD, just the pattern match).
+    const urlTypeByPattern = detectUrlTypeByPattern(normalized) ?? 'html';
+
+    const incomingProjectIds = opts.projectIds ?? [];
+    const incomingTags = opts.tags ?? [];
+    const mergedProjectIds = Array.from(new Set([...(existing.project_ids ?? []), ...incomingProjectIds]));
+    const mergedTags = Array.from(new Set([...(existing.tags ?? []), ...incomingTags]));
+
+    const projectsChanged = mergedProjectIds.length !== (existing.project_ids?.length ?? 0);
+    const tagsChanged = mergedTags.length !== (existing.tags?.length ?? 0);
+
+    if (projectsChanged || tagsChanged) {
+      console.log(
+        `[url-ingest] Deduped + merging — item: ${existing.id}, ` +
+        `+projects: ${projectsChanged ? JSON.stringify(incomingProjectIds) : '(none)'}, ` +
+        `+tags: ${tagsChanged ? JSON.stringify(incomingTags) : '(none)'}`,
+      );
+      await dbUpdate(deps.db, existing.id, {
+        projectIds: mergedProjectIds,
+        tags: mergedTags,
+      });
+    } else {
+      console.log(`[url-ingest] Deduped — existing item: ${existing.id}, no membership changes`);
+    }
+
     return {
       id: existing.id,
       title: existing.title,
       type: existing.type,
       source_url: normalized,
       deduped: true,
-      url_type: 'html', // we don't persist url_type; not used on dedup
+      url_type: urlTypeByPattern,
     };
   }
 
@@ -217,6 +262,21 @@ async function handleHtml(
   const { title, markdown } = await firecrawl.scrape(url);
   console.log(`[url-ingest][html] scraped — title: "${title}", length: ${markdown.length}`);
 
+  // Guard against saving placeholder pages and error pages. Wikipedia, example.com,
+  // and similar often return 200 OK with a tiny "not found"-style body; we need to
+  // detect those ourselves since HTTP status didn't help.
+  if (markdown.length < MIN_HTML_CONTENT_CHARS) {
+    throw new Error(
+      `Scraped content from ${url} is suspiciously short (${markdown.length} chars, threshold ${MIN_HTML_CONTENT_CHARS}). ` +
+      `Likely a placeholder or error page — not saving. Title was: "${title}"`,
+    );
+  }
+  if (ERROR_TITLE_PATTERNS.some((p) => p.test(title)) || GENERIC_TITLES.has(title.toLowerCase().trim())) {
+    throw new Error(
+      `Page title "${title}" indicates a 404/error/placeholder page at ${url}. Not saving.`,
+    );
+  }
+
   const result = await createContentItem(deps, {
     type: 'document',
     content: markdown,
@@ -244,7 +304,11 @@ async function handleBinary(
   forcedMimeType: string | null,
 ): Promise<IngestFromUrlResult> {
   const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
+  // fetch.ok is true for any 2xx. Treat 3xx (follow should have handled),
+  // 4xx and 5xx as failures with a clear message.
+  if (!res.ok) {
+    throw new Error(`Failed to download ${url}: HTTP ${res.status} ${res.statusText || ''}`.trim());
+  }
 
   // Enforce size cap up front via Content-Length when available
   const lenHeader = res.headers.get('content-length');

@@ -182,6 +182,12 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
     'Fetch the full record of any entity (project, document, note, or todo) by UUID. Auto-detects the type. Use when you have an ID from a prior list/search and need the full content (e.g., to read a long note or to see all fields on a todo). Returns the raw entity record.',
     { id: z.string().describe('UUID from a previous list/search result — do not invent IDs') },
     async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}". Expected a UUID like "550e8400-e29b-41d4-a716-446655440000".` }],
+          isError: true,
+        };
+      }
       // Try content item first, then todo
       const ci = await contentSvc.getContentItem(deps, id);
       if (ci) return { content: [{ type: 'text', text: JSON.stringify(ci, null, 2) }] };
@@ -280,13 +286,16 @@ Scoping:
         .describe('Optional. AND-filter: results must have ALL listed tags.'),
       limit: z.number().int().positive().default(10)
         .describe('Max number of hits to return. Default 10.'),
+      threshold: z.number().min(0).max(1).optional()
+        .describe('Minimum similarity (0-1) for a hit to be returned. Default 0.5. Lower values return more (noisier) results; raise to 0.6+ for "probably relevant only".'),
     },
-    async ({ query, project_id, entity_types, tags, limit }) => {
+    async ({ query, project_id, entity_types, tags, limit, threshold }) => {
       const hits = await searchSvc.search(deps, query, {
         projectId: project_id,
         entityTypes: entity_types,
         tags,
         limit,
+        threshold,
       });
       return { content: [{ type: 'text', text: JSON.stringify(hits, null, 2) }] };
     },
@@ -336,4 +345,9 @@ Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
   );
 
   return server;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(s: string): boolean {
+  return UUID_RE.test(s);
 }
