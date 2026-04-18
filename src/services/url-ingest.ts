@@ -19,7 +19,7 @@ import { fetchYouTubeTranscript } from '../providers/youtube-transcript.js';
 import { findByUrl } from '../db/content-items.js';
 import { createContentItem } from './content-items.js';
 import { FirecrawlClient } from '../providers/firecrawl.js';
-// XaiClient import removed — live_search deprecated. Re-add when we wire Agent Tools API.
+import { XaiClient } from '../providers/xai.js';
 import {
   detectUrlType,
   extractYouTubeVideoId,
@@ -99,10 +99,11 @@ async function handleYoutube(
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) throw new Error('Could not extract YouTube video ID from URL.');
 
-  // Primary: direct scrape of the watch page (fast, free).
-  // Fallback: Firecrawl stealth mode (works when Azure IPs are bot-blocked by YouTube;
-  // Firecrawl's managed proxy pool bypasses most YouTube bot detection).
+  // Tier 1: direct scrape of the watch page (fast, free).
+  // Tier 2: Firecrawl stealth (managed proxy, bypasses YouTube bot detection).
+  // Tier 3: xAI web_search (Grok browses the page server-side via Agent Tools API).
   let transcript = '';
+
   try {
     const items = await fetchYouTubeTranscript(videoId);
     transcript = items.map((t) => t.text).join(' ');
@@ -110,7 +111,7 @@ async function handleYoutube(
     console.log(`[url-ingest][youtube] direct scrape succeeded — length: ${transcript.length}`);
   } catch (scrapeErr) {
     console.warn(
-      `[url-ingest][youtube] direct scrape failed, falling back to Firecrawl stealth:`,
+      `[url-ingest][youtube] direct scrape failed, trying Firecrawl:`,
       scrapeErr instanceof Error ? scrapeErr.message : scrapeErr,
     );
     try {
@@ -118,13 +119,24 @@ async function handleYoutube(
       const res = await firecrawl.scrape(url, { stealth: true });
       transcript = res.markdown;
       if (!transcript.trim()) throw new Error('Firecrawl returned empty content.');
-      console.log(`[url-ingest][youtube] Firecrawl fallback succeeded — length: ${transcript.length}`);
+      console.log(`[url-ingest][youtube] Firecrawl succeeded — length: ${transcript.length}`);
     } catch (fcErr) {
-      throw new Error(
-        `Couldn't fetch YouTube transcript — both direct scrape and Firecrawl fallback failed. ${
-          fcErr instanceof Error ? fcErr.message : fcErr
-        }`,
+      console.warn(
+        `[url-ingest][youtube] Firecrawl failed, trying xAI:`,
+        fcErr instanceof Error ? fcErr.message : fcErr,
       );
+      try {
+        const xai = new XaiClient(deps.config.xaiApiKey);
+        const res = await xai.fetchYoutubeTranscript(url);
+        transcript = res.content;
+        console.log(`[url-ingest][youtube] xAI fallback succeeded — length: ${transcript.length}`);
+      } catch (xaiErr) {
+        throw new Error(
+          `Couldn't fetch YouTube transcript — direct scrape, Firecrawl, AND xAI all failed. ${
+            xaiErr instanceof Error ? xaiErr.message : xaiErr
+          }`,
+        );
+      }
     }
   }
 
@@ -157,24 +169,22 @@ async function handleXThread(
   url: string,
   opts: IngestFromUrlInput,
 ): Promise<IngestFromUrlResult> {
-  // CURRENT STATE: X thread ingestion is temporarily unsupported.
-  // - xAI's Grok live_search was deprecated in 2026 (moved to Agent Tools API we haven't wired)
-  // - Firecrawl explicitly does not support x.com (returns "we do not support this site")
-  // Revisit by wiring the xAI Agent Tools API OR waiting for Firecrawl X support.
-  // Try Firecrawl anyway for best-effort — if it ever gets X support, this will start working.
-  const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
+  // Primary: xAI Agent Tools API with x_search built-in tool (the 2026 replacement
+  //   for the deprecated live_search). Grok does the X fetch server-side.
+  // Firecrawl is NOT a useful fallback here — they explicitly refuse x.com.
+  const xai = new XaiClient(deps.config.xaiApiKey);
 
   let content: string;
   let fetchedTitle: string;
 
   try {
-    const fc = await firecrawl.scrape(url, { stealth: true });
-    content = fc.markdown;
-    fetchedTitle = fc.title;
-    console.log(`[url-ingest][x] Firecrawl stealth succeeded — length: ${content.length}`);
+    const res = await xai.fetchXThread(url);
+    content = res.content;
+    fetchedTitle = res.title;
+    console.log(`[url-ingest][x] xAI x_search succeeded — length: ${content.length}`);
   } catch (err) {
     throw new Error(
-      `X/Twitter thread ingestion is currently unsupported — scraping providers (Firecrawl) don't support x.com, and xAI's live_search API was deprecated. Revisit when the xAI Agent Tools API is wired up. (Provider error: ${err instanceof Error ? err.message : err})`,
+      `Couldn't fetch X thread via xAI x_search: ${err instanceof Error ? err.message : err}`,
     );
   }
 

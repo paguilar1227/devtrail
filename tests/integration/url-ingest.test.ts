@@ -20,10 +20,18 @@ vi.mock('../../src/providers/firecrawl.js', () => ({
   })),
 }));
 
+vi.mock('../../src/providers/xai.js', () => ({
+  XaiClient: vi.fn().mockImplementation(() => ({
+    fetchXThread: vi.fn(),
+    fetchYoutubeTranscript: vi.fn(),
+  })),
+}));
+
 import { createApp } from '../../src/app.js';
 import type { ServiceDeps } from '../../src/services/index.js';
 import { fetchYouTubeTranscript } from '../../src/providers/youtube-transcript.js';
 import { FirecrawlClient } from '../../src/providers/firecrawl.js';
+import { XaiClient } from '../../src/providers/xai.js';
 
 function mockDeps(): ServiceDeps {
   return {
@@ -148,9 +156,12 @@ describe('POST /api/v1/content/from-url', () => {
     expect(params[params.length - 1]).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   });
 
-  it('ingests X thread — uses Firecrawl stealth mode', async () => {
-    const firecrawlScrape = vi.fn().mockResolvedValue({ title: 'thread title', markdown: '@user: hello world\n@other: reply' });
-    vi.mocked(FirecrawlClient).mockImplementation(() => ({ scrape: firecrawlScrape }) as any);
+  it('ingests X thread — uses xAI Agent Tools (x_search)', async () => {
+    const fetchXThread = vi.fn().mockResolvedValue({
+      title: 'First post…',
+      content: '@user: hello world\n@other: reply',
+    });
+    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread, fetchYoutubeTranscript: vi.fn() }) as any);
 
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO content_items')) return { rows: [{ id: 'x-ci' }] } as any;
@@ -166,8 +177,7 @@ describe('POST /api/v1/content/from-url', () => {
     const body = await res.json();
     expect(body.url_type).toBe('x');
     expect(body.source_url).toBe('https://x.com/user/status/1234567890');
-    // X handler should call Firecrawl scrape with stealth: true
-    expect(firecrawlScrape).toHaveBeenCalledWith('https://x.com/user/status/1234567890', { stealth: true });
+    expect(fetchXThread).toHaveBeenCalledWith('https://x.com/user/status/1234567890');
   });
 
   it('ingests HTML — uses Firecrawl markdown', async () => {
@@ -197,13 +207,15 @@ describe('POST /api/v1/content/from-url', () => {
     globalFetch.mockRestore();
   });
 
-  it('returns 400 with clear error when BOTH YouTube transcript paths fail', async () => {
-    // Direct scrape fails
+  it('returns 400 with clear error when ALL THREE YouTube transcript paths fail', async () => {
+    // Tier 1: direct scrape fails
     vi.mocked(fetchYouTubeTranscript).mockRejectedValue(new Error('No captions available'));
-    // Firecrawl fallback also fails (must be set explicitly — vi.clearAllMocks doesn't
-    // reset mockImplementation from prior tests in the same file)
+    // Tier 2: Firecrawl fallback also fails
     const firecrawlScrape = vi.fn().mockRejectedValue(new Error('Firecrawl unavailable'));
     vi.mocked(FirecrawlClient).mockImplementation(() => ({ scrape: firecrawlScrape }) as any);
+    // Tier 3: xAI fallback also fails
+    const xaiYt = vi.fn().mockRejectedValue(new Error('xAI web_search unavailable'));
+    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread: vi.fn(), fetchYoutubeTranscript: xaiYt }) as any);
 
     const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
       method: 'POST', headers: AUTH,
@@ -213,7 +225,8 @@ describe('POST /api/v1/content/from-url', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain('transcript');
-    expect(firecrawlScrape).toHaveBeenCalled();  // confirms fallback was tried
+    expect(firecrawlScrape).toHaveBeenCalled();
+    expect(xaiYt).toHaveBeenCalled();
   });
 });
 

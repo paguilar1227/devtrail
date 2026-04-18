@@ -1,13 +1,19 @@
 /**
- * xAI Grok client — used specifically to fetch X (Twitter) thread content
- * via Grok's live-search capability over X.
+ * xAI client using the Agent Tools API (/v1/responses).
  *
- * Docs reference: https://docs.x.ai/docs/api-reference — live_search parameters
- * let Grok pull from X, news, web, and RSS. We restrict to X.
+ * The older /v1/chat/completions + search_parameters (live_search) flow
+ * was deprecated in 2026. The replacement is:
+ *   - Endpoint: /v1/responses
+ *   - Payload: { model, input: [{role, content}], tools: [{type: '...'}] }
+ *   - Built-in tools: 'web_search', 'x_search', 'code_interpreter', etc.
+ *     The API executes them server-side and folds results into the response.
+ *
+ * For X threads: use the `x_search` tool. For YouTube transcripts: `web_search`
+ * (no dedicated YouTube tool; web_search can browse video pages).
  */
 
-const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions';
-const XAI_MODEL = 'grok-4-latest';
+const XAI_ENDPOINT = 'https://api.x.ai/v1/responses';
+const XAI_MODEL = 'grok-4.20-reasoning';
 
 export interface LiveSearchResult {
   title: string;
@@ -18,44 +24,48 @@ export class XaiClient {
   constructor(private apiKey: string) {}
 
   /**
-   * Fetch the full content of an X thread (original post + replies).
-   * Uses Grok's live search restricted to X.
+   * Fetch an X thread using the x_search built-in tool. Grok browses X
+   * server-side and returns the thread content.
    */
   async fetchXThread(url: string): Promise<LiveSearchResult> {
-    const prompt = `Fetch the full content of this X (Twitter) thread: ${url}
+    const prompt = `Fetch the full content of this X (Twitter) post and its thread: ${url}
 
-Return the complete thread as plain text, including:
-- The original post
-- All replies in the thread
-- Author handle and display name for each post
-- Post timestamp (if available)
+Return the complete thread as plain text:
+- The original post content
+- All replies in the thread (in order)
+- Author handle for each post
+- Post timestamp if available
 
-Format it as readable prose with clear post boundaries. Do NOT add commentary, analysis, or summary. Return ONLY the thread content.`;
+Format as readable prose with clear post boundaries. Do NOT add analysis, summary, or commentary. Return ONLY the post content.`;
 
-    return await this.liveSearchRequest(prompt, [{ type: 'x' }]);
+    return this.callAgentTools(prompt, [{ type: 'x_search' }]);
   }
 
   /**
-   * Fetch a YouTube video's transcript via Grok's web search.
-   * Fallback for when direct scraping fails (Azure IPs often get bot-detected
-   * or served a stripped page that doesn't include captionTracks).
+   * Fetch a YouTube video's transcript via web_search. Grok's web tool can
+   * browse YouTube pages and extract captions.
    */
   async fetchYoutubeTranscript(url: string): Promise<LiveSearchResult> {
-    const prompt = `Fetch the FULL transcript (captions) of this YouTube video: ${url}
+    const prompt = `Fetch the full transcript (captions) of this YouTube video: ${url}
 
-Return the complete spoken content as plain text. Do NOT summarize, analyze, or add commentary. Do NOT add timestamps unless they're clearly useful for separating speakers. Just the transcript text as uttered in the video. If there are no captions available, say exactly: "NO_CAPTIONS_AVAILABLE".`;
+Return the complete spoken content as plain text. Do NOT summarize, analyze, or add commentary. Just the raw transcript.
 
-    const result = await this.liveSearchRequest(prompt, [{ type: 'web' }]);
+If the video has no captions available, respond with exactly: NO_CAPTIONS_AVAILABLE`;
 
+    const result = await this.callAgentTools(prompt, [{ type: 'web_search' }]);
     if (result.content.trim() === 'NO_CAPTIONS_AVAILABLE' || /\bNO_CAPTIONS_AVAILABLE\b/.test(result.content)) {
       throw new Error('No captions available for this YouTube video.');
     }
     return result;
   }
 
-  private async liveSearchRequest(
+  /**
+   * Core Agent Tools API call. Extracts the assistant text from the
+   * /v1/responses output.
+   */
+  private async callAgentTools(
     prompt: string,
-    sources: Array<{ type: string }>,
+    tools: Array<{ type: string }>,
   ): Promise<LiveSearchResult> {
     const res = await fetch(XAI_ENDPOINT, {
       method: 'POST',
@@ -65,33 +75,67 @@ Return the complete spoken content as plain text. Do NOT summarize, analyze, or 
       },
       body: JSON.stringify({
         model: XAI_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        search_parameters: {
-          mode: 'on',
-          sources,
-          return_citations: false,
-        },
-        max_tokens: 8192,
+        input: [{ role: 'user', content: prompt }],
+        tools,
       }),
     });
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`xAI API ${res.status}: ${body.slice(0, 300)}`);
+      throw new Error(`xAI /v1/responses ${res.status}: ${body.slice(0, 500)}`);
     }
 
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = json.choices?.[0]?.message?.content ?? '';
+    const json = (await res.json()) as unknown;
+    const text = extractAssistantText(json);
 
-    if (!content.trim()) {
-      throw new Error('xAI returned empty content.');
+    if (!text.trim()) {
+      throw new Error('xAI returned no assistant text (tool may have found nothing).');
     }
 
-    const firstLine = content.split('\n').find((l) => l.trim().length > 0) ?? '';
+    const firstLine = text.split('\n').find((l) => l.trim().length > 0) ?? '';
     const title = firstLine.trim().slice(0, 80);
-
-    return { title, content: content.trim() };
+    return { title, content: text.trim() };
   }
+}
+
+/**
+ * The /v1/responses format is similar to OpenAI's: an array of output items,
+ * each with a type (e.g. "message", "tool_call"). The assistant's final text
+ * lives in items where type === "message", content[].text.
+ *
+ * This extractor is defensive — the exact shape may evolve. We look for text
+ * in the most likely places and concatenate.
+ */
+function extractAssistantText(resp: unknown): string {
+  if (!resp || typeof resp !== 'object') return '';
+  const obj = resp as Record<string, unknown>;
+
+  // Shape 1: { output: [{ type: 'message', content: [{ type: 'output_text', text: '...' }] }] }
+  if (Array.isArray(obj.output)) {
+    const parts: string[] = [];
+    for (const item of obj.output) {
+      if (!item || typeof item !== 'object') continue;
+      const it = item as Record<string, unknown>;
+      if (it.type === 'message' && Array.isArray(it.content)) {
+        for (const c of it.content) {
+          if (!c || typeof c !== 'object') continue;
+          const cc = c as Record<string, unknown>;
+          if (typeof cc.text === 'string') parts.push(cc.text);
+        }
+      }
+    }
+    if (parts.length > 0) return parts.join('\n\n');
+  }
+
+  // Shape 2: { output_text: '...' } (OpenAI-compat convenience field)
+  if (typeof obj.output_text === 'string') return obj.output_text;
+
+  // Shape 3: legacy choices[].message.content for transition period
+  if (Array.isArray(obj.choices) && obj.choices[0]) {
+    const choice = obj.choices[0] as Record<string, unknown>;
+    const msg = choice.message as Record<string, unknown> | undefined;
+    if (msg && typeof msg.content === 'string') return msg.content;
+  }
+
+  return '';
 }
