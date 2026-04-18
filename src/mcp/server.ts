@@ -85,8 +85,7 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 → \`save_from_url(url: 'https://...', project_ids: ['<that ID>'])\`
 → Confirm: "Saved — transcript captured, source URL preserved."
 
-**User:** "Grab this tweet thread: https://x.com/jason/status/..."
-→ \`save_from_url(url: 'https://x.com/...')\` — no project, personal scope.
+**Note on X/Twitter threads:** save_from_url will currently return an error for x.com / twitter.com URLs. This is a known limitation — explain it to the user rather than retrying. They can manually copy the thread text and use \`create(type: 'note', ...)\` as a workaround.
 
 ## Proactive behavior
 
@@ -106,7 +105,8 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 - **No update or delete via MCP.** You cannot mark a todo done, edit a note, archive a document, or rename a project through these tools. The web UI handles those. If the user asks to edit, say so and point them to the app.
 - **Documents are immutable after creation.** Chunks are generated at create time and not re-chunked on update.
-- **URL ingestion Tier 1 coverage:** YouTube videos, X/Twitter threads, PDFs, HTML articles (incl. Reddit, blogs), direct image/audio links. Paywalled content, Notion/Google Docs/Medium-subscribed, Vimeo/Twitch are not supported in this pass.`;
+- **URL ingestion — currently supported:** YouTube videos (transcripts), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
+- **URL ingestion — currently NOT supported:** X/Twitter threads (scraping providers don't support x.com and xAI's live_search API was deprecated — will be revisited). Notion docs, Google Docs, Medium paywalls, Vimeo/Twitch — these need per-site auth or dedicated handlers.`;
 
 export function createMcpServer(deps: ServiceDeps): McpServer {
   const server = new McpServer(

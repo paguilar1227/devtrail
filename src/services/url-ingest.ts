@@ -157,10 +157,11 @@ async function handleXThread(
   url: string,
   opts: IngestFromUrlInput,
 ): Promise<IngestFromUrlResult> {
-  // Note: xAI's Grok live_search was deprecated in 2026 in favor of Agent Tools API.
-  // Using Firecrawl stealth as the reliable primary path for X — their managed proxy
-  // pool handles X's anti-scraping. xAI fallback path kept in XaiClient for when
-  // we wire up the new Agent Tools API.
+  // CURRENT STATE: X thread ingestion is temporarily unsupported.
+  // - xAI's Grok live_search was deprecated in 2026 (moved to Agent Tools API we haven't wired)
+  // - Firecrawl explicitly does not support x.com (returns "we do not support this site")
+  // Revisit by wiring the xAI Agent Tools API OR waiting for Firecrawl X support.
+  // Try Firecrawl anyway for best-effort — if it ever gets X support, this will start working.
   const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
 
   let content: string;
@@ -173,7 +174,7 @@ async function handleXThread(
     console.log(`[url-ingest][x] Firecrawl stealth succeeded — length: ${content.length}`);
   } catch (err) {
     throw new Error(
-      `Couldn't fetch X thread via Firecrawl. ${err instanceof Error ? err.message : err}`,
+      `X/Twitter thread ingestion is currently unsupported — scraping providers (Firecrawl) don't support x.com, and xAI's live_search API was deprecated. Revisit when the xAI Agent Tools API is wired up. (Provider error: ${err instanceof Error ? err.message : err})`,
     );
   }
 
