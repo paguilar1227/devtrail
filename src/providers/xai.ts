@@ -28,31 +28,45 @@ export class XaiClient {
    * server-side and returns the thread content.
    */
   async fetchXThread(url: string): Promise<LiveSearchResult> {
-    // x_search is a search tool, not a URL-fetch tool. Help Grok find the post
-    // by extracting the author handle from the URL and scoping the search via
-    // allowed_x_handles. Then describe what we want in the prompt.
+    // x_search is really x_keyword_search — it searches X by keyword/user/date,
+    // it doesn't fetch by post ID directly. Strategy:
+    //   1. Parse URL → extract @handle and post ID
+    //   2. Decode post ID → timestamp (Twitter snowflakes encode millis since 2010-11-04)
+    //   3. Build a search prompt that scopes to this user + a ±1 day window around
+    //      the timestamp so Grok can find the specific post via keyword search
     const parsed = parseXUrl(url);
+    if (!parsed) {
+      throw new Error(`URL does not match the X status pattern: ${url}`);
+    }
 
-    const prompt = parsed
-      ? `Use the x_search tool to find and return the full content of a specific post by user @${parsed.handle} with status ID ${parsed.postId} (URL: ${url}).
+    const postDate = snowflakeToDate(parsed.postId);
+    const fromDate = new Date(postDate.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const toDate = new Date(postDate.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const postDateStr = postDate.toISOString();
 
-Search for posts from @${parsed.handle}, find the one with ID ${parsed.postId}, and return:
-- The original post content in full
-- All replies and continuations in the thread (in thread order)
-- Each post's author handle
-- Timestamps when available
+    const prompt = `Use x_search to find and return a specific X post, then follow its thread.
 
-Format as readable prose with clear post boundaries. Do NOT summarize or add commentary. Return ONLY the post content.
+Target post:
+- Author: @${parsed.handle}
+- Post ID: ${parsed.postId}
+- Approximate timestamp: ${postDateStr}
+- URL: ${url}
 
-If x_search returns no matching post, respond with exactly this line: X_FETCH_FAILED`
-      : `Use x_search to find and return the content of this X post: ${url}
+Steps:
+1. Use x_search scoped to @${parsed.handle}'s posts around ${postDateStr}.
+2. Find the post with ID ${parsed.postId} (the ID is the final number in the URL).
+3. Return the full post content AND all replies / follow-ups in the thread in order.
 
-Return the post content only, no summary. If the post cannot be found, respond with exactly: X_FETCH_FAILED`;
+Format: author handle + post text for each tweet, one tweet per block separated by blank lines. Do NOT summarize or add commentary.
+
+If x_search can't surface the specific post with ID ${parsed.postId}, respond with exactly this single line and nothing else: X_FETCH_FAILED`;
 
     const tools = [
       {
         type: 'x_search',
-        ...(parsed ? { allowed_x_handles: [parsed.handle] } : {}),
+        allowed_x_handles: [parsed.handle],
+        from_date: fromDate,
+        to_date: toDate,
         enable_image_understanding: true,
         enable_video_understanding: true,
       },
@@ -66,7 +80,7 @@ Return the post content only, no summary. If the post cannot be found, respond w
       /fetch error|could not be retrieved|unable to fetch|failed to fetch/i.test(result.content)
     ) {
       throw new Error(
-        `xAI x_search couldn't find this post. x_search is search-based (not URL-fetch) — it works best on recent posts from well-known accounts. Grok said: "${result.content.slice(0, 200)}"`,
+        `xAI x_search couldn't find post ${parsed.postId} by @${parsed.handle}. x_search is keyword-based — it works best when x_keyword_search can surface the post in its result set. Grok said: "${result.content.slice(0, 200)}"`,
       );
     }
 
@@ -135,6 +149,27 @@ function parseXUrl(url: string): { handle: string; postId: string } | null {
   const m = url.match(/(?:x|twitter)\.com\/([^/?#]+)\/status\/(\d+)/i);
   if (!m) return null;
   return { handle: m[1], postId: m[2] };
+}
+
+/**
+ * Decode a Twitter/X snowflake ID into its creation timestamp.
+ * Snowflake format: (ms since 2010-11-04T01:42:54.657Z) << 22 | metadata.
+ * Use BigInt because IDs exceed Number.MAX_SAFE_INTEGER.
+ */
+const TWITTER_EPOCH_MS = 1288834974657n;
+function snowflakeToDate(postId: string): Date {
+  try {
+    const id = BigInt(postId);
+    const ms = (id >> 22n) + TWITTER_EPOCH_MS;
+    const date = new Date(Number(ms));
+    // Sanity: if decoded date is wildly wrong, fall back to "now"
+    if (isNaN(date.getTime()) || date.getFullYear() < 2006 || date.getFullYear() > 2100) {
+      return new Date();
+    }
+    return date;
+  } catch {
+    return new Date();
+  }
 }
 
 /**
