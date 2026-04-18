@@ -12,13 +12,23 @@ export interface FileInput {
   mimeType: string;
 }
 
-const EXTRACTION_PROMPT = `You analyze a piece of content (text, and optionally attached media) and produce structured metadata for a personal knowledge base.
+const EXTRACTION_PROMPT_WITH_MEDIA = `You analyze a piece of content (text + attached media) and produce structured metadata for a personal knowledge base.
 
 Return JSON with these fields:
 - title: a short, descriptive title (max 80 chars) capturing the essence of the content. For media files, describe what they show. Never return an empty title.
 - topics: array of topics/subjects discussed (max 10)
 - tags: array of flat organizational labels (max 5). Examples: "reference", "meeting-notes", "recipe", "coding", "research". Use lowercase kebab-case. These are flexible — pick what would help the user find this later.
-- extracted_text: if media files contain clearly legible text (documents, signs, whiteboards, printed/handwritten text, PDFs, captions in images), extract ALL of it verbatim. For audio/video, transcribe speech. Return null if media doesn't contain readable text (photos of people, animals, scenery, food, objects, etc.). Do NOT hallucinate text that isn't clearly there.
+- extracted_text: if media files contain clearly legible text (documents, signs, whiteboards, printed/handwritten text, captions in images), extract ALL of it verbatim. For audio/video, transcribe speech. Return null if media doesn't contain readable text (photos of people, animals, scenery, food, objects, etc.). Do NOT hallucinate text that isn't clearly there.
+
+Return ONLY valid JSON, no markdown formatting.`;
+
+const EXTRACTION_PROMPT_TEXT_ONLY = `You analyze a piece of text content and produce structured metadata for a personal knowledge base.
+
+Return JSON with these fields:
+- title: a short, descriptive title (max 80 chars) capturing the essence of the content. Never return an empty title.
+- topics: array of topics/subjects discussed (max 10)
+- tags: array of flat organizational labels (max 5). Examples: "reference", "meeting-notes", "recipe", "coding", "research". Use lowercase kebab-case. These are flexible — pick what would help the user find this later.
+- extracted_text: always null — the caller already has the full text.
 
 Return ONLY valid JSON, no markdown formatting.`;
 
@@ -53,9 +63,15 @@ export async function extractMetadata(
     // Flash 2.5 uses internal "thinking" tokens that count against the output
     // budget. For PDF-scale inputs (50K chars) the model needs room to both
     // think and emit large extracted_text fields — 2048 was truncating mid-JSON.
+    // Pick the right prompt: text-only cases don't need extracted_text, which
+    // was causing Flash to echo the entire 50K-char PDF body and overflow JSON.
+    const systemPrompt = files && files.length > 0
+      ? EXTRACTION_PROMPT_WITH_MEDIA
+      : EXTRACTION_PROMPT_TEXT_ONLY;
+
     const response = await llm.complete(
       [{ role: 'user', content: messageContent }],
-      { systemPrompt: EXTRACTION_PROMPT, responseFormat: 'json', maxTokens: 8192 },
+      { systemPrompt, responseFormat: 'json', maxTokens: 8192 },
     );
 
     console.log(`[metadata] LLM response — tokens: ${response.tokensUsed.total}, raw length: ${response.content.length}`);
