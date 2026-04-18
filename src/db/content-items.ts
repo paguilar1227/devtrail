@@ -159,23 +159,32 @@ export async function deleteContentItemHard(db: DbClient, id: string): Promise<v
   await db.query(`DELETE FROM content_items WHERE id = $1`, [id]);
 }
 
-/** Semantic search against content_items.embedding (whole-item level).
- * For chunk-level search, use chunks module. */
+/**
+ * Semantic search against content_items.embedding (whole-item level).
+ * For chunk-level search, use chunks module.
+ *
+ * Omits the raw embedding vector from results to keep payloads small.
+ */
+export type ContentItemSearchResult = Omit<ContentItemRow, 'embedding'> & { similarity: number };
+
 export async function findSimilarContentItems(
   db: DbClient,
   embedding: number[],
   threshold: number,
   limit: number = 10,
   projectId?: string,
-): Promise<Array<ContentItemRow & { similarity: number }>> {
+): Promise<ContentItemSearchResult[]> {
   const conditions = ['archived = false', 'embedding IS NOT NULL'];
   const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
   if (projectId) {
     conditions.push(`project_ids @> ARRAY[$4]::uuid[]`);
     params.push(projectId);
   }
+  // Explicit column list — must NOT include the embedding vector.
   const result = await db.query(
-    `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
+    `SELECT id, type, title, title_source, content, blob_url, mime_type,
+            file_hash, project_ids, tags, metadata, archived, created_at, updated_at,
+            1 - (embedding <=> $1::vector) AS similarity
      FROM content_items
      WHERE ${conditions.join(' AND ')}
        AND 1 - (embedding <=> $1::vector) > $2

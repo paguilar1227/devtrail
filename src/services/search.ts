@@ -1,7 +1,6 @@
 import type { ServiceDeps } from './index.js';
 import { findSimilarChunks, type ChunkSearchResult } from '../db/chunks.js';
-import { findSimilarTodos } from '../db/todos.js';
-import type { TodoRow } from '../db/todos.js';
+import { findSimilarTodos, type TodoSearchResult } from '../db/todos.js';
 
 export interface SearchOptions {
   projectId?: string;
@@ -14,10 +13,10 @@ export interface SearchOptions {
 export interface SearchHit {
   type: 'chunk' | 'todo';
   similarity: number;
-  // chunk-specific
+  // chunk-specific (no raw embedding — stripped in DB layer)
   chunk?: ChunkSearchResult;
-  // todo-specific
-  todo?: TodoRow & { similarity: number };
+  // todo-specific (no raw embedding — stripped in DB layer)
+  todo?: TodoSearchResult;
 }
 
 /**

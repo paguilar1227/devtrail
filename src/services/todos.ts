@@ -4,7 +4,7 @@ import {
   updateTodo as dbUpdateTodo,
   archiveTodo, unarchiveTodo, deleteTodoHard,
   findChildTodos, findSimilarTodos,
-  type TodoRow, type TodoInsert, type ListTodosFilters,
+  type TodoRow, type TodoInsert, type ListTodosFilters, type TodoSearchResult,
 } from '../db/todos.js';
 
 export async function createTodo(
@@ -93,7 +93,7 @@ export async function searchTodos(
   deps: ServiceDeps,
   query: string,
   limit: number = 10,
-): Promise<Array<TodoRow & { similarity: number }>> {
+): Promise<TodoSearchResult[]> {
   const embedding = await deps.embeddingProvider.embed(query);
   return findSimilarTodos(deps.db, embedding, 0.3, limit);
 }

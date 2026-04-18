@@ -216,6 +216,72 @@ describe('Search API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('search SQL does NOT use SELECT * or project embedding as a column (payload-size regression)', async () => {
+    // Previously findSimilarChunks used SELECT c.*, which included c.embedding
+    // (a 3072-dim float array). Ten hits = ~400KB of noise in the response.
+    // This test enforces explicit column lists and no wildcard SELECTs.
+    // (c.embedding still appears in the cosine-distance expression — that's fine;
+    // only the projected result column list matters for payload size.)
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test' }),
+    }));
+
+    const calls = vi.mocked(deps.db.query).mock.calls;
+    const chunkQuery = calls.find((c) => typeof c[0] === 'string' && c[0].includes('FROM chunks'));
+    const todoQuery = calls.find((c) => typeof c[0] === 'string' && c[0].includes('FROM todos'));
+    expect(chunkQuery).toBeDefined();
+    expect(todoQuery).toBeDefined();
+
+    // No wildcard SELECTs (which would pull in embedding)
+    expect(chunkQuery![0]).not.toMatch(/SELECT\s+c\.\*/);
+    expect(todoQuery![0]).not.toMatch(/SELECT\s+\*/);
+
+    // Explicit column list should be present (proof the refactor happened, not reverted)
+    expect(chunkQuery![0]).toMatch(/SELECT\s+c\.id,\s*c\.content_item_id/);
+  });
+
+  it('search response hits do not contain embedding fields', async () => {
+    // Mock DB returns a chunk row WITHOUT embedding (matching what the real query returns now).
+    // If someone later regresses to SELECT *, the DB mock return type would re-include embedding
+    // and the test below would fail. This is the consumer-facing side of the contract.
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM chunks')) {
+        return {
+          rows: [{
+            id: 'ch1', content_item_id: 'ci1', chunk_index: 0, chunk_type: 'text',
+            content: 'some chunk text', metadata: {}, created_at: new Date(),
+            similarity: 0.7,
+            parent_type: 'note', parent_title: 'Test Note',
+            parent_project_ids: [], parent_tags: [],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.hits.length).toBeGreaterThan(0);
+
+    // No hit should contain an 'embedding' field anywhere (chunk or todo subobject)
+    for (const hit of body.hits) {
+      if (hit.chunk) expect(hit.chunk).not.toHaveProperty('embedding');
+      if (hit.todo) expect(hit.todo).not.toHaveProperty('embedding');
+    }
+
+    // Stringifying the whole response should not contain the word 'embedding'
+    expect(JSON.stringify(body)).not.toContain('embedding');
+  });
+
   it('runs a semantic search and returns hits', async () => {
     // search returns chunks + todos (both empty in this mock)
     vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);

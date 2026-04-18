@@ -67,8 +67,20 @@ export async function deleteChunksByContentItem(db: DbClient, contentItemId: str
   await db.query(`DELETE FROM chunks WHERE content_item_id = $1`, [contentItemId]);
 }
 
-/** Semantic chunk search — optionally scoped by project_id via content_items join */
-export interface ChunkSearchResult extends ChunkRow {
+/**
+ * Semantic chunk search result. Deliberately omits the raw embedding vector —
+ * consumers (MCP/REST) don't need it and including a 3072-dim float array per hit
+ * bloats response payloads by ~40KB each. Use the dedicated chunk fetch if you
+ * need the raw vector for something internal.
+ */
+export interface ChunkSearchResult {
+  id: string;
+  content_item_id: string;
+  chunk_index: number;
+  chunk_type: ChunkType;
+  content: string | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
   similarity: number;
   parent_type: string;
   parent_title: string;
@@ -100,8 +112,10 @@ export async function findSimilarChunks(
     params.push(opts.tags);
   }
 
+  // Explicit column list — must NOT include c.embedding (huge and not useful to consumers).
   const result = await db.query(
-    `SELECT c.*,
+    `SELECT c.id, c.content_item_id, c.chunk_index, c.chunk_type,
+            c.content, c.metadata, c.created_at,
             1 - (c.embedding <=> $1::vector) AS similarity,
             ci.type AS parent_type,
             ci.title AS parent_title,

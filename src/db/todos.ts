@@ -166,14 +166,23 @@ export async function findChildTodos(db: DbClient, parentId: string): Promise<To
   return result.rows;
 }
 
+/**
+ * Semantic todo search result. Omits the raw embedding vector to keep
+ * response payloads small (3072-dim floats × N hits is expensive).
+ */
+export type TodoSearchResult = Omit<TodoRow, 'embedding'> & { similarity: number };
+
 export async function findSimilarTodos(
   db: DbClient,
   embedding: number[],
   threshold: number,
   limit: number = 10,
-): Promise<Array<TodoRow & { similarity: number }>> {
+): Promise<TodoSearchResult[]> {
+  // Explicit column list — must NOT include the embedding vector.
   const result = await db.query(
-    `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
+    `SELECT id, content, project_id, section, parent_id, status, priority,
+            due_date, tags, archived, created_at, updated_at,
+            1 - (embedding <=> $1::vector) AS similarity
      FROM todos
      WHERE archived = false AND embedding IS NOT NULL
        AND 1 - (embedding <=> $1::vector) > $2
