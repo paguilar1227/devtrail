@@ -26,6 +26,8 @@ const deps: ServiceDeps = {
 async function runMigrations(): Promise<void> {
   try {
     const __dirname = dirname(fileURLToPath(import.meta.url));
+
+    // Migration 001: initial schema
     const existsResult = await deps.db.pool.query(
       "SELECT count(*) as count FROM pg_tables WHERE schemaname = 'public' AND tablename = 'projects'",
     );
@@ -35,8 +37,22 @@ async function runMigrations(): Promise<void> {
       await deps.db.pool.query(sql);
       console.log('Migration 001 complete.');
     } else {
-      console.log('Schema already present, skipping migration.');
+      console.log('Schema 001 already present.');
     }
+
+    // Migration 002: source_url column for URL-ingested content
+    const m002Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'content_items' AND column_name = 'source_url'`,
+    );
+    if (parseInt(m002Check.rows[0].count) === 0) {
+      console.log('Running migration 002...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '002_source_url.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 002 complete.');
+    }
+
+    console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);
     process.exit(1);
