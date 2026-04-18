@@ -18,8 +18,8 @@ import type { ServiceDeps } from './index.js';
 import { fetchYouTubeTranscript } from '../providers/youtube-transcript.js';
 import { findByUrl } from '../db/content-items.js';
 import { createContentItem } from './content-items.js';
-import { XaiClient } from '../providers/xai.js';
 import { FirecrawlClient } from '../providers/firecrawl.js';
+// XaiClient import removed — live_search deprecated. Re-add when we wire Agent Tools API.
 import {
   detectUrlType,
   extractYouTubeVideoId,
@@ -100,7 +100,8 @@ async function handleYoutube(
   if (!videoId) throw new Error('Could not extract YouTube video ID from URL.');
 
   // Primary: direct scrape of the watch page (fast, free).
-  // Fallback: xAI Grok live-search (works when Azure IPs are bot-blocked by YouTube).
+  // Fallback: Firecrawl stealth mode (works when Azure IPs are bot-blocked by YouTube;
+  // Firecrawl's managed proxy pool bypasses most YouTube bot detection).
   let transcript = '';
   try {
     const items = await fetchYouTubeTranscript(videoId);
@@ -109,18 +110,19 @@ async function handleYoutube(
     console.log(`[url-ingest][youtube] direct scrape succeeded — length: ${transcript.length}`);
   } catch (scrapeErr) {
     console.warn(
-      `[url-ingest][youtube] direct scrape failed, falling back to xAI:`,
+      `[url-ingest][youtube] direct scrape failed, falling back to Firecrawl stealth:`,
       scrapeErr instanceof Error ? scrapeErr.message : scrapeErr,
     );
     try {
-      const xai = new XaiClient(deps.config.xaiApiKey);
-      const res = await xai.fetchYoutubeTranscript(url);
-      transcript = res.content;
-      console.log(`[url-ingest][youtube] xAI fallback succeeded — length: ${transcript.length}`);
-    } catch (xaiErr) {
+      const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
+      const res = await firecrawl.scrape(url, { stealth: true });
+      transcript = res.markdown;
+      if (!transcript.trim()) throw new Error('Firecrawl returned empty content.');
+      console.log(`[url-ingest][youtube] Firecrawl fallback succeeded — length: ${transcript.length}`);
+    } catch (fcErr) {
       throw new Error(
-        `Couldn't fetch YouTube transcript — both direct scrape and xAI fallback failed. ${
-          xaiErr instanceof Error ? xaiErr.message : xaiErr
+        `Couldn't fetch YouTube transcript — both direct scrape and Firecrawl fallback failed. ${
+          fcErr instanceof Error ? fcErr.message : fcErr
         }`,
       );
     }
@@ -155,34 +157,24 @@ async function handleXThread(
   url: string,
   opts: IngestFromUrlInput,
 ): Promise<IngestFromUrlResult> {
-  const xai = new XaiClient(deps.config.xaiApiKey);
+  // Note: xAI's Grok live_search was deprecated in 2026 in favor of Agent Tools API.
+  // Using Firecrawl stealth as the reliable primary path for X — their managed proxy
+  // pool handles X's anti-scraping. xAI fallback path kept in XaiClient for when
+  // we wire up the new Agent Tools API.
   const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
 
   let content: string;
   let fetchedTitle: string;
 
   try {
-    const res = await xai.fetchXThread(url);
-    content = res.content;
-    fetchedTitle = res.title;
-    console.log(`[url-ingest][x] xAI succeeded — length: ${content.length}`);
+    const fc = await firecrawl.scrape(url, { stealth: true });
+    content = fc.markdown;
+    fetchedTitle = fc.title;
+    console.log(`[url-ingest][x] Firecrawl stealth succeeded — length: ${content.length}`);
   } catch (err) {
-    console.warn(
-      `[url-ingest][x] xAI failed, falling back to Firecrawl stealth:`,
-      err instanceof Error ? err.message : err,
+    throw new Error(
+      `Couldn't fetch X thread via Firecrawl. ${err instanceof Error ? err.message : err}`,
     );
-    try {
-      const fc = await firecrawl.scrape(url, { stealth: true });
-      content = fc.markdown;
-      fetchedTitle = fc.title;
-      console.log(`[url-ingest][x] Firecrawl fallback succeeded — length: ${content.length}`);
-    } catch (err2) {
-      throw new Error(
-        `Couldn't fetch X thread — both xAI and Firecrawl failed. ${
-          err2 instanceof Error ? err2.message : err2
-        }`,
-      );
-    }
   }
 
   const result = await createContentItem(deps, {
