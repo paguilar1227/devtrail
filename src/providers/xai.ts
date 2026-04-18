@@ -28,29 +28,45 @@ export class XaiClient {
    * server-side and returns the thread content.
    */
   async fetchXThread(url: string): Promise<LiveSearchResult> {
-    const prompt = `Fetch the full content of this X (Twitter) post and its thread: ${url}
+    // x_search is a search tool, not a URL-fetch tool. Help Grok find the post
+    // by extracting the author handle from the URL and scoping the search via
+    // allowed_x_handles. Then describe what we want in the prompt.
+    const parsed = parseXUrl(url);
 
-Return the complete thread as plain text:
-- The original post content
-- All replies in the thread (in order)
-- Author handle for each post
-- Post timestamp if available
+    const prompt = parsed
+      ? `Use the x_search tool to find and return the full content of a specific post by user @${parsed.handle} with status ID ${parsed.postId} (URL: ${url}).
 
-Format as readable prose with clear post boundaries. Do NOT add analysis, summary, or commentary. Return ONLY the post content.
+Search for posts from @${parsed.handle}, find the one with ID ${parsed.postId}, and return:
+- The original post content in full
+- All replies and continuations in the thread (in thread order)
+- Each post's author handle
+- Timestamps when available
 
-If the x_search tool fails or returns no content, respond with exactly this single line: X_FETCH_FAILED`;
+Format as readable prose with clear post boundaries. Do NOT summarize or add commentary. Return ONLY the post content.
 
-    const result = await this.callAgentTools(prompt, [{ type: 'x_search' }]);
+If x_search returns no matching post, respond with exactly this line: X_FETCH_FAILED`
+      : `Use x_search to find and return the content of this X post: ${url}
 
-    // Detect explicit failure sentinel AND common failure-phrases that Grok falls
-    // back to when x_search doesn't find the post. These cases shouldn't be saved
-    // as content — the item would be useless text like "could not be retrieved".
+Return the post content only, no summary. If the post cannot be found, respond with exactly: X_FETCH_FAILED`;
+
+    const tools = [
+      {
+        type: 'x_search',
+        ...(parsed ? { allowed_x_handles: [parsed.handle] } : {}),
+        enable_image_understanding: true,
+        enable_video_understanding: true,
+      },
+    ];
+
+    const result = await this.callAgentTools(prompt, tools);
+
     if (
-      result.content.includes('X_FETCH_FAILED') ||
+      result.content.trim() === 'X_FETCH_FAILED' ||
+      /\bX_FETCH_FAILED\b/.test(result.content) ||
       /fetch error|could not be retrieved|unable to fetch|failed to fetch/i.test(result.content)
     ) {
       throw new Error(
-        `xAI x_search could not fetch this post. This happens when the post is from another region, deleted, has restricted visibility, or hits X API edge cases. Grok said: "${result.content.slice(0, 200)}"`,
+        `xAI x_search couldn't find this post. x_search is search-based (not URL-fetch) — it works best on recent posts from well-known accounts. Grok said: "${result.content.slice(0, 200)}"`,
       );
     }
 
@@ -68,7 +84,7 @@ Return the complete spoken content as plain text. Do NOT summarize, analyze, or 
 
 If the video has no captions available, respond with exactly: NO_CAPTIONS_AVAILABLE`;
 
-    const result = await this.callAgentTools(prompt, [{ type: 'web_search' }]);
+    const result = await this.callAgentTools(prompt, [{ type: 'web_search' } as Record<string, unknown>]);
     if (result.content.trim() === 'NO_CAPTIONS_AVAILABLE' || /\bNO_CAPTIONS_AVAILABLE\b/.test(result.content)) {
       throw new Error('No captions available for this YouTube video.');
     }
@@ -81,7 +97,7 @@ If the video has no captions available, respond with exactly: NO_CAPTIONS_AVAILA
    */
   private async callAgentTools(
     prompt: string,
-    tools: Array<{ type: string }>,
+    tools: Array<Record<string, unknown>>,
   ): Promise<LiveSearchResult> {
     const res = await fetch(XAI_ENDPOINT, {
       method: 'POST',
@@ -112,6 +128,13 @@ If the video has no captions available, respond with exactly: NO_CAPTIONS_AVAILA
     const title = firstLine.trim().slice(0, 80);
     return { title, content: text.trim() };
   }
+}
+
+/** Extract @handle and post ID from an X URL. Returns null on mismatch. */
+function parseXUrl(url: string): { handle: string; postId: string } | null {
+  const m = url.match(/(?:x|twitter)\.com\/([^/?#]+)\/status\/(\d+)/i);
+  if (!m) return null;
+  return { handle: m[1], postId: m[2] };
 }
 
 /**
