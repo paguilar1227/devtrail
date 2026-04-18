@@ -27,6 +27,7 @@ import {
   normalizeUrl,
   type UrlType,
 } from '../capture/url-detect.js';
+import { newTrace, recordStage, addNote, type IngestTrace } from '../capture/ingest-trace.js';
 
 export interface IngestFromUrlInput {
   projectIds?: string[];
@@ -78,7 +79,8 @@ export async function ingestFromUrl(
   opts: IngestFromUrlInput = {},
 ): Promise<IngestFromUrlResult> {
   const normalized = normalizeUrl(url);
-  console.log(`[url-ingest] Starting — url: ${normalized}`);
+  const trace = newTrace({ source_url: normalized });
+  console.log(`[url-ingest] Starting — url: ${normalized}  trace: ${trace.trace_id}`);
 
   // Dedup by source_url. On hit: merge incoming project_ids and tags into the
   // existing item (previously we silently dropped them — user thought their
@@ -121,22 +123,23 @@ export async function ingestFromUrl(
   }
 
   const urlType = await detectUrlType(normalized);
+  trace.url_type = urlType;
   console.log(`[url-ingest] Detected type: ${urlType}`);
 
   switch (urlType) {
     case 'youtube':
-      return await handleYoutube(deps, normalized, opts);
+      return await handleYoutube(deps, normalized, opts, trace);
     case 'x':
-      return await handleXThread(deps, normalized, opts);
+      return await handleXThread(deps, normalized, opts, trace);
     case 'pdf':
-      return await handleBinary(deps, normalized, opts, 'application/pdf');
+      return await handleBinary(deps, normalized, opts, 'application/pdf', trace);
     case 'image':
     case 'audio':
     case 'video':
-      return await handleBinary(deps, normalized, opts, null);
+      return await handleBinary(deps, normalized, opts, null, trace);
     case 'html':
     default:
-      return await handleHtml(deps, normalized, opts);
+      return await handleHtml(deps, normalized, opts, trace);
   }
 }
 
@@ -148,6 +151,7 @@ async function handleYoutube(
   deps: ServiceDeps,
   url: string,
   opts: IngestFromUrlInput,
+  trace: IngestTrace,
 ): Promise<IngestFromUrlResult> {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) throw new Error('Could not extract YouTube video ID from URL.');
@@ -197,6 +201,8 @@ async function handleYoutube(
     throw new Error('YouTube transcript was empty after all fetch attempts.');
   }
 
+  recordStage(trace, 'youtube.transcript', transcript);
+
   const result = await createContentItem(deps, {
     type: 'document',
     content: transcript,
@@ -204,6 +210,7 @@ async function handleYoutube(
     projectIds: opts.projectIds,
     tags: opts.tags,
     sourceUrl: url,
+    trace,
   });
 
   return {
@@ -221,6 +228,7 @@ async function handleXThread(
   deps: ServiceDeps,
   url: string,
   opts: IngestFromUrlInput,
+  trace: IngestTrace,
 ): Promise<IngestFromUrlResult> {
   // Primary: xAI Agent Tools API with x_search built-in tool (the 2026 replacement
   //   for the deprecated live_search). Grok does the X fetch server-side.
@@ -235,6 +243,14 @@ async function handleXThread(
     content = res.content;
     fetchedTitle = res.title;
     console.log(`[url-ingest][x] xAI x_search succeeded — length: ${content.length}`);
+    recordStage(trace, 'x.grok_response', content);
+    // Detect Grok returning the same post text twice in its own response.
+    if (content.length > 200) {
+      const firstHalf = content.slice(0, Math.floor(content.length / 2));
+      if (firstHalf.length > 100 && content.indexOf(firstHalf.slice(0, 100), firstHalf.length) >= 0) {
+        addNote(trace, 'grok_response_contains_repeated_prefix');
+      }
+    }
   } catch (err) {
     throw new Error(
       `Couldn't fetch X thread via xAI x_search: ${err instanceof Error ? err.message : err}`,
@@ -248,6 +264,7 @@ async function handleXThread(
     projectIds: opts.projectIds,
     tags: opts.tags,
     sourceUrl: url,
+    trace,
   });
 
   return {
@@ -265,10 +282,12 @@ async function handleHtml(
   deps: ServiceDeps,
   url: string,
   opts: IngestFromUrlInput,
+  trace: IngestTrace,
 ): Promise<IngestFromUrlResult> {
   const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
   const { title, markdown, statusCode } = await firecrawl.scrape(url);
   console.log(`[url-ingest][html] scraped — title: "${title}", length: ${markdown.length}, status: ${statusCode ?? 'n/a'}`);
+  recordStage(trace, 'html.markdown', markdown);
 
   // Guard against saving placeholder pages and error pages. Three layers:
   //   1. Firecrawl reports HTTP status — reject 4xx/5xx outright
@@ -304,6 +323,7 @@ async function handleHtml(
     projectIds: opts.projectIds,
     tags: opts.tags,
     sourceUrl: url,
+    trace,
   });
 
   return {
@@ -322,6 +342,7 @@ async function handleBinary(
   url: string,
   opts: IngestFromUrlInput,
   forcedMimeType: string | null,
+  trace: IngestTrace,
 ): Promise<IngestFromUrlResult> {
   const res = await fetch(url, { redirect: 'follow' });
   // fetch.ok is true for any 2xx. Treat 3xx (follow should have handled),
@@ -366,6 +387,7 @@ async function handleBinary(
     tags: opts.tags,
     sourceUrl: url,
     file: { data: buf, mimeType, filename },
+    trace,
   });
 
   // url_type already determined by caller; we don't re-derive here. Caller sets it via detection.

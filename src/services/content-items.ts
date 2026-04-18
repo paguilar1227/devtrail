@@ -12,6 +12,10 @@ import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkTy
 import { extractMetadata } from '../capture/metadata.js';
 import { chunkText, approximateTokens } from '../capture/chunker.js';
 import { extractPdfText } from '../providers/pdf-extract.js';
+import {
+  newTrace, recordStage, addNote, isEchoOf,
+  type IngestTrace,
+} from '../capture/ingest-trace.js';
 
 export interface CreateContentInput {
   type: ContentType;
@@ -25,6 +29,7 @@ export interface CreateContentInput {
   projectIds?: string[];
   tags?: string[];
   sourceUrl?: string;          // optional — set for URL-ingested content
+  trace?: IngestTrace;         // optional — passed in by url-ingest. Otherwise a fresh one is made here.
 }
 
 export interface CreateContentResult {
@@ -52,6 +57,8 @@ export async function createContentItem(
   input: CreateContentInput,
 ): Promise<CreateContentResult> {
   const warnings: string[] = [];
+  const trace = input.trace ?? newTrace({ source_url: input.sourceUrl });
+  recordStage(trace, 'input.content', input.content);
 
   // Step 1: dedup by file hash
   let fileHash: string | null = null;
@@ -85,8 +92,10 @@ export async function createContentItem(
       const pdf = await extractPdfText(input.file.data);
       pdfText = pdf.text;
       console.log(`[content] PDF extraction — ${pdf.pageCount} pages, ${pdfText.length} chars`);
+      recordStage(trace, 'pdf_parse.text', pdfText);
     } catch (err) {
       console.warn(`[content] pdf-parse failed, falling back to Flash multimodal:`, err instanceof Error ? err.message : err);
+      addNote(trace, `pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -100,6 +109,11 @@ export async function createContentItem(
     ? `${input.content ?? ''}\n\n${pdfText}`.trim().slice(0, 50000) // cap prompt size
     : input.content ?? '';
   const metadata = await extractMetadata(deps.metadataLLM, contentForMeta, filesForMeta);
+  recordStage(trace, 'metadata.title', metadata.title);
+  recordStage(trace, 'metadata.extracted_text', metadata.extracted_text);
+  if (isEchoOf(trace.stages['metadata.extracted_text'] ?? null, trace.stages['input.content'] ?? null)) {
+    addNote(trace, 'flash_echoed_input_content_into_extracted_text');
+  }
 
   // Step 4: final text (what gets chunked and embedded).
   // Priority:
@@ -116,6 +130,14 @@ export async function createContentItem(
     parts.push(metadata.extracted_text);
   }
   const fullText = parts.join('\n\n').trim();
+  recordStage(trace, 'fulltext', fullText);
+  // Detect self-repetition inside fullText (same prefix appearing twice).
+  if (fullText.length > 400) {
+    const half = fullText.slice(0, Math.floor(fullText.length / 2));
+    if (half.length > 200 && fullText.indexOf(half.slice(0, 200), 200) >= 0) {
+      addNote(trace, 'fulltext_contains_repeated_prefix');
+    }
+  }
 
   // Step 5: resolve title and tags
   const title = input.title?.trim() || metadata.title || 'Untitled';
@@ -154,6 +176,7 @@ export async function createContentItem(
     metadata: {
       topics: metadata.topics,
       filename: input.file?.filename,
+      ingest_trace: trace,
     },
     sourceUrl: input.sourceUrl ?? null,
   });
