@@ -36,9 +36,25 @@ Return the complete thread as plain text:
 - Author handle for each post
 - Post timestamp if available
 
-Format as readable prose with clear post boundaries. Do NOT add analysis, summary, or commentary. Return ONLY the post content.`;
+Format as readable prose with clear post boundaries. Do NOT add analysis, summary, or commentary. Return ONLY the post content.
 
-    return this.callAgentTools(prompt, [{ type: 'x_search' }]);
+If the x_search tool fails or returns no content, respond with exactly this single line: X_FETCH_FAILED`;
+
+    const result = await this.callAgentTools(prompt, [{ type: 'x_search' }]);
+
+    // Detect explicit failure sentinel AND common failure-phrases that Grok falls
+    // back to when x_search doesn't find the post. These cases shouldn't be saved
+    // as content — the item would be useless text like "could not be retrieved".
+    if (
+      result.content.includes('X_FETCH_FAILED') ||
+      /fetch error|could not be retrieved|unable to fetch|failed to fetch/i.test(result.content)
+    ) {
+      throw new Error(
+        `xAI x_search could not fetch this post. This happens when the post is from another region, deleted, has restricted visibility, or hits X API edge cases. Grok said: "${result.content.slice(0, 200)}"`,
+      );
+    }
+
+    return result;
   }
 
   /**
