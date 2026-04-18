@@ -14,6 +14,7 @@ export interface Citation {
   type: string;
   chunk_preview: string;
   similarity: number;
+  source_url?: string | null;  // set when the content item was ingested from a URL
 }
 
 export interface RagResult {
@@ -28,6 +29,7 @@ Rules:
 - Answer concisely and directly, using the context to support your response
 - If the context doesn't contain the answer, say so — do NOT make up information
 - Cite sources inline using [1], [2], etc. matching the numbered context passages
+- When a context passage has a source URL in its header, include the URL inline with the citation (e.g., "[1] (https://...)"). This lets the user jump to the original.
 - If context is ambiguous or contradictory, mention it
 - Preserve specific details: names, numbers, dates, quotes`;
 
@@ -65,13 +67,17 @@ export async function ragQuery(
     const num = i + 1;
     if (hit.type === 'chunk' && hit.chunk) {
       const c = hit.chunk;
-      contextParts.push(`[${num}] (${c.parent_type}: "${c.parent_title}")\n${c.content ?? '[media content]'}`);
+      const urlPart = c.parent_source_url ? ` — source: ${c.parent_source_url}` : '';
+      contextParts.push(
+        `[${num}] (${c.parent_type}: "${c.parent_title}"${urlPart})\n${c.content ?? '[media content]'}`,
+      );
       citations.push({
         content_item_id: c.content_item_id,
         title: c.parent_title,
         type: c.parent_type,
         chunk_preview: (c.content ?? '').slice(0, 150),
         similarity: c.similarity,
+        source_url: c.parent_source_url ?? null,
       });
     } else if (hit.type === 'todo' && hit.todo) {
       const t = hit.todo;

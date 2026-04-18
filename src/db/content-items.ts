@@ -15,6 +15,7 @@ export interface ContentItemInsert {
   tags: string[];
   embedding: number[] | null;
   metadata: Record<string, unknown>;
+  sourceUrl: string | null;
 }
 
 export interface ContentItemRow {
@@ -30,6 +31,7 @@ export interface ContentItemRow {
   tags: string[];
   embedding: number[] | null;
   metadata: Record<string, unknown>;
+  source_url: string | null;
   archived: boolean;
   created_at: Date;
   updated_at: Date;
@@ -50,14 +52,15 @@ export async function insertContentItem(
   const result = await db.query(
     `INSERT INTO content_items
        (type, title, title_source, content, blob_url, mime_type, file_hash,
-        project_ids, tags, embedding, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        project_ids, tags, embedding, metadata, source_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [
       item.type, item.title, item.titleSource, item.content, item.blobUrl,
       item.mimeType, item.fileHash, item.projectIds, item.tags,
       item.embedding ? JSON.stringify(item.embedding) : null,
       JSON.stringify(item.metadata),
+      item.sourceUrl,
     ],
   );
   return result.rows[0];
@@ -99,6 +102,15 @@ export async function findByFileHash(db: DbClient, hash: string): Promise<Conten
   return result.rows[0] ?? null;
 }
 
+/** Dedup lookup for URL-sourced content. */
+export async function findByUrl(db: DbClient, url: string): Promise<ContentItemRow | null> {
+  const result = await db.query(
+    `SELECT * FROM content_items WHERE source_url = $1 AND archived = false LIMIT 1`,
+    [url],
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function updateContentItem(
   db: DbClient,
   id: string,
@@ -111,7 +123,7 @@ export async function updateContentItem(
   const map: Record<string, string> = {
     title: 'title', titleSource: 'title_source', content: 'content',
     blobUrl: 'blob_url', mimeType: 'mime_type', fileHash: 'file_hash',
-    projectIds: 'project_ids', tags: 'tags',
+    projectIds: 'project_ids', tags: 'tags', sourceUrl: 'source_url',
   };
 
   for (const [key, col] of Object.entries(map)) {
@@ -183,7 +195,7 @@ export async function findSimilarContentItems(
   // Explicit column list — must NOT include the embedding vector.
   const result = await db.query(
     `SELECT id, type, title, title_source, content, blob_url, mime_type,
-            file_hash, project_ids, tags, metadata, archived, created_at, updated_at,
+            file_hash, project_ids, tags, metadata, source_url, archived, created_at, updated_at,
             1 - (embedding <=> $1::vector) AS similarity
      FROM content_items
      WHERE ${conditions.join(' AND ')}

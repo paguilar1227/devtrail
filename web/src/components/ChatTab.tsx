@@ -65,6 +65,14 @@ export function ChatTab({ projectId }: Props) {
                     {m.citations.map((c, j) => (
                       <div key={j} className="text-xs text-muted">
                         [{j + 1}] <span className="text-text">{c.title}</span> ({c.type}, {(c.similarity * 100).toFixed(0)}% match)
+                        {c.source_url && (
+                          <> · <a
+                            href={c.source_url}
+                            target="_blank"
+                            rel="noopener"
+                            className="underline hover:text-accent"
+                          >{chatDomainOf(c.source_url)}</a></>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -92,4 +100,12 @@ export function ChatTab({ projectId }: Props) {
       </div>
     </div>
   );
+}
+
+function chatDomainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }

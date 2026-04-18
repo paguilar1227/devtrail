@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listProjects, createProject, listContent, listTodos, type Project, type ContentItem, type Todo } from '../lib/api';
 import { SearchBar } from '../components/SearchBar';
+import { UrlSaveModal } from '../components/UrlSaveModal';
 
 interface Props {
   onOpenProject: (id: string) => void;
@@ -15,6 +16,7 @@ export function Home({ onOpenProject }: Props) {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -60,8 +62,17 @@ export function Home({ onOpenProject }: Props) {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xl font-semibold">Projects</h2>
-          <button className="btn" onClick={() => setCreating(true)}>+ New Project</button>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={() => setUrlModalOpen(true)}>🔗 Save from URL</button>
+            <button className="btn" onClick={() => setCreating(true)}>+ New Project</button>
+          </div>
         </div>
+
+        <UrlSaveModal
+          open={urlModalOpen}
+          onClose={() => setUrlModalOpen(false)}
+          onSaved={() => loadAll()}
+        />
 
         {creating && (
           <div className="card mb-4 space-y-2">

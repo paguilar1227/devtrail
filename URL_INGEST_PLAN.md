@@ -13,54 +13,55 @@ Living doc. Update checkboxes as you go. Designed so a fresh session can pick up
 **Phase 0 — Config (Azure side DONE, code pending):**
 - [x] `xai-api-key` and `firecrawl-api-key` copied to `openbrainprodkv`
 - [x] `XAI_API_KEY` and `FIRECRAWL_API_KEY` env vars wired into Container App
-- [ ] `src/config.ts` updated to load them
-- [ ] `src/services/index.ts` ServiceDeps extended if needed
+- [x] `src/config.ts` updated to load them
+- [x] N/A — providers instantiated inside url-ingest service
 
 **Phase 1 — Schema migration:**
-- [ ] `migrations/002_source_url.sql` created
-- [ ] `src/server.ts` auto-migrate logic extended to apply migration 002
+- [x] `migrations/002_source_url.sql` created
+- [x] `src/server.ts` auto-migrate logic extended to apply migration 002
 
 **Phase 2 — DB layer:**
-- [ ] `src/db/content-items.ts`: add `source_url` to interfaces, all SELECT column lists, INSERT, UPDATE
-- [ ] `src/db/content-items.ts`: add `findByUrl(url)` for dedup
-- [ ] `src/db/chunks.ts`: add `parent_source_url` to `findSimilarChunks` SELECT and `ChunkSearchResult` type
+- [x] `src/db/content-items.ts`: add `source_url` to interfaces, all SELECT column lists, INSERT, UPDATE
+- [x] `src/db/content-items.ts`: add `findByUrl(url)` for dedup
+- [x] `src/db/chunks.ts`: add `parent_source_url` to `findSimilarChunks` SELECT and `ChunkSearchResult` type
 
 **Phase 3 — Providers:**
-- [ ] npm install `youtube-transcript` + `@mendable/firecrawl-js`
-- [ ] `src/providers/xai.ts`: `fetchXThread(url)` using xAI Grok live-search
-- [ ] `src/providers/firecrawl.ts`: `scrapeUrl(url, opts)` using Firecrawl /v1/scrape
-- [ ] Unit tests for both clients (mocked HTTP)
+- [x] Installed `@mendable/firecrawl-js` (youtube-transcript npm package is broken — wrote minimal inline fetcher in `src/providers/youtube-transcript.ts` instead)
+- [x] `src/providers/xai.ts`: `fetchXThread(url)` using xAI Grok live-search
+- [x] `src/providers/firecrawl.ts`: `scrape(url, opts)` using `@mendable/firecrawl-js` SDK
+- [x] Unit tests for URL detection (providers mocked in integration tests)
 
 **Phase 4 — URL ingest service:**
-- [ ] `src/capture/url-detect.ts`: `detectUrlType(url)` dispatcher
-- [ ] `src/services/url-ingest.ts`: `ingestFromUrl(deps, url, opts)` orchestrator
-- [ ] Per-type handlers: YouTube, X, PDF, image, audio, HTML
-- [ ] Dedup check via `findByUrl` before creating
-- [ ] Unit + integration tests
+- [x] `src/capture/url-detect.ts`: `detectUrlType(url)` dispatcher + `extractYouTubeVideoId` + `normalizeUrl`
+- [x] `src/services/url-ingest.ts`: `ingestFromUrl(deps, url, opts)` orchestrator
+- [x] Per-type handlers: YouTube, X (xAI→Firecrawl fallback), PDF, image, audio, video, HTML
+- [x] Dedup check via `findByUrl` before creating
+- [x] Binary size cap (100 MB) to prevent runaway downloads
+- [x] Unit + integration tests
 
 **Phase 5 — Public surfaces:**
-- [ ] REST: `POST /api/v1/content/from-url` in `src/app.ts`
-- [ ] MCP: `save_from_url` tool in `src/mcp/server.ts` (7th tool)
-- [ ] Update MCP INSTRUCTIONS to mention `save_from_url`
-- [ ] Integration tests for REST + MCP paths
+- [x] REST: `POST /api/v1/content/from-url` in `src/app.ts`
+- [x] MCP: `save_from_url` tool in `src/mcp/server.ts` (7th tool)
+- [x] Updated MCP INSTRUCTIONS with `save_from_url` usage + examples, removed "no URL ingestion" from known limitations
+- [x] Integration tests for REST + MCP paths (dedup, YouTube, X, HTML, error cases)
 
 **Phase 6 — Retrieval surfacing:**
-- [ ] `ChunkSearchResult.parent_source_url` flows through search API
-- [ ] RAG `Citation` type includes `source_url` when present
-- [ ] `src/services/rag.ts` renders citations with URL when available
-- [ ] Regression test: search response includes source_url for URL-sourced items
+- [x] `ChunkSearchResult.parent_source_url` flows through search API
+- [x] RAG `Citation` type includes `source_url` when present
+- [x] `src/services/rag.ts` SYSTEM_PROMPT updated to tell Claude to include URLs in citations
+- [x] Regression test: chunk search SQL selects `ci.source_url AS parent_source_url`
 
 **Phase 7 — Web UI:**
-- [ ] `web/src/lib/api.ts`: add `saveFromUrl` client, update `Citation`/`SearchHit` types
-- [ ] `web/src/components/UrlSaveModal.tsx`: shared modal
-- [ ] `web/src/components/DocumentsTab.tsx`: "Save from URL" button opens modal, scoped to project
-- [ ] `web/src/pages/Home.tsx`: "Save from URL" button opens modal, global scope
-- [ ] `web/src/components/DocumentsTab.tsx` + `NotesTab.tsx`: show source_url as clickable link on cards
-- [ ] `web/src/components/ChatTab.tsx`: citations render source_url as link when present
-- [ ] `web/src/components/SearchBar.tsx`: hit cards show source_url
+- [x] `web/src/lib/api.ts`: add `saveFromUrl` client, update `Citation`/`SearchHit`/`ContentItem` types with `source_url`/`parent_source_url`
+- [x] `web/src/components/UrlSaveModal.tsx`: shared modal with URL/title/tags, success state, dedup handling
+- [x] `web/src/components/DocumentsTab.tsx`: "Save from URL" button opens modal scoped to project
+- [x] `web/src/pages/Home.tsx`: "Save from URL" button on Projects row (global/personal scope)
+- [x] `web/src/components/DocumentsTab.tsx` + `NotesTab.tsx`: show source_url as clickable link on cards
+- [x] `web/src/components/ChatTab.tsx`: citations render source_url as link when present
+- [x] `web/src/components/SearchBar.tsx`: hit cards show source_url
 
 **Phase 8 — Deploy + verify:**
-- [ ] All tests pass locally (target: 70+ passing)
+- [x] All tests pass locally (82 passing, up from 57 baseline)
 - [ ] Commit, push, CI+Deploy green
 - [ ] Production verification:
   - [ ] MCP save_from_url with a YouTube URL → document created, transcript visible

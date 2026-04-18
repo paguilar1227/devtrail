@@ -10,6 +10,7 @@ import * as todosSvc from './services/todos.js';
 import * as commentsSvc from './services/todo-comments.js';
 import * as searchSvc from './services/search.js';
 import * as ragSvc from './services/rag.js';
+import * as urlIngestSvc from './services/url-ingest.js';
 
 export function createApp(deps: ServiceDeps) {
   const app = new Hono();
@@ -138,6 +139,28 @@ export function createApp(deps: ServiceDeps) {
       type, content, title, projectIds, tags, file,
     });
     return c.json(result, 201);
+  });
+
+  // Ingest from URL — fetches & chunks a URL (YouTube, X, PDF, HTML, media)
+  // Lives before /content/:id so routing doesn't treat "from-url" as an id.
+  app.post('/api/v1/content/from-url', async (c) => {
+    const body = await c.req.json<{
+      url: string;
+      project_ids?: string[];
+      tags?: string[];
+      title?: string;
+    }>();
+    if (!body.url) return c.json({ error: 'url is required' }, 400);
+    try {
+      const result = await urlIngestSvc.ingestFromUrl(deps, body.url, {
+        projectIds: body.project_ids,
+        tags: body.tags,
+        title: body.title,
+      });
+      return c.json(result, result.deduped ? 200 : 201);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
   });
 
   app.get('/api/v1/content/:id', async (c) => {

@@ -5,6 +5,7 @@ import * as projectsSvc from '../services/projects.js';
 import * as contentSvc from '../services/content-items.js';
 import * as todosSvc from '../services/todos.js';
 import * as searchSvc from '../services/search.js';
+import * as urlIngestSvc from '../services/url-ingest.js';
 
 const INSTRUCTIONS = `# Open Brain — Personal Knowledge Base + Productivity Tool
 
@@ -42,6 +43,7 @@ Flat labels for filtering (e.g. \`reference\`, \`meeting-notes\`, \`reading\`). 
 - "Save this idea…" / "remember this…" → \`create(type: 'quick_note', content: …)\`
 - "Save this article / meeting notes / writeup…" → \`create(type: 'note' or 'document', content, title?, project_ids?)\`
 - "Add a todo / remind me / I need to…" → \`create(type: 'todo', content, project_id?, priority?, due_date?)\`
+- "Save this URL / this YouTube video / this article link / this tweet thread…" → \`save_from_url(url, project_ids?, tags?)\` — backend fetches content, preserves URL as source. Prefer this over \`create\` for URL content; avoids approval-size issues on large pages.
 
 **Browse and lookup:**
 - "What projects do I have?" → \`list_projects\`
@@ -78,6 +80,14 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 **User:** "Jot down that I hated the last meeting."
 → \`create(type: 'quick_note', content: 'Hated the last meeting')\` — no project, personal scope.
 
+**User:** "Save this YouTube video to my Learning Rust project: https://www.youtube.com/watch?v=..."
+→ \`list_projects()\` to find "Learning Rust" ID
+→ \`save_from_url(url: 'https://...', project_ids: ['<that ID>'])\`
+→ Confirm: "Saved — transcript captured, source URL preserved."
+
+**User:** "Grab this tweet thread: https://x.com/jason/status/..."
+→ \`save_from_url(url: 'https://x.com/...')\` — no project, personal scope.
+
 ## Proactive behavior
 
 - When the user generates something worth keeping ("this is great" / "this is the plan"), offer to save it.
@@ -95,7 +105,8 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 ## Known limitations
 
 - **No update or delete via MCP.** You cannot mark a todo done, edit a note, archive a document, or rename a project through these tools. The web UI handles those. If the user asks to edit, say so and point them to the app.
-- **Documents are immutable after creation.** Chunks are generated at create time and not re-chunked on update.`;
+- **Documents are immutable after creation.** Chunks are generated at create time and not re-chunked on update.
+- **URL ingestion Tier 1 coverage:** YouTube videos, X/Twitter threads, PDFs, HTML articles (incl. Reddit, blogs), direct image/audio links. Paywalled content, Notion/Google Docs/Medium-subscribed, Vimeo/Twitch are not supported in this pass.`;
 
 export function createMcpServer(deps: ServiceDeps): McpServer {
   const server = new McpServer(
@@ -277,6 +288,49 @@ Scoping:
         limit,
       });
       return { content: [{ type: 'text', text: JSON.stringify(hits, null, 2) }] };
+    },
+  );
+
+  // ---------- 7. save_from_url ----------
+  server.tool(
+    'save_from_url',
+    `Fetch a URL and save its content to Open Brain. Handles YouTube videos (transcripts, not the file), X/Twitter threads, PDFs, HTML articles (incl. Reddit/blogs), and direct image/audio links. The original URL is preserved as the item's source and surfaced in search citations.
+
+Use this INSTEAD of \`create\` whenever the user wants to save something they've referenced by URL ("save this article", "save this YouTube video to my project", "grab this tweet thread"). The MCP payload is tiny (just the URL), backend does the fetch — avoids the size/approval-dialog issues with pasting large content through \`create\`.
+
+Dedup: if this URL is already saved, returns the existing item with \`deduped: true\`. Safe to call repeatedly.
+
+Supported URLs:
+- YouTube (youtube.com/watch?v=..., youtu.be/...) → transcript via youtube-transcript
+- X/Twitter (x.com/user/status/..., twitter.com/user/status/...) → thread via xAI live-search, Firecrawl fallback
+- PDF URLs, image URLs, audio URLs → downloaded and run through the file pipeline
+- Everything else → treated as HTML, Firecrawl markdown extraction
+
+Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
+    {
+      url: z.string().describe('The URL to fetch. Any http(s) URL to YouTube, X, a PDF, an article, a blog post, etc.'),
+      project_ids: z.array(z.string()).optional()
+        .describe('Multi-project membership (array of project UUIDs). Omit for personal/global scope.'),
+      tags: z.array(z.string()).optional()
+        .describe('Flat organizational labels. Lowercase kebab-case.'),
+      title: z.string().optional()
+        .describe('Optional title override. If omitted, uses the page/video title or AI-generated from content.'),
+    },
+    async ({ url, project_ids, tags, title }) => {
+      try {
+        const result = await urlIngestSvc.ingestFromUrl(deps, url, {
+          projectIds: project_ids,
+          tags,
+          title,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
     },
   );
 

@@ -23,6 +23,7 @@ export interface CreateContentInput {
   };
   projectIds?: string[];
   tags?: string[];
+  sourceUrl?: string;          // optional — set for URL-ingested content
 }
 
 export interface CreateContentResult {
@@ -120,6 +121,7 @@ export async function createContentItem(
       topics: metadata.topics,
       filename: input.file?.filename,
     },
+    sourceUrl: input.sourceUrl ?? null,
   });
 
   // Step 8: chunk the text and embed each chunk

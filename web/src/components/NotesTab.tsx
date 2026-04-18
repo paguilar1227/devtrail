@@ -142,6 +142,13 @@ export function NotesTab({ projectId }: Props) {
                   )}
                 </div>
               </div>
+              {n.source_url && (
+                <div className="mt-1 text-xs text-muted truncate">
+                  🔗 <a href={n.source_url} target="_blank" rel="noopener" className="underline hover:text-accent">
+                    {domainOf(n.source_url)}
+                  </a>
+                </div>
+              )}
               {n.content && (
                 <div className="mt-2 text-sm whitespace-pre-wrap text-muted line-clamp-4">{n.content}</div>
               )}
@@ -151,4 +158,12 @@ export function NotesTab({ projectId }: Props) {
       )}
     </div>
   );
+}
+
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }

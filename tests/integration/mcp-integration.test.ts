@@ -125,7 +125,7 @@ describe('MCP endpoint via Hono app', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(await res.text());
     expect(body.result?.tools).toBeDefined();
-    expect(body.result.tools.length).toBe(6);
+    expect(body.result.tools.length).toBe(7);
   });
 });
 

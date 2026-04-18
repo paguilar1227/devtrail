@@ -4,6 +4,7 @@ import {
   archiveContent, restoreContent, deleteContentHard,
   type ContentItem,
 } from '../lib/api';
+import { UrlSaveModal } from './UrlSaveModal';
 
 interface Props {
   projectId: string;
@@ -14,6 +15,7 @@ export function DocumentsTab({ projectId }: Props) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -68,24 +70,40 @@ export function DocumentsTab({ projectId }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="card border-dashed text-center">
-        <input
-          ref={fileRef}
-          type="file"
-          className="hidden"
-          multiple
-          accept="application/pdf,image/*,audio/*,video/*,text/*"
-          onChange={(e) => handleUpload(e.target.files)}
-        />
-        <button
-          className="btn"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-        >
-          {uploading ? 'Uploading...' : '+ Upload Document'}
-        </button>
-        <div className="text-xs text-muted mt-2">PDFs, images, audio, video, text files</div>
+      <div className="flex gap-2">
+        <div className="card border-dashed text-center flex-1">
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            multiple
+            accept="application/pdf,image/*,audio/*,video/*,text/*"
+            onChange={(e) => handleUpload(e.target.files)}
+          />
+          <button
+            className="btn"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+          >
+            {uploading ? 'Uploading...' : '+ Upload Document'}
+          </button>
+          <div className="text-xs text-muted mt-2">PDFs, images, audio, video, text files</div>
+        </div>
+
+        <div className="card border-dashed text-center flex-1">
+          <button className="btn" onClick={() => setUrlModalOpen(true)}>
+            🔗 Save from URL
+          </button>
+          <div className="text-xs text-muted mt-2">YouTube, X threads, articles, PDFs by link</div>
+        </div>
       </div>
+
+      <UrlSaveModal
+        open={urlModalOpen}
+        onClose={() => setUrlModalOpen(false)}
+        defaultProjectId={projectId}
+        onSaved={() => load()}
+      />
 
       <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
         <input
@@ -109,10 +127,20 @@ export function DocumentsTab({ projectId }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate">{d.title}</div>
                   <div className="text-xs text-muted mt-1">
-                    {d.mime_type ?? 'unknown'} • {new Date(d.created_at).toLocaleDateString()}
+                    {d.mime_type ?? (d.source_url ? 'link' : 'unknown')} • {new Date(d.created_at).toLocaleDateString()}
                     {d.archived && <> • archived</>}
                     {d.tags.length > 0 && <> • {d.tags.map((t) => `#${t}`).join(' ')}</>}
                   </div>
+                  {d.source_url && (
+                    <div className="text-xs text-muted mt-1 truncate">
+                      🔗 <a
+                        href={d.source_url}
+                        target="_blank"
+                        rel="noopener"
+                        className="underline hover:text-accent"
+                      >{domainOf(d.source_url)}</a>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-1 flex-shrink-0 items-start">
                   {d.blob_url && (
@@ -139,4 +167,12 @@ export function DocumentsTab({ projectId }: Props) {
       )}
     </div>
   );
+}
+
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }

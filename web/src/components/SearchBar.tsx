@@ -60,6 +60,14 @@ export function SearchBar({ projectId }: Props) {
                     {hit.type === 'chunk' ? `${hit.chunk?.parent_type}: ${hit.chunk?.parent_title}` : `todo`}
                     {' • '}
                     {(hit.similarity * 100).toFixed(0)}% match
+                    {hit.chunk?.parent_source_url && (
+                      <> · <a
+                        href={hit.chunk.parent_source_url}
+                        target="_blank"
+                        rel="noopener"
+                        className="underline hover:text-accent"
+                      >{searchDomainOf(hit.chunk.parent_source_url)}</a></>
+                    )}
                   </div>
                   <div className="text-sm line-clamp-3">
                     {hit.type === 'chunk' ? (hit.chunk?.content ?? '[media]') : hit.todo?.content}
@@ -72,4 +80,12 @@ export function SearchBar({ projectId }: Props) {
       )}
     </div>
   );
+}
+
+function searchDomainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }

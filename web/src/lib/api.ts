@@ -47,6 +47,7 @@ export interface ContentItem {
   project_ids: string[];
   tags: string[];
   metadata: Record<string, unknown>;
+  source_url: string | null;  // set for URL-ingested content
   archived: boolean;
   created_at: string;
   updated_at: string;
@@ -77,6 +78,7 @@ export interface SearchHit {
     chunk_type: string;
     parent_title: string;
     parent_type: string;
+    parent_source_url?: string | null;
     metadata: Record<string, unknown>;
   };
   todo?: Todo & { similarity: number };
@@ -88,6 +90,7 @@ export interface Citation {
   type: string;
   chunk_preview: string;
   similarity: number;
+  source_url?: string | null;
 }
 
 export interface RagResult {
@@ -191,6 +194,26 @@ export const deleteContentHard = (id: string) =>
 
 export const restoreContent = (id: string) =>
   request<{ ok: true }>(`/api/v1/content/${id}/restore`, { method: 'POST' });
+
+export interface SaveFromUrlResult {
+  id: string;
+  title: string;
+  type: 'document' | 'note';
+  source_url: string;
+  deduped: boolean;
+  chunkCount?: number;
+  url_type: 'youtube' | 'x' | 'pdf' | 'image' | 'audio' | 'video' | 'html';
+}
+
+export const saveFromUrl = (payload: {
+  url: string;
+  project_ids?: string[];
+  tags?: string[];
+  title?: string;
+}) => request<SaveFromUrlResult>('/api/v1/content/from-url', {
+  method: 'POST',
+  body: JSON.stringify(payload),
+});
 
 // ----- Todos -----
 export const listTodos = (params: {

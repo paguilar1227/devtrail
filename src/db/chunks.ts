@@ -86,6 +86,7 @@ export interface ChunkSearchResult {
   parent_title: string;
   parent_project_ids: string[];
   parent_tags: string[];
+  parent_source_url: string | null;
 }
 
 export async function findSimilarChunks(
@@ -120,7 +121,8 @@ export async function findSimilarChunks(
             ci.type AS parent_type,
             ci.title AS parent_title,
             ci.project_ids AS parent_project_ids,
-            ci.tags AS parent_tags
+            ci.tags AS parent_tags,
+            ci.source_url AS parent_source_url
      FROM chunks c
      JOIN content_items ci ON ci.id = c.content_item_id
      WHERE ${conditions.join(' AND ')}
