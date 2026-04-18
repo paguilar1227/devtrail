@@ -156,23 +156,34 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
       limit: z.number().int().positive().default(50).describe('Max items to return'),
     },
     async ({ entity_type, project_id, tags, status, limit }) => {
-      let data: unknown;
+      let rows: Array<Record<string, unknown>>;
       if (entity_type === 'todo') {
-        data = await todosSvc.listTodos(deps, {
+        rows = await todosSvc.listTodos(deps, {
           project_id: project_id ?? undefined,
           status,
           tags,
           limit,
-        });
+        }) as unknown as Array<Record<string, unknown>>;
       } else {
-        data = await contentSvc.listContentItems(deps, {
+        rows = await contentSvc.listContentItems(deps, {
           type: entity_type,
           project_id,
           tags,
           limit,
-        });
+        }) as unknown as Array<Record<string, unknown>>;
       }
-      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      // Strip embeddings (3072-dim vectors) and truncate content bodies.
+      // Pre-strip, a list of ~10 PDF documents with whole-item embeddings plus
+      // 500KB+ of content each produced JSON large enough to time out.
+      // Callers that need the full content should follow up with `get(id)`.
+      const stripped = rows.map((row) => {
+        const { embedding: _embedding, ...rest } = row;
+        if (typeof rest.content === 'string' && rest.content.length > 500) {
+          rest.content = `${rest.content.slice(0, 500)}… [truncated — use get(id) for full content]`;
+        }
+        return rest;
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(stripped, null, 2) }] };
     },
   );
 

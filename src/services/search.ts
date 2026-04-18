@@ -28,11 +28,12 @@ export async function search(
   query: string,
   opts: SearchOptions = {},
 ): Promise<SearchHit[]> {
-  // Default 0.5 instead of 0.3 — 0.3 is way too permissive, it returned
-  // meaningful-looking similarity for unrelated queries (e.g., "llama farming
-  // in antarctica" matched unrelated content at sim 0.61). 0.5 is a more
-  // honest floor for "this is probably about the query".
-  const { projectId, entityTypes, tags, limit = 10, threshold = 0.5 } = opts;
+  // Default 0.65. Gemini Embedding 2 (3072-dim) has a natural floor around
+  // 0.5 even for unrelated content because high-dim cosine similarity
+  // clusters near 0.5-0.7 for "not obviously about the query" pairs. 0.65
+  // is the observed break between "related" and "noise" on this corpus.
+  // Caller can override via opts.threshold (MCP + REST expose it).
+  const { projectId, entityTypes, tags, limit = 10, threshold = 0.65 } = opts;
   console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, tags: ${tags?.join(',') ?? 'none'}`);
 
   const queryEmbedding = await deps.embeddingProvider.embed(query);
