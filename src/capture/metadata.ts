@@ -50,9 +50,12 @@ export async function extractMetadata(
         ]
       : content;
 
+    // Flash 2.5 uses internal "thinking" tokens that count against the output
+    // budget. For PDF-scale inputs (50K chars) the model needs room to both
+    // think and emit large extracted_text fields — 2048 was truncating mid-JSON.
     const response = await llm.complete(
       [{ role: 'user', content: messageContent }],
-      { systemPrompt: EXTRACTION_PROMPT, responseFormat: 'json', maxTokens: 2048 },
+      { systemPrompt: EXTRACTION_PROMPT, responseFormat: 'json', maxTokens: 8192 },
     );
 
     console.log(`[metadata] LLM response — tokens: ${response.tokensUsed.total}, raw length: ${response.content.length}`);
@@ -61,7 +64,8 @@ export async function extractMetadata(
     try {
       parsed = JSON.parse(response.content);
     } catch {
-      console.error(`[metadata] JSON parse failed — raw: ${response.content.slice(0, 300)}`);
+      console.error(`[metadata] JSON parse failed — first 500 chars: ${response.content.slice(0, 500)}`);
+      console.error(`[metadata] JSON parse failed — last 200 chars: ${response.content.slice(-200)}`);
       return FALLBACK;
     }
 
