@@ -99,23 +99,36 @@ async function handleYoutube(
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) throw new Error('Could not extract YouTube video ID from URL.');
 
-  let transcript: string;
+  // Primary: direct scrape of the watch page (fast, free).
+  // Fallback: xAI Grok live-search (works when Azure IPs are bot-blocked by YouTube).
+  let transcript = '';
   try {
     const items = await fetchYouTubeTranscript(videoId);
     transcript = items.map((t) => t.text).join(' ');
-  } catch (err) {
-    throw new Error(
-      `Couldn't fetch YouTube transcript (video may have no captions or be unavailable): ${
-        err instanceof Error ? err.message : err
-      }`,
+    if (!transcript.trim()) throw new Error('Empty transcript from direct scrape.');
+    console.log(`[url-ingest][youtube] direct scrape succeeded — length: ${transcript.length}`);
+  } catch (scrapeErr) {
+    console.warn(
+      `[url-ingest][youtube] direct scrape failed, falling back to xAI:`,
+      scrapeErr instanceof Error ? scrapeErr.message : scrapeErr,
     );
+    try {
+      const xai = new XaiClient(deps.config.xaiApiKey);
+      const res = await xai.fetchYoutubeTranscript(url);
+      transcript = res.content;
+      console.log(`[url-ingest][youtube] xAI fallback succeeded — length: ${transcript.length}`);
+    } catch (xaiErr) {
+      throw new Error(
+        `Couldn't fetch YouTube transcript — both direct scrape and xAI fallback failed. ${
+          xaiErr instanceof Error ? xaiErr.message : xaiErr
+        }`,
+      );
+    }
   }
 
   if (!transcript.trim()) {
-    throw new Error('YouTube transcript was empty.');
+    throw new Error('YouTube transcript was empty after all fetch attempts.');
   }
-
-  console.log(`[url-ingest][youtube] videoId: ${videoId}, transcript length: ${transcript.length}`);
 
   const result = await createContentItem(deps, {
     type: 'document',
