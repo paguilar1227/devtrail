@@ -39,27 +39,32 @@ export class XaiClient {
       throw new Error(`URL does not match the X status pattern: ${url}`);
     }
 
+    // Decode post ID → timestamp, then search in a narrow ±6 hour window.
+    // x_search mode=Latest returns the N most recent posts in the window;
+    // a tight window around the post's exact timestamp maximizes the odds
+    // our target is in that N.
     const postDate = snowflakeToDate(parsed.postId);
-    const fromDate = new Date(postDate.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const toDate = new Date(postDate.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const windowMs = 6 * 60 * 60 * 1000; // ±6 hours
+    const fromDate = new Date(postDate.getTime() - windowMs).toISOString();
+    const toDate = new Date(postDate.getTime() + windowMs).toISOString();
     const postDateStr = postDate.toISOString();
 
-    const prompt = `Use x_search to find and return a specific X post, then follow its thread.
+    const prompt = `Use x_search to find a specific X post from @${parsed.handle} and return its content.
 
-Target post:
+Target:
 - Author: @${parsed.handle}
 - Post ID: ${parsed.postId}
-- Approximate timestamp: ${postDateStr}
+- Timestamp: ${postDateStr}
 - URL: ${url}
 
-Steps:
-1. Use x_search scoped to @${parsed.handle}'s posts around ${postDateStr}.
-2. Find the post with ID ${parsed.postId} (the ID is the final number in the URL).
-3. Return the full post content AND all replies / follow-ups in the thread in order.
+Call x_search with a high limit (50) and mode=Latest, scoped to the date window already configured. Look through the returned posts for the one with ID ${parsed.postId}. If you find it, return:
+- The original post's full text
+- Any replies/continuations by @${parsed.handle} that form the thread
+- Each post's author and ID
 
-Format: author handle + post text for each tweet, one tweet per block separated by blank lines. Do NOT summarize or add commentary.
+Format: plain prose with "@handle [post_id]: text" blocks separated by blank lines. Do NOT summarize or paraphrase — verbatim content only.
 
-If x_search can't surface the specific post with ID ${parsed.postId}, respond with exactly this single line and nothing else: X_FETCH_FAILED`;
+If the post with ID ${parsed.postId} is NOT in the x_search results for that window, respond with exactly this single line and nothing else: X_FETCH_FAILED`;
 
     const tools = [
       {
