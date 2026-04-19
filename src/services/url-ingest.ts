@@ -252,9 +252,10 @@ async function handleXThread(
       }
     }
   } catch (err) {
-    throw new Error(
-      `Couldn't fetch X thread via xAI x_search: ${err instanceof Error ? err.message : err}`,
-    );
+    // Re-throw without extra wrapping. xai.ts already produces a clear,
+    // actionable message (X_SEARCH_MISS: ...); double-wrapping just makes
+    // the downstream error harder to match on.
+    throw err instanceof Error ? err : new Error(String(err));
   }
 
   const result = await createContentItem(deps, {

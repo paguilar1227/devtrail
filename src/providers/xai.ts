@@ -84,8 +84,15 @@ If the post with ID ${parsed.postId} is NOT in the x_search results for that win
       /\bX_FETCH_FAILED\b/.test(result.content) ||
       /fetch error|could not be retrieved|unable to fetch|failed to fetch/i.test(result.content)
     ) {
+      // Log the raw Grok reply for ops; keep the thrown message focused and
+      // actionable for the end user / MCP caller.
+      console.warn(
+        `[xai][x] x_search miss for post ${parsed.postId} (@${parsed.handle}). Grok reply: "${result.content.slice(0, 300)}"`,
+      );
       throw new Error(
-        `xAI x_search couldn't find post ${parsed.postId} by @${parsed.handle}. x_search is keyword-based — it works best when x_keyword_search can surface the post in its result set. Grok said: "${result.content.slice(0, 200)}"`,
+        `X_SEARCH_MISS: Grok's x_search couldn't surface post ${parsed.postId} by @${parsed.handle}. ` +
+        `x_search is keyword/date-indexed — older, obscure, or deleted posts often aren't in its results set. ` +
+        `Workaround: copy the post text and save it via create(type: 'note', title: ..., content: ..., sourceUrl: '${url}').`,
       );
     }
 
