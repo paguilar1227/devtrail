@@ -1,11 +1,14 @@
 import type { ServiceDeps } from './index.js';
 import { search } from './search.js';
+import { classifyQueryDepth, type QueryDepth } from './query-depth.js';
 
 export interface RagOptions {
   projectId?: string;
   tags?: string[];
   maxChunks?: number;
   entityTypes?: Array<'document' | 'note' | 'todo'>;
+  /** Force a depth or leave as 'auto' to let the classifier decide. */
+  depth?: QueryDepth | 'auto';
 }
 
 export interface Citation {
@@ -21,6 +24,10 @@ export interface RagResult {
   answer: string;
   citations: Citation[];
   used_chunks: number;
+  meta: {
+    depth_used: QueryDepth;
+    depth_reason: string;     // why this depth was picked (classifier's output, or "caller forced fast/thorough")
+  };
 }
 
 const SYSTEM_PROMPT = `You are a helpful assistant answering questions using ONLY the provided context from a personal knowledge base.
@@ -39,9 +46,25 @@ export async function ragQuery(
   opts: RagOptions = {},
 ): Promise<RagResult> {
   const maxChunks = opts.maxChunks ?? 6;
-  console.log(`[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}`);
+  const requestedDepth = opts.depth ?? 'auto';
+  console.log(
+    `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}, depth: ${requestedDepth}`,
+  );
 
-  // Retrieve relevant chunks
+  // Resolve depth. Auto → classifier; otherwise trust the caller's override.
+  let depth: QueryDepth;
+  let depthReason: string;
+  if (requestedDepth === 'auto') {
+    const classification = await classifyQueryDepth(deps, question);
+    depth = classification.depth;
+    depthReason = classification.reason;
+  } else {
+    depth = requestedDepth;
+    depthReason = `caller forced ${requestedDepth}`;
+  }
+
+  // Retrieve relevant chunks (same retrieval path for both depths — the routing
+  // only affects synthesis).
   const hits = await search(deps, question, {
     projectId: opts.projectId,
     entityTypes: opts.entityTypes,
@@ -55,6 +78,7 @@ export async function ragQuery(
       answer: `I don't have any information in your knowledge base${opts.projectId ? ' for this project' : ''} that relates to this question.`,
       citations: [],
       used_chunks: 0,
+      meta: { depth_used: depth, depth_reason: depthReason },
     };
   }
 
@@ -94,18 +118,26 @@ export async function ragQuery(
   const context = contextParts.join('\n\n');
   const userPrompt = `Context from knowledge base:\n\n${context}\n\n---\n\nQuestion: ${question}`;
 
-  console.log(`[rag] Sending to LLM — ${hits.length} chunks, ${context.length} context chars`);
+  console.log(`[rag] Sending to LLM — ${hits.length} chunks, ${context.length} context chars, depth: ${depth}`);
 
-  const response = await deps.ragLLM.complete(
+  const llm = depth === 'thorough' ? deps.ragDeepLLM : deps.ragFastLLM;
+  // Thorough mode burns reasoning tokens against the output budget, so give
+  // it more room. Fast mode stays tight.
+  const maxTokens = depth === 'thorough' ? 8192 : 2048;
+
+  const response = await llm.complete(
     [{ role: 'user', content: userPrompt }],
-    { systemPrompt: SYSTEM_PROMPT, maxTokens: 2048 },
+    { systemPrompt: SYSTEM_PROMPT, maxTokens },
   );
 
-  console.log(`[rag] LLM response — tokens: ${response.tokensUsed.total}, answer length: ${response.content.length}`);
+  console.log(
+    `[rag] LLM response — depth: ${depth}, tokens: ${response.tokensUsed.total}, answer length: ${response.content.length}`,
+  );
 
   return {
     answer: response.content,
     citations,
     used_chunks: hits.length,
+    meta: { depth_used: depth, depth_reason: depthReason },
   };
 }

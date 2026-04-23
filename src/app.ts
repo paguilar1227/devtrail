@@ -340,6 +340,7 @@ export function createApp(deps: ServiceDeps) {
       tags?: string[];
       entity_types?: Array<'document' | 'note' | 'todo'>;
       max_chunks?: number;
+      depth?: 'auto' | 'fast' | 'thorough';
     }>();
     if (!body.question) return c.json({ error: 'question is required' }, 400);
     const result = await ragSvc.ragQuery(deps, body.question, {
@@ -347,6 +348,7 @@ export function createApp(deps: ServiceDeps) {
       tags: body.tags,
       entityTypes: body.entity_types,
       maxChunks: body.max_chunks ?? 6,
+      depth: body.depth ?? 'auto',
     });
     return c.json(result);
   });

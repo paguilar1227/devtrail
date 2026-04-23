@@ -51,8 +51,18 @@ export class AzureFoundryLLMProvider implements LLMProvider {
     const url = `${this.endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${this.apiVersion}`;
 
     const chatMessages: AzureChatMessage[] = [];
-    if (options?.systemPrompt) {
-      chatMessages.push({ role: 'system', content: options.systemPrompt });
+    // Azure OpenAI enforces: if response_format == json_object, the prompt
+    // must literally contain the word "json". Auto-append a system
+    // instruction so callers don't have to think about it.
+    const systemPieces = [options?.systemPrompt];
+    if (options?.responseFormat === 'json') {
+      systemPieces.push(
+        'Respond with a single JSON value only. No markdown fences, no prose preamble.',
+      );
+    }
+    const systemPrompt = systemPieces.filter(Boolean).join('\n\n');
+    if (systemPrompt) {
+      chatMessages.push({ role: 'system', content: systemPrompt });
     }
     for (const msg of messages) {
       chatMessages.push({

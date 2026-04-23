@@ -27,11 +27,40 @@ function mockDeps(): ServiceDeps {
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },
-    ragLLM: {
+    ragFastLLM: {
+
       complete: vi.fn().mockResolvedValue({
+
         content: 'answer',
+
         tokensUsed: { input: 0, output: 0, total: 0 },
+
       }),
+
+    },
+
+    ragDeepLLM: {
+
+      complete: vi.fn().mockResolvedValue({
+
+        content: "Thorough answer",
+
+        tokensUsed: { input: 0, output: 0, total: 0 },
+
+      }),
+
+    },
+
+    queryDepthLLM: {
+
+      complete: vi.fn().mockResolvedValue({
+
+        content: JSON.stringify({ depth: "fast", reason: "test" }),
+
+        tokensUsed: { input: 0, output: 0, total: 0 },
+
+      }),
+
     },
     blobStorage: {
       upload: vi.fn().mockResolvedValue('https://blob/url'),

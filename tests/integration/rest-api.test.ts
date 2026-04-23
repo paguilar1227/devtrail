@@ -26,9 +26,21 @@ function mockDeps(): ServiceDeps {
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },
-    ragLLM: {
+    ragFastLLM: {
       complete: vi.fn().mockResolvedValue({
         content: 'Answer with context [1].',
+        tokensUsed: { input: 0, output: 0, total: 0 },
+      }),
+    },
+    ragDeepLLM: {
+      complete: vi.fn().mockResolvedValue({
+        content: 'Thorough answer with context [1].',
+        tokensUsed: { input: 0, output: 0, total: 0 },
+      }),
+    },
+    queryDepthLLM: {
+      complete: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ depth: 'fast', reason: 'test' }),
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },
@@ -336,5 +348,55 @@ describe('RAG API', () => {
     expect(body.answer).toBeTruthy();
     expect(body.citations).toEqual([]);
     expect(body.used_chunks).toBe(0);
+  });
+
+  it('auto-routes to thorough when the classifier says so, and surfaces depth meta', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+    // Override the depth classifier to return thorough
+    vi.mocked(deps.queryDepthLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({ depth: 'thorough', reason: 'comparison query' }),
+      tokensUsed: { input: 0, output: 0, total: 0 },
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Compare X and Y.' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta).toBeDefined();
+    expect(body.meta.depth_used).toBe('thorough');
+    expect(body.meta.depth_reason).toContain('comparison');
+  });
+
+  it('honors caller force of depth=fast and skips the classifier', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Anything', depth: 'fast' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.depth_used).toBe('fast');
+    expect(body.meta.depth_reason).toContain('caller forced');
+    // Classifier should not have been called when depth is explicitly set
+    expect(deps.queryDepthLLM.complete).not.toHaveBeenCalled();
+  });
+
+  it('honors caller force of depth=thorough', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Anything', depth: 'thorough' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.depth_used).toBe('thorough');
+    expect(body.meta.depth_reason).toContain('caller forced');
   });
 });

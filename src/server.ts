@@ -9,6 +9,7 @@ import { createBlobStorage } from './storage/blob.js';
 import { GeminiEmbeddingProvider } from './providers/gemini-embedding.js';
 import { AnthropicLLMProvider } from './providers/anthropic-llm.js';
 import { AzureFoundryLLMProvider } from './providers/azure-foundry-llm.js';
+import { AzureFoundryResponsesProvider } from './providers/azure-foundry-responses.js';
 import type { ServiceDeps } from './services/index.js';
 
 const config = loadConfig();
@@ -18,16 +19,29 @@ const db = createDbClient(config.databaseUrl);
 //   embeddingProvider: Gemini Embedding 2 (3072-dim, unified multimodal)
 //   metadataLLM:       Claude Haiku 4.5 — lowest hallucination (~3%) on
 //                      entity/topic extraction. Replaces Gemini 2.5 Flash.
-//   ragLLM:            GPT-5.4 Pro on Azure Foundry — Azure-free. Replaces
-//                      Claude Opus (was billed per token).
+//   queryDepthLLM:     Haiku 4.5 again — classifies RAG questions as
+//                      fast vs thorough. Tiny prompt, ~$0.0001/call.
+//   ragFastLLM:        Azure gpt-5-4 (chat completions) — default RAG
+//                      synthesis, 2-5s response, used on simple questions.
+//   ragDeepLLM:        Azure gpt-5-4-pro (Responses API) — reasoning tier,
+//                      used on multi-hop / comparison / inference questions.
+//                      15-60s response.
+const haiku = new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001');
+
 const deps: ServiceDeps = {
   db,
   embeddingProvider: new GeminiEmbeddingProvider(config.geminiApiKey),
-  metadataLLM: new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001'),
-  ragLLM: new AzureFoundryLLMProvider({
+  metadataLLM: haiku,
+  queryDepthLLM: haiku,
+  ragFastLLM: new AzureFoundryLLMProvider({
     endpoint: config.azureOpenAIEndpoint,
     apiKey: config.azureOpenAIKey,
-    deployment: config.azureRagDeployment,
+    deployment: config.azureRagDeployment,           // gpt-5-4 by default
+  }),
+  ragDeepLLM: new AzureFoundryResponsesProvider({
+    endpoint: config.azureOpenAIEndpoint,
+    apiKey: config.azureOpenAIKey,
+    deployment: config.azureDeepRagDeployment,       // gpt-5-4-pro by default
   }),
   blobStorage: createBlobStorage(config.azureStorageConnectionString, config.azureStorageContainer),
   config,
