@@ -7,18 +7,28 @@ import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 import { createBlobStorage } from './storage/blob.js';
 import { GeminiEmbeddingProvider } from './providers/gemini-embedding.js';
-import { GeminiLLMProvider } from './providers/gemini-llm.js';
 import { AnthropicLLMProvider } from './providers/anthropic-llm.js';
+import { AzureFoundryLLMProvider } from './providers/azure-foundry-llm.js';
 import type { ServiceDeps } from './services/index.js';
 
 const config = loadConfig();
 const db = createDbClient(config.databaseUrl);
 
+// Model roles:
+//   embeddingProvider: Gemini Embedding 2 (3072-dim, unified multimodal)
+//   metadataLLM:       Claude Haiku 4.5 — lowest hallucination (~3%) on
+//                      entity/topic extraction. Replaces Gemini 2.5 Flash.
+//   ragLLM:            GPT-5.4 Pro on Azure Foundry — Azure-free. Replaces
+//                      Claude Opus (was billed per token).
 const deps: ServiceDeps = {
   db,
   embeddingProvider: new GeminiEmbeddingProvider(config.geminiApiKey),
-  metadataLLM: new GeminiLLMProvider(config.geminiApiKey),
-  ragLLM: new AnthropicLLMProvider(config.anthropicApiKey),
+  metadataLLM: new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001'),
+  ragLLM: new AzureFoundryLLMProvider({
+    endpoint: config.azureOpenAIEndpoint,
+    apiKey: config.azureOpenAIKey,
+    deployment: config.azureRagDeployment,
+  }),
   blobStorage: createBlobStorage(config.azureStorageConnectionString, config.azureStorageContainer),
   config,
 };

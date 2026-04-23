@@ -10,6 +10,9 @@ const configSchema = z.object({
   anthropicApiKey: z.string().min(1),
   xaiApiKey: z.string().min(1),
   firecrawlApiKey: z.string().min(1),
+  azureOpenAIEndpoint: z.string().min(1),
+  azureOpenAIKey: z.string().min(1),
+  azureRagDeployment: z.string().min(1),
   port: z.number().int().positive(),
   nodeEnv: z.enum(['development', 'production', 'test']),
   timezone: z.string().min(1),
@@ -27,6 +30,12 @@ export function loadConfig(): Config {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     xaiApiKey: process.env.XAI_API_KEY,
     firecrawlApiKey: process.env.FIRECRAWL_API_KEY,
+    azureOpenAIEndpoint: process.env.AZURE_OPENAI_ENDPOINT,
+    azureOpenAIKey: process.env.AZURE_OPENAI_KEY,
+    // Note: 'gpt-5-4-pro' uses the Azure Responses API, not chat completions.
+    // Our AzureFoundryLLMProvider uses chat completions, so stick with base
+    // for now. Switching to Pro would require a separate Responses-API client.
+    azureRagDeployment: process.env.AZURE_RAG_DEPLOYMENT || 'gpt-5-4',
     port: Number(process.env.PORT || '3000'),
     nodeEnv: process.env.NODE_ENV || 'development',
     timezone: process.env.TIMEZONE || 'America/Chicago',
