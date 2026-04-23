@@ -1,5 +1,5 @@
 import type { ServiceDeps } from './index.js';
-import { search } from './search.js';
+import { searchWithTimings } from './search.js';
 import { classifyQueryDepth, type QueryDepth } from './query-depth.js';
 
 export interface RagOptions {
@@ -27,6 +27,13 @@ export interface RagResult {
   meta: {
     depth_used: QueryDepth;
     depth_reason: string;     // why this depth was picked (classifier's output, or "caller forced fast/thorough")
+    timings_ms: {
+      classify: number;       // 0 when caller forced a depth (classifier skipped)
+      embed: number;          // query embedding call (Gemini Embedding 2)
+      db_scan: number;        // pgvector cosine scan (no HNSW today — linear)
+      synthesize: number;     // final LLM call (GPT-5.4 fast or Pro thorough)
+      total: number;          // end-to-end wall time
+    };
   };
 }
 
@@ -47,6 +54,7 @@ export async function ragQuery(
 ): Promise<RagResult> {
   const maxChunks = opts.maxChunks ?? 6;
   const requestedDepth = opts.depth ?? 'auto';
+  const pipelineStart = performance.now();
   console.log(
     `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}, depth: ${requestedDepth}`,
   );
@@ -54,8 +62,11 @@ export async function ragQuery(
   // Resolve depth. Auto → classifier; otherwise trust the caller's override.
   let depth: QueryDepth;
   let depthReason: string;
+  let classifyMs = 0;
   if (requestedDepth === 'auto') {
+    const classifyStart = performance.now();
     const classification = await classifyQueryDepth(deps, question);
+    classifyMs = Math.round(performance.now() - classifyStart);
     depth = classification.depth;
     depthReason = classification.reason;
   } else {
@@ -65,7 +76,7 @@ export async function ragQuery(
 
   // Retrieve relevant chunks (same retrieval path for both depths — the routing
   // only affects synthesis).
-  const hits = await search(deps, question, {
+  const { hits, timings: searchTimings } = await searchWithTimings(deps, question, {
     projectId: opts.projectId,
     entityTypes: opts.entityTypes,
     tags: opts.tags,
@@ -74,11 +85,22 @@ export async function ragQuery(
   });
 
   if (hits.length === 0) {
+    const totalMs = Math.round(performance.now() - pipelineStart);
     return {
       answer: `I don't have any information in your knowledge base${opts.projectId ? ' for this project' : ''} that relates to this question.`,
       citations: [],
       used_chunks: 0,
-      meta: { depth_used: depth, depth_reason: depthReason },
+      meta: {
+        depth_used: depth,
+        depth_reason: depthReason,
+        timings_ms: {
+          classify: classifyMs,
+          embed: searchTimings.embed_ms,
+          db_scan: searchTimings.db_scan_ms,
+          synthesize: 0,
+          total: totalMs,
+        },
+      },
     };
   }
 
@@ -125,19 +147,33 @@ export async function ragQuery(
   // it more room. Fast mode stays tight.
   const maxTokens = depth === 'thorough' ? 8192 : 2048;
 
+  const synthStart = performance.now();
   const response = await llm.complete(
     [{ role: 'user', content: userPrompt }],
     { systemPrompt: SYSTEM_PROMPT, maxTokens },
   );
+  const synthesizeMs = Math.round(performance.now() - synthStart);
+  const totalMs = Math.round(performance.now() - pipelineStart);
 
   console.log(
-    `[rag] LLM response — depth: ${depth}, tokens: ${response.tokensUsed.total}, answer length: ${response.content.length}`,
+    `[rag] LLM response — depth: ${depth}, tokens: ${response.tokensUsed.total}, answer length: ${response.content.length} ` +
+    `— classify ${classifyMs}ms, embed ${searchTimings.embed_ms}ms, db ${searchTimings.db_scan_ms}ms, synth ${synthesizeMs}ms, total ${totalMs}ms`,
   );
 
   return {
     answer: response.content,
     citations,
     used_chunks: hits.length,
-    meta: { depth_used: depth, depth_reason: depthReason },
+    meta: {
+      depth_used: depth,
+      depth_reason: depthReason,
+      timings_ms: {
+        classify: classifyMs,
+        embed: searchTimings.embed_ms,
+        db_scan: searchTimings.db_scan_ms,
+        synthesize: synthesizeMs,
+        total: totalMs,
+      },
+    },
   };
 }
