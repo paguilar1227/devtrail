@@ -76,6 +76,17 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 002 complete.');
     }
 
+    // Migration 003: entities + chunk_entities graph tables, published_at column
+    const m003Check = await deps.db.pool.query(
+      "SELECT count(*) as count FROM pg_tables WHERE schemaname = 'public' AND tablename = 'entities'",
+    );
+    if (parseInt(m003Check.rows[0].count) === 0) {
+      console.log('Running migration 003...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '003_entities_graph.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 003 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);
