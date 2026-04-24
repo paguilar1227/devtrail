@@ -233,6 +233,21 @@ export async function createContentItem(
       addNote(trace, `graph_failed: ${err instanceof Error ? err.message : String(err)}`);
       warnings.push('Entity graph construction failed; item is searchable but not graph-linked.');
     }
+    // Persist the updated trace. The original insertContentItem call serialized
+    // the trace before Step 9 ran, so notes added during graph construction
+    // were in-memory only. Update now so `get(id).metadata.ingest_trace` shows
+    // the real end-state.
+    try {
+      await dbUpdate(deps.db, inserted.id, {
+        metadata: {
+          topics: metadata.topics,
+          filename: input.file?.filename,
+          ingest_trace: trace,
+        },
+      });
+    } catch (err) {
+      console.warn(`[content] Trace persist failed (non-fatal):`, err instanceof Error ? err.message : err);
+    }
   }
 
   console.log(`[content] Created ${input.type} ${inserted.id} — title: "${title}", chunks: ${chunkCount}`);
