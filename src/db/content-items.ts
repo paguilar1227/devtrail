@@ -16,6 +16,7 @@ export interface ContentItemInsert {
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   sourceUrl: string | null;
+  publishedAt: string | null;         // ISO-8601 content publication date, or null
 }
 
 export interface ContentItemRow {
@@ -32,6 +33,7 @@ export interface ContentItemRow {
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   source_url: string | null;
+  published_at: Date | null;
   archived: boolean;
   created_at: Date;
   updated_at: Date;
@@ -52,8 +54,8 @@ export async function insertContentItem(
   const result = await db.query(
     `INSERT INTO content_items
        (type, title, title_source, content, blob_url, mime_type, file_hash,
-        project_ids, tags, embedding, metadata, source_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        project_ids, tags, embedding, metadata, source_url, published_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING id`,
     [
       item.type, item.title, item.titleSource, item.content, item.blobUrl,
@@ -61,6 +63,7 @@ export async function insertContentItem(
       item.embedding ? JSON.stringify(item.embedding) : null,
       JSON.stringify(item.metadata),
       item.sourceUrl,
+      item.publishedAt,
     ],
   );
   return result.rows[0];

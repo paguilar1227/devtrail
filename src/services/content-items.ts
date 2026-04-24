@@ -16,6 +16,8 @@ import {
   newTrace, recordStage, addNote, isEchoOf,
   type IngestTrace,
 } from '../capture/ingest-trace.js';
+import { buildGraphEdges } from './entities.js';
+import { getChunksByContentItem } from '../db/chunks.js';
 
 export interface CreateContentInput {
   type: ContentType;
@@ -179,6 +181,7 @@ export async function createContentItem(
       ingest_trace: trace,
     },
     sourceUrl: input.sourceUrl ?? null,
+    publishedAt: metadata.published_at,
   });
 
   // Step 8: chunk the text and embed each chunk
@@ -213,6 +216,22 @@ export async function createContentItem(
         metadata: { mime_type: input.file.mimeType },
       }]);
       chunkCount = 1;
+    }
+  }
+
+  // Step 9: graph edges — extract entities from the doc, resolve against the
+  // existing entity registry, map mentions to chunks, persist chunk→entity
+  // edges. Wrapped in try/catch so a graph failure doesn't fail the whole
+  // save — chunks are already persisted and searchable without edges.
+  if (fullText && chunkCount > 0) {
+    try {
+      const chunks = await getChunksByContentItem(deps.db, inserted.id);
+      const { entityCount, edgeCount } = await buildGraphEdges(deps, fullText, chunks);
+      addNote(trace, `graph: ${entityCount} entities, ${edgeCount} edges`);
+    } catch (err) {
+      console.warn(`[content] Graph edge construction failed (continuing):`, err instanceof Error ? err.message : err);
+      addNote(trace, `graph_failed: ${err instanceof Error ? err.message : String(err)}`);
+      warnings.push('Entity graph construction failed; item is searchable but not graph-linked.');
     }
   }
 
