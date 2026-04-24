@@ -163,12 +163,23 @@ export async function findChunksByEntities(
   excludeChunkIds: string[] = [],
 ): Promise<ChunkEntityHit[]> {
   if (entityIds.length === 0) return [];
+  // Branch by whether we have an exclude list to avoid nullable-array
+  // parameter quirks in pg's prepared-statement handling.
+  if (excludeChunkIds.length === 0) {
+    const res = await db.query(
+      `SELECT chunk_id, entity_id, confidence, mention_text
+         FROM chunk_entities
+        WHERE entity_id = ANY($1::uuid[])`,
+      [entityIds],
+    );
+    return res.rows;
+  }
   const res = await db.query(
     `SELECT chunk_id, entity_id, confidence, mention_text
        FROM chunk_entities
       WHERE entity_id = ANY($1::uuid[])
-        AND ($2::uuid[] IS NULL OR NOT chunk_id = ANY($2::uuid[]))`,
-    [entityIds, excludeChunkIds.length > 0 ? excludeChunkIds : null],
+        AND NOT (chunk_id = ANY($2::uuid[]))`,
+    [entityIds, excludeChunkIds],
   );
   return res.rows;
 }

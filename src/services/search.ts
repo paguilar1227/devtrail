@@ -144,14 +144,14 @@ export async function searchWithTimings(
         }
       }
 
-      // Fetch the actual chunk rows + parent info + entity canonical name in
-      // one query. Filter by project/tags for consistency with the vector path.
+      // Fetch the actual chunk rows + parent info. Filter by project for
+      // consistency with the vector path.
       const expandedChunkIds = [...chunkBestEntity.keys()];
       if (expandedChunkIds.length > 0) {
         const projFilter = projectId
-          ? `AND $3::uuid = ANY(ci.project_ids)`
+          ? `AND $2::uuid = ANY(ci.project_ids)`
           : ``;
-        const paramsList: unknown[] = [expandedChunkIds, [...seedEntityIds]];
+        const paramsList: unknown[] = [expandedChunkIds];
         if (projectId) paramsList.push(projectId);
 
         const res = await deps.db.query(
