@@ -18,6 +18,12 @@ export interface Citation {
   chunk_preview: string;
   similarity: number;
   source_url?: string | null;  // set when the content item was ingested from a URL
+  retrieval_path?: Array<{
+    step: 'vector' | 'entity';
+    score?: number;
+    entity?: { canonical_name: string; type: string };
+    confidence?: number;
+  }>;
 }
 
 export interface RagResult {
@@ -31,6 +37,7 @@ export interface RagResult {
       classify: number;       // 0 when caller forced a depth (classifier skipped)
       embed: number;          // query embedding call (Gemini Embedding 2)
       db_scan: number;        // pgvector cosine scan (no HNSW today — linear)
+      graph: number;          // chunk_entities expansion + entity lookups
       synthesize: number;     // final LLM call (GPT-5.4 fast or Pro thorough)
       total: number;          // end-to-end wall time
     };
@@ -59,9 +66,10 @@ export async function ragQuery(
     `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}, depth: ${requestedDepth}`,
   );
 
-  // Resolve depth. Auto → classifier; otherwise trust the caller's override.
+  // Resolve depth + extract query entities. Auto → classifier; forced → skip.
   let depth: QueryDepth;
   let depthReason: string;
+  let queryEntities: Array<{ name: string; type: 'person' | 'org' | 'concept' | 'tool' | 'paper' }> = [];
   let classifyMs = 0;
   if (requestedDepth === 'auto') {
     const classifyStart = performance.now();
@@ -69,19 +77,20 @@ export async function ragQuery(
     classifyMs = Math.round(performance.now() - classifyStart);
     depth = classification.depth;
     depthReason = classification.reason;
+    queryEntities = classification.entities;
   } else {
     depth = requestedDepth;
     depthReason = `caller forced ${requestedDepth}`;
   }
 
-  // Retrieve relevant chunks (same retrieval path for both depths — the routing
-  // only affects synthesis).
+  // Retrieve relevant chunks. Graph expansion uses query entities if present.
   const { hits, timings: searchTimings } = await searchWithTimings(deps, question, {
     projectId: opts.projectId,
     entityTypes: opts.entityTypes,
     tags: opts.tags,
     limit: maxChunks,
     threshold: 0.2,
+    queryEntities,
   });
 
   if (hits.length === 0) {
@@ -97,6 +106,7 @@ export async function ragQuery(
           classify: classifyMs,
           embed: searchTimings.embed_ms,
           db_scan: searchTimings.db_scan_ms,
+          graph: searchTimings.graph_ms,
           synthesize: 0,
           total: totalMs,
         },
@@ -124,6 +134,7 @@ export async function ragQuery(
         chunk_preview: (c.content ?? '').slice(0, 150),
         similarity: c.similarity,
         source_url: c.parent_source_url ?? null,
+        retrieval_path: hit.retrieval_path,
       });
     } else if (hit.type === 'todo' && hit.todo) {
       const t = hit.todo;
@@ -133,6 +144,7 @@ export async function ragQuery(
         type: 'todo',
         chunk_preview: `Status: ${t.status}, Due: ${t.due_date ?? 'none'}`,
         similarity: t.similarity,
+        retrieval_path: hit.retrieval_path,
       });
     }
   }
@@ -171,6 +183,7 @@ export async function ragQuery(
         classify: classifyMs,
         embed: searchTimings.embed_ms,
         db_scan: searchTimings.db_scan_ms,
+        graph: searchTimings.graph_ms,
         synthesize: synthesizeMs,
         total: totalMs,
       },

@@ -275,22 +275,21 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
   // ---------- 6. search ----------
   server.tool(
     'search',
-    `Primary retrieval tool — semantic (meaning-based) search across the user's documents, notes, and todos.
+    `Primary retrieval tool — hybrid semantic + graph search across the user's documents, notes, and todos.
 
-Use this whenever the user asks a question that their existing knowledge might answer ("what did I save about X", "have I read anything on Y", "when did I last mention Z"). Also use it BEFORE creating new content to check for duplicates.
+Vector seed → graph expansion along entity edges → RRF-fused ranking. Each hit includes a retrieval_path explaining why it was returned (vector similarity alone, entity match, or both).
 
-Returns ranked hits with similarity scores. For documents/notes, hits are at the chunk level (a relevant passage within the full item) — the result includes parent title, type, and content_item_id. For todos, the hit is the whole todo.
+Use this whenever the user asks a question that their existing knowledge might answer. Also use it BEFORE creating new content to check for duplicates.
 
 Scoping:
-- Omit project_id for global search across all content.
-- Pass a project_id for in-project search (NotebookLM-style: "answer only from this project's content").
-- Narrow with entity_types when the user specifies (e.g., ['document'] to avoid todos polluting results).
-- Narrow with tags when appropriate.`,
+- Omit project_id for global search.
+- Pass a project_id for in-project NotebookLM-style retrieval.
+- Narrow with entity_types (e.g., ['document']) or tags when the user specifies.`,
     {
       query: z.string()
         .describe('Natural-language search query. Full sentences work well; no need for keyword-only formatting.'),
       project_id: z.string().optional()
-        .describe('Optional. Scope results to a single project. Omit for global search across everything.'),
+        .describe('Optional. Scope results to a single project. Omit for global search.'),
       entity_types: z.array(z.enum(['document', 'note', 'todo'])).optional()
         .describe('Optional. Restrict result types. Omit to include all types.'),
       tags: z.array(z.string()).optional()
@@ -298,17 +297,46 @@ Scoping:
       limit: z.number().int().positive().default(10)
         .describe('Max number of hits to return. Default 10.'),
       threshold: z.number().min(0).max(1).optional()
-        .describe('Minimum similarity (0-1) for a hit to be returned. Default 0.5. Lower values return more (noisier) results; raise to 0.6+ for "probably relevant only".'),
+        .describe('Minimum cosine similarity for vector-path hits (0-1). Default 0.65. Graph-expanded hits are not subject to this threshold.'),
+      graph: z.boolean().default(true)
+        .describe('Enable graph expansion via entity edges. Default true. Set false to get vector-only results.'),
     },
-    async ({ query, project_id, entity_types, tags, limit, threshold }) => {
+    async ({ query, project_id, entity_types, tags, limit, threshold, graph }) => {
       const hits = await searchSvc.search(deps, query, {
         projectId: project_id,
         entityTypes: entity_types,
         tags,
         limit,
         threshold,
+        graph,
       });
       return { content: [{ type: 'text', text: JSON.stringify(hits, null, 2) }] };
+    },
+  );
+
+  // ---------- 6b. find_mentions ----------
+  server.tool(
+    'find_mentions',
+    `Exact entity lookup — returns every chunk that mentions a specific entity by canonical name or alias. Use this when the user wants all references to a specific person, tool, concept, paper, or organization (e.g. "everything I've saved about pgvector", "all mentions of Anthropic"). Unlike search(), this does not do semantic matching — it returns the ground-truth list of mentions.
+
+Returns the resolved entity record (with aliases) plus each mention's parent item, verbatim mention text, and confidence score.
+
+If no entity matches the input name (as canonical or alias), returns { entity: null, mentions: [] }.`,
+    {
+      entity: z.string().describe('Entity name to look up. Matches canonical names and aliases case-insensitively.'),
+      type: z.enum(['person', 'org', 'concept', 'tool', 'paper']).optional()
+        .describe('Optional. Restrict the lookup to a specific entity type. Omit to search all types.'),
+      project_id: z.string().optional()
+        .describe('Optional. Restrict mentions to a single project.'),
+      limit: z.number().int().positive().default(20).describe('Max mentions to return. Default 20.'),
+    },
+    async ({ entity, type, project_id, limit }) => {
+      const result = await searchSvc.findMentions(deps, entity, {
+        type,
+        projectId: project_id,
+        limit,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   );
 

@@ -321,6 +321,7 @@ export function createApp(deps: ServiceDeps) {
       tags?: string[];
       limit?: number;
       threshold?: number;
+      graph?: boolean;
     }>();
     if (!body.query) return c.json({ error: 'query is required' }, 400);
     const hits = await searchSvc.search(deps, body.query, {
@@ -329,8 +330,25 @@ export function createApp(deps: ServiceDeps) {
       tags: body.tags,
       limit: body.limit ?? 10,
       threshold: body.threshold,
+      graph: body.graph,
     });
     return c.json({ hits });
+  });
+
+  app.post('/api/v1/find-mentions', async (c) => {
+    const body = await c.req.json<{
+      entity: string;
+      type?: 'person' | 'org' | 'concept' | 'tool' | 'paper';
+      project_id?: string;
+      limit?: number;
+    }>();
+    if (!body.entity) return c.json({ error: 'entity is required' }, 400);
+    const result = await searchSvc.findMentions(deps, body.entity, {
+      type: body.type,
+      projectId: body.project_id,
+      limit: body.limit ?? 20,
+    });
+    return c.json(result);
   });
 
   app.post('/api/v1/rag', async (c) => {

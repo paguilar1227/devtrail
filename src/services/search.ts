@@ -1,6 +1,10 @@
 import type { ServiceDeps } from './index.js';
 import { findSimilarChunks, type ChunkSearchResult } from '../db/chunks.js';
 import { findSimilarTodos, type TodoSearchResult } from '../db/todos.js';
+import {
+  findChunksByEntities, findEntityByCanonical, findEntityByAlias,
+  type EntityType,
+} from '../db/entities.js';
 
 export interface SearchOptions {
   projectId?: string;
@@ -8,11 +12,29 @@ export interface SearchOptions {
   tags?: string[];
   limit?: number;
   threshold?: number;
+  /**
+   * Query-level entities to seed graph expansion. Typically supplied by the
+   * depth classifier on the RAG path. If empty, graph expansion still runs
+   * using entities mentioned in the vector-seed chunks.
+   */
+  queryEntities?: Array<{ name: string; type: EntityType }>;
+  /** Disable graph expansion entirely. Default false (expansion on). */
+  graph?: boolean;
+}
+
+export interface RetrievalPathStep {
+  step: 'vector' | 'entity';
+  score?: number;                      // only for vector step
+  entity?: { canonical_name: string; type: EntityType };  // only for entity step
+  confidence?: number;                 // only for entity step
 }
 
 export interface SearchHit {
   type: 'chunk' | 'todo';
-  similarity: number;
+  similarity: number;                  // preserved for backward compat (vector score, or final RRF score for graph hits)
+  final_score: number;
+  vector_score?: number;               // present when the hit was in the vector seed list
+  retrieval_path: RetrievalPathStep[]; // non-empty list of how this hit was reached
   // chunk-specific (no raw embedding — stripped in DB layer)
   chunk?: ChunkSearchResult;
   // todo-specific (no raw embedding — stripped in DB layer)
@@ -22,6 +44,7 @@ export interface SearchHit {
 export interface SearchTimings {
   embed_ms: number;
   db_scan_ms: number;
+  graph_ms: number;         // time spent on graph expansion (0 when disabled)
   total_ms: number;
 }
 
@@ -30,10 +53,6 @@ export interface SearchResultWithTimings {
   timings: SearchTimings;
 }
 
-/**
- * Unified semantic search across chunks (documents + notes) and todos.
- * Returns ranked hits across entity types.
- */
 export async function search(
   deps: ServiceDeps,
   query: string,
@@ -48,15 +67,14 @@ export async function searchWithTimings(
   query: string,
   opts: SearchOptions = {},
 ): Promise<SearchResultWithTimings> {
-  // Default 0.65. Gemini Embedding 2 (3072-dim) has a natural floor around
-  // 0.5 even for unrelated content because high-dim cosine similarity
-  // clusters near 0.5-0.7 for "not obviously about the query" pairs. 0.65
-  // is the observed break between "related" and "noise" on this corpus.
-  // Caller can override via opts.threshold (MCP + REST expose it).
-  const { projectId, entityTypes, tags, limit = 10, threshold = 0.65 } = opts;
+  const {
+    projectId, entityTypes, tags, limit = 10, threshold = 0.65,
+    queryEntities = [], graph = true,
+  } = opts;
   const totalStart = performance.now();
-  console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, tags: ${tags?.join(',') ?? 'none'}`);
+  console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, graph: ${graph}`);
 
+  // ---- 1. Vector seed ----------------------------------------------------
   const embedStart = performance.now();
   const queryEmbedding = await deps.embeddingProvider.embed(query);
   const embedMs = Math.round(performance.now() - embedStart);
@@ -65,7 +83,7 @@ export async function searchWithTimings(
   const searchTodos = !entityTypes || entityTypes.includes('todo');
 
   const dbStart = performance.now();
-  const [chunks, todos] = await Promise.all([
+  const [vectorChunks, todos] = await Promise.all([
     searchChunks
       ? findSimilarChunks(deps.db, queryEmbedding, threshold, limit, {
           projectId,
@@ -75,28 +93,267 @@ export async function searchWithTimings(
           tags,
         })
       : Promise.resolve([]),
-    searchTodos && !tags  // tags-on-todos filtering TBD; skip for v1 simplicity
+    searchTodos && !tags
       ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit)
-          .then((todos) => projectId ? todos.filter((t) => t.project_id === projectId) : todos)
+          .then((t) => projectId ? t.filter((x) => x.project_id === projectId) : t)
       : Promise.resolve([]),
   ]);
   const dbMs = Math.round(performance.now() - dbStart);
 
-  const hits: SearchHit[] = [
-    ...chunks.map((c) => ({ type: 'chunk' as const, similarity: c.similarity, chunk: c })),
-    ...todos.map((t) => ({ type: 'todo' as const, similarity: t.similarity, todo: t })),
-  ];
+  // ---- 2. Graph expansion (chunks only; todos are never graph-expanded) --
+  const graphStart = performance.now();
+  let expandedChunks: ChunkSearchResult[] = [];
+  const entityByChunk = new Map<string, { canonical_name: string; type: EntityType; confidence: number }>();
+  let graphMs = 0;
 
-  hits.sort((a, b) => b.similarity - a.similarity);
-  const result = hits.slice(0, limit);
+  if (graph && searchChunks) {
+    // Seed entity set: query entities (resolved to DB rows) + entities already
+    // mentioned in vector-seed chunks.
+    const seedEntityIds = new Set<string>();
+
+    // Resolve query entities against the DB.
+    for (const qe of queryEntities) {
+      const byCanon = await findEntityByCanonical(deps.db, qe.name, qe.type);
+      if (byCanon) { seedEntityIds.add(byCanon.id); continue; }
+      const byAlias = await findEntityByAlias(deps.db, qe.name, qe.type);
+      if (byAlias) { seedEntityIds.add(byAlias.id); }
+    }
+
+    // Pull entity ids for the vector-seed chunks from chunk_entities.
+    if (vectorChunks.length > 0) {
+      const chunkIds = vectorChunks.map((c) => c.id);
+      const rows = await deps.db.query(
+        `SELECT DISTINCT entity_id FROM chunk_entities WHERE chunk_id = ANY($1::uuid[])`,
+        [chunkIds],
+      );
+      for (const r of rows.rows) seedEntityIds.add(r.entity_id);
+    }
+
+    if (seedEntityIds.size > 0) {
+      // Find additional chunks that mention those entities (excluding seeds).
+      const seedChunkIds = vectorChunks.map((c) => c.id);
+      const hits = await findChunksByEntities(deps.db, [...seedEntityIds], seedChunkIds);
+
+      // For each unique chunk, pick the highest-confidence entity as its
+      // "reason" and stash for retrieval_path.
+      const chunkBestEntity = new Map<string, { entity_id: string; confidence: number }>();
+      for (const h of hits) {
+        const cur = chunkBestEntity.get(h.chunk_id);
+        if (!cur || h.confidence > cur.confidence) {
+          chunkBestEntity.set(h.chunk_id, { entity_id: h.entity_id, confidence: h.confidence });
+        }
+      }
+
+      // Fetch the actual chunk rows + parent info + entity canonical name in
+      // one query. Filter by project/tags for consistency with the vector path.
+      const expandedChunkIds = [...chunkBestEntity.keys()];
+      if (expandedChunkIds.length > 0) {
+        const projFilter = projectId
+          ? `AND $3::uuid = ANY(ci.project_ids)`
+          : ``;
+        const paramsList: unknown[] = [expandedChunkIds, [...seedEntityIds]];
+        if (projectId) paramsList.push(projectId);
+
+        const res = await deps.db.query(
+          `SELECT c.id, c.content_item_id, c.chunk_index, c.chunk_type, c.content, c.metadata, c.created_at,
+                  ci.type AS parent_type, ci.title AS parent_title, ci.project_ids AS parent_project_ids,
+                  ci.tags AS parent_tags, ci.source_url AS parent_source_url
+             FROM chunks c
+             JOIN content_items ci ON ci.id = c.content_item_id
+            WHERE c.id = ANY($1::uuid[])
+              AND ci.archived = false
+              ${projFilter}`,
+          paramsList,
+        );
+
+        expandedChunks = res.rows.map((r) => ({
+          ...r,
+          // Synthesize a "similarity" for expanded chunks using entity
+          // confidence — used as a tiebreaker within the expanded list only.
+          similarity: chunkBestEntity.get(r.id)!.confidence,
+        }));
+
+        // Look up canonical entity names for retrieval_path attribution.
+        const bestEntityIds = [...new Set([...chunkBestEntity.values()].map((v) => v.entity_id))];
+        if (bestEntityIds.length > 0) {
+          const entRes = await deps.db.query(
+            `SELECT id, canonical_name, type FROM entities WHERE id = ANY($1::uuid[])`,
+            [bestEntityIds],
+          );
+          const entityById = new Map<string, { canonical_name: string; type: EntityType }>();
+          for (const e of entRes.rows) {
+            entityById.set(e.id, { canonical_name: e.canonical_name, type: e.type as EntityType });
+          }
+          for (const [chunkId, { entity_id, confidence }] of chunkBestEntity) {
+            const ent = entityById.get(entity_id);
+            if (ent) entityByChunk.set(chunkId, { ...ent, confidence });
+          }
+        }
+      }
+    }
+    graphMs = Math.round(performance.now() - graphStart);
+  }
+
+  // ---- 3. RRF fusion -----------------------------------------------------
+  // Reciprocal Rank Fusion: final_score = Σ 1/(k + rank_in_each_list). k=60
+  // is the standard IR default. Items in both lists rise to the top; items
+  // in only one list fall behind. Robust without needing tuned weights.
+  const K = 60;
+  const rrfScores = new Map<string, number>();
+  const vectorRank = new Map<string, number>();
+  const graphRank = new Map<string, number>();
+
+  vectorChunks.forEach((c, i) => {
+    vectorRank.set(c.id, i + 1);
+    rrfScores.set(c.id, (rrfScores.get(c.id) ?? 0) + 1 / (K + i + 1));
+  });
+  // Sort expanded chunks by entity confidence for ranking.
+  expandedChunks.sort((a, b) => b.similarity - a.similarity);
+  expandedChunks.forEach((c, i) => {
+    graphRank.set(c.id, i + 1);
+    rrfScores.set(c.id, (rrfScores.get(c.id) ?? 0) + 1 / (K + i + 1));
+  });
+
+  // ---- 4. Build hits with retrieval_path --------------------------------
+  const allChunks = new Map<string, ChunkSearchResult>();
+  for (const c of vectorChunks) allChunks.set(c.id, c);
+  for (const c of expandedChunks) if (!allChunks.has(c.id)) allChunks.set(c.id, c);
+
+  const chunkHits: SearchHit[] = [];
+  for (const [id, chunk] of allChunks) {
+    const path: RetrievalPathStep[] = [];
+    let vectorScore: number | undefined;
+
+    if (vectorRank.has(id)) {
+      vectorScore = chunk.similarity;   // this is the real cosine, set by findSimilarChunks
+      path.push({ step: 'vector', score: vectorScore });
+    }
+    if (graphRank.has(id)) {
+      const ent = entityByChunk.get(id);
+      if (ent) {
+        path.push({
+          step: 'entity',
+          entity: { canonical_name: ent.canonical_name, type: ent.type },
+          confidence: ent.confidence,
+        });
+      }
+    }
+
+    chunkHits.push({
+      type: 'chunk',
+      similarity: vectorScore ?? chunk.similarity,
+      final_score: rrfScores.get(id) ?? 0,
+      vector_score: vectorScore,
+      retrieval_path: path,
+      chunk,
+    });
+  }
+
+  // Todos — pure vector, no graph expansion for v1. Use vector similarity
+  // as final_score with a small RRF-scale factor so they compare roughly.
+  const todoHits: SearchHit[] = todos.map((t, i) => ({
+    type: 'todo' as const,
+    similarity: t.similarity,
+    final_score: 1 / (K + i + 1),
+    retrieval_path: [{ step: 'vector', score: t.similarity }],
+    todo: t,
+  }));
+
+  const allHits: SearchHit[] = [...chunkHits, ...todoHits];
+  allHits.sort((a, b) => b.final_score - a.final_score);
+  const result = allHits.slice(0, limit);
   const totalMs = Math.round(performance.now() - totalStart);
 
   console.log(
-    `[search] returning ${result.length} hits (${chunks.length} chunks, ${todos.length} todos) ` +
-    `— embed ${embedMs}ms, db ${dbMs}ms, total ${totalMs}ms`,
+    `[search] returning ${result.length} hits ` +
+    `(vector-only ${vectorChunks.length - expandedChunks.filter((e) => vectorRank.has(e.id)).length}, ` +
+    `graph-expanded ${expandedChunks.length}, todos ${todos.length}) ` +
+    `— embed ${embedMs}ms, db ${dbMs}ms, graph ${graphMs}ms, total ${totalMs}ms`,
   );
   return {
     hits: result,
-    timings: { embed_ms: embedMs, db_scan_ms: dbMs, total_ms: totalMs },
+    timings: { embed_ms: embedMs, db_scan_ms: dbMs, graph_ms: graphMs, total_ms: totalMs },
+  };
+}
+
+/**
+ * Exact entity lookup. Resolves `entityName` against the entities table
+ * (canonical or alias match), then returns all chunks that mention it.
+ * Powers the `find_mentions` MCP tool.
+ */
+export interface FindMentionsResult {
+  entity: { id: string; canonical_name: string; type: EntityType; aliases: string[] } | null;
+  mentions: Array<{
+    chunk_id: string;
+    content_item_id: string;
+    parent_title: string;
+    parent_type: string;
+    parent_source_url: string | null;
+    mention_text: string | null;
+    confidence: number;
+    chunk_preview: string;
+  }>;
+}
+
+export async function findMentions(
+  deps: ServiceDeps,
+  entityName: string,
+  opts: { type?: EntityType; projectId?: string; limit?: number } = {},
+): Promise<FindMentionsResult> {
+  const limit = opts.limit ?? 20;
+
+  // Resolution across all types if not specified. We look up by canonical
+  // name first, then alias, trying each allowed type.
+  const types: EntityType[] = opts.type
+    ? [opts.type]
+    : ['tool', 'concept', 'person', 'org', 'paper'];
+
+  let matched: FindMentionsResult['entity'] = null;
+  for (const t of types) {
+    const byCanon = await findEntityByCanonical(deps.db, entityName, t);
+    if (byCanon) {
+      matched = { id: byCanon.id, canonical_name: byCanon.canonical_name, type: byCanon.type, aliases: byCanon.aliases };
+      break;
+    }
+    const byAlias = await findEntityByAlias(deps.db, entityName, t);
+    if (byAlias) {
+      matched = { id: byAlias.id, canonical_name: byAlias.canonical_name, type: byAlias.type, aliases: byAlias.aliases };
+      break;
+    }
+  }
+
+  if (!matched) return { entity: null, mentions: [] };
+
+  const projFilter = opts.projectId ? `AND $2::uuid = ANY(ci.project_ids)` : ``;
+  const params: unknown[] = [matched.id];
+  if (opts.projectId) params.push(opts.projectId);
+
+  const res = await deps.db.query(
+    `SELECT ce.chunk_id, c.content_item_id, ci.title AS parent_title, ci.type AS parent_type,
+            ci.source_url AS parent_source_url, ce.mention_text, ce.confidence,
+            LEFT(COALESCE(c.content, ''), 200) AS chunk_preview
+       FROM chunk_entities ce
+       JOIN chunks c ON c.id = ce.chunk_id
+       JOIN content_items ci ON ci.id = c.content_item_id
+      WHERE ce.entity_id = $1
+        AND ci.archived = false
+        ${projFilter}
+      ORDER BY ce.confidence DESC
+      LIMIT ${limit}`,
+    params,
+  );
+
+  return {
+    entity: matched,
+    mentions: res.rows.map((r) => ({
+      chunk_id: r.chunk_id,
+      content_item_id: r.content_item_id,
+      parent_title: r.parent_title,
+      parent_type: r.parent_type,
+      parent_source_url: r.parent_source_url,
+      mention_text: r.mention_text,
+      confidence: r.confidence,
+      chunk_preview: r.chunk_preview,
+    })),
   };
 }

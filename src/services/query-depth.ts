@@ -15,27 +15,42 @@ export type QueryDepth = 'fast' | 'thorough';
 export interface DepthClassification {
   depth: QueryDepth;
   reason: string;
+  entities: Array<{ name: string; type: 'person' | 'org' | 'concept' | 'tool' | 'paper' }>;
 }
 
-const CLASSIFIER_SYSTEM_PROMPT = `You classify retrieval-augmented questions into one of two processing depths.
+const CLASSIFIER_SYSTEM_PROMPT = `You classify retrieval-augmented questions and extract named entities for graph expansion.
 
+For each question, return:
+- depth: "fast" | "thorough"
+- reason: one short sentence
+- entities: named entities the question explicitly references, with their type (person/org/concept/tool/paper)
+
+Depth taxonomy:
 - "fast" — direct lookup, single-fact retrieval, simple summary, definition query, or question answerable from a single source. Examples:
   - "What did I save about pgvector?"
   - "Summarize the Domain-Driven Design note."
   - "What's the title of the paper I saved last week?"
-  - "When did I save the InstructGPT paper?"
 
-- "thorough" — multi-hop reasoning, comparison across sources, contradiction / tradeoff analysis, inference beyond the explicit text, temporal or aggregation queries. Examples:
+- "thorough" — multi-hop reasoning, comparison across sources, contradiction / tradeoff analysis, inference beyond explicit text. Examples:
   - "Compare the approach in my research report to the InstructGPT paper."
   - "What are the tradeoffs between the embedding models I've read about?"
-  - "Which of my notes contradict each other on the topic of RAG?"
   - "Across all my saved material, what's the consensus on GraphRAG?"
-  - "Why would the approach in paper X fail under condition Y?"
 
-When in doubt, lean "fast". Only return "thorough" when the question clearly needs to reason across multiple pieces of evidence.
+When in doubt, lean "fast". Only return "thorough" when multi-hop reasoning is clearly required.
+
+Entity extraction rules:
+- Extract only entities EXPLICITLY named in the question.
+- Use canonical / full forms where obvious ("pgvector" not "pg"; "GPT-5.4" not "gpt").
+- Type taxonomy:
+  - person: real named people
+  - org: companies, universities, research labs
+  - concept: abstract ideas, techniques (RAG, DDD, multi-hop retrieval)
+  - tool: concrete products, libraries, models (pgvector, Haiku 4.5, Neo4j)
+  - paper: named academic papers / reports
+- Empty array is valid when the question has no named entities.
 
 Return a single JSON object:
-{"depth": "fast" | "thorough", "reason": "<one short sentence>"}`;
+{"depth": "fast" | "thorough", "reason": "<one short sentence>", "entities": [{"name": "...", "type": "..."}]}`;
 
 export async function classifyQueryDepth(
   deps: ServiceDeps,
@@ -51,21 +66,38 @@ export async function classifyQueryDepth(
       },
     );
 
-    const parsed = JSON.parse(res.content) as { depth?: string; reason?: string };
+    const parsed = JSON.parse(res.content) as {
+      depth?: string;
+      reason?: string;
+      entities?: Array<{ name?: unknown; type?: unknown }>;
+    };
     const depth: QueryDepth = parsed.depth === 'thorough' ? 'thorough' : 'fast';
     const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
       ? parsed.reason.trim().slice(0, 200)
       : 'no reason given';
 
-    console.log(`[rag:classify] "${question.slice(0, 80)}" → ${depth} (${reason})`);
-    return { depth, reason };
+    const entities: DepthClassification['entities'] = [];
+    if (Array.isArray(parsed.entities)) {
+      for (const e of parsed.entities) {
+        if (!e || typeof e.name !== 'string') continue;
+        const type = typeof e.type === 'string' ? e.type.toLowerCase() : '';
+        if (!['person', 'org', 'concept', 'tool', 'paper'].includes(type)) continue;
+        entities.push({
+          name: e.name.trim().slice(0, 80),
+          type: type as DepthClassification['entities'][number]['type'],
+        });
+      }
+    }
+
+    console.log(
+      `[rag:classify] "${question.slice(0, 80)}" → ${depth} (${reason}), ${entities.length} entities`,
+    );
+    return { depth, reason, entities };
   } catch (err) {
-    // Fail safe: default to fast if the classifier breaks. Worst case is a
-    // less-thorough answer, not a broken call.
     console.warn(
       `[rag:classify] Classifier failed, defaulting to fast:`,
       err instanceof Error ? err.message : err,
     );
-    return { depth: 'fast', reason: 'classifier error — defaulted to fast' };
+    return { depth: 'fast', reason: 'classifier error — defaulted to fast', entities: [] };
   }
 }
