@@ -12,6 +12,7 @@ import * as todosSvc from './services/todos.js';
 import * as commentsSvc from './services/todo-comments.js';
 import * as searchSvc from './services/search.js';
 import * as ragSvc from './services/rag.js';
+import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
 
 export function createApp(deps: ServiceDeps) {
@@ -326,6 +327,20 @@ export function createApp(deps: ServiceDeps) {
       graph?: boolean;
     }>();
     if (!body.query) return c.json({ error: 'query is required' }, 400);
+
+    // Default graph:true. When on, extract named entities from the query
+    // via the same classifier the RAG path uses, so expansion can seed
+    // from the question itself (not just from entities of the vector-seed
+    // chunks). Cheap (~300ms Haiku call) and meaningful for entity-heavy
+    // queries where the vector hits don't already include the entity-bearing
+    // chunks. RAG already does this; mirror it on REST search for parity.
+    const graphEnabled = body.graph !== false;
+    let queryEntities: Array<{ name: string; type: 'person' | 'org' | 'concept' | 'tool' | 'paper' }> = [];
+    if (graphEnabled) {
+      const classification = await classifyQueryDepth(deps, body.query);
+      queryEntities = classification.entities;
+    }
+
     const hits = await searchSvc.search(deps, body.query, {
       projectId: body.project_id,
       entityTypes: body.entity_types,
@@ -333,6 +348,7 @@ export function createApp(deps: ServiceDeps) {
       limit: body.limit ?? 10,
       threshold: body.threshold,
       graph: body.graph,
+      queryEntities,
     });
     return c.json({ hits });
   });

@@ -322,6 +322,38 @@ describe('Search API', () => {
     const body = await res.json();
     expect(Array.isArray(body.hits)).toBe(true);
   });
+
+  it('extracts query entities via the depth classifier when graph is on (F1)', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+    vi.mocked(deps.queryDepthLLM.complete).mockResolvedValueOnce({
+      content: JSON.stringify({
+        depth: 'fast', reason: 'definitional',
+        entities: [{ name: 'pgvector', type: 'tool' }],
+      }),
+      tokensUsed: { input: 0, output: 0, total: 0 },
+    });
+
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'what about pgvector' }),
+    }));
+
+    // Classifier was called once for entity extraction
+    expect(deps.queryDepthLLM.complete).toHaveBeenCalledOnce();
+  });
+
+  it('skips the classifier when graph is explicitly disabled (F1)', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', graph: false }),
+    }));
+
+    expect(deps.queryDepthLLM.complete).not.toHaveBeenCalled();
+  });
 });
 
 describe('RAG API', () => {
