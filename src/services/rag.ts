@@ -66,7 +66,15 @@ export async function ragQuery(
   opts: RagOptions = {},
 ): Promise<RagResult> {
   const maxChunks = opts.maxChunks ?? 6;
-  const requestedDepth = opts.depth ?? 'auto';
+  // Default to 'fast'. The depth classifier (Haiku) historically routed
+  // some queries to the 'thorough' tier (gpt-5.4-pro Responses API), which
+  // pays 22-36× the latency of fast for marginal-to-zero quality gain on
+  // retrieval-grounded queries. See docs/profiles/2026-04-25-rag-effort-baseline.md
+  // for the data. 'auto' and 'thorough' remain available as opt-in via
+  // the `depth` param when callers explicitly want the reasoning tier.
+  // Once gpt-5.5 quota lands and we re-profile, this default may flip back
+  // to 'auto' if a faster reasoning option proves worth it.
+  const requestedDepth = opts.depth ?? 'fast';
   const pipelineStart = performance.now();
   console.log(
     `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}, depth: ${requestedDepth}`,

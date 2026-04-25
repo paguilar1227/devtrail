@@ -385,7 +385,9 @@ export function createApp(deps: ServiceDeps) {
       tags: body.tags,
       entityTypes: body.entity_types,
       maxChunks: body.max_chunks ?? 6,
-      depth: body.depth ?? 'auto',
+      // Default 'fast' — see ragQuery() and docs/profiles/2026-04-25-rag-effort-baseline.md.
+      // Caller can opt into 'auto' or 'thorough' explicitly.
+      depth: body.depth ?? 'fast',
       reasoningEffort: body.reasoning_effort,
     });
     return c.json(result);

@@ -389,7 +389,7 @@ describe('RAG API', () => {
     expect(body.used_chunks).toBe(0);
   });
 
-  it('auto-routes to thorough when the classifier says so, and surfaces depth meta', async () => {
+  it('auto-routes to thorough when caller opts in via depth=auto and the classifier says so', async () => {
     vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
     // Override the depth classifier to return thorough
     vi.mocked(deps.queryDepthLLM.complete).mockResolvedValueOnce({
@@ -400,13 +400,31 @@ describe('RAG API', () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
       method: 'POST',
       headers: { ...AUTH, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: 'Compare X and Y.' }),
+      // depth: 'auto' opts into the classifier path. Default is now 'fast'
+      // so without this the test would route to fast and bypass the classifier.
+      body: JSON.stringify({ question: 'Compare X and Y.', depth: 'auto' }),
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.meta).toBeDefined();
     expect(body.meta.depth_used).toBe('thorough');
     expect(body.meta.depth_reason).toContain('comparison');
+  });
+
+  it('defaults to fast when depth is not specified (post-baseline-2026-04-25)', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Anything' }),  // no depth field
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.depth_used).toBe('fast');
+    // With default 'fast', the classifier is skipped (no entity extraction
+    // either — that's tied to the auto/thorough paths).
+    expect(deps.queryDepthLLM.complete).not.toHaveBeenCalled();
   });
 
   it('honors caller force of depth=fast and skips the classifier', async () => {
