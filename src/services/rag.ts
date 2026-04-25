@@ -9,6 +9,12 @@ export interface RagOptions {
   entityTypes?: Array<'document' | 'note' | 'todo'>;
   /** Force a depth or leave as 'auto' to let the classifier decide. */
   depth?: QueryDepth | 'auto';
+  /**
+   * Override reasoning effort on the thorough path. Ignored on fast
+   * (gpt-5-4 chat completions has no reasoning). Default is whatever
+   * the upstream Azure default is (currently medium for gpt-5.4-pro).
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface Citation {
@@ -162,7 +168,12 @@ export async function ragQuery(
   const synthStart = performance.now();
   const response = await llm.complete(
     [{ role: 'user', content: userPrompt }],
-    { systemPrompt: SYSTEM_PROMPT, maxTokens },
+    {
+      systemPrompt: SYSTEM_PROMPT,
+      maxTokens,
+      // Only pass effort on the thorough path — chat completions ignores it.
+      ...(depth === 'thorough' && opts.reasoningEffort ? { reasoningEffort: opts.reasoningEffort } : {}),
+    },
   );
   const synthesizeMs = Math.round(performance.now() - synthStart);
   const totalMs = Math.round(performance.now() - pipelineStart);

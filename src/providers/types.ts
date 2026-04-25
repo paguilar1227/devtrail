@@ -36,6 +36,16 @@ export interface LLMOptions {
   systemPrompt?: string;
   responseFormat?: 'json' | 'text';
   maxTokens?: number;
+  /**
+   * For reasoning-tier deployments (Azure Foundry Responses API):
+   * controls how many reasoning tokens the model spends before answering.
+   *   'low'    — fastest, least thorough
+   *   'medium' — Azure default (balance)
+   *   'high'   — most thorough, slowest
+   * Ignored by providers that don't support reasoning effort (chat
+   * completions, Anthropic, Gemini).
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface LLMResponse {

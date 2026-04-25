@@ -107,6 +107,9 @@ export class AzureFoundryResponsesProvider implements LLMProvider {
     if (options?.responseFormat === 'json') {
       body.text = { format: { type: 'json_object' } };
     }
+    if (options?.reasoningEffort) {
+      body.reasoning = { effort: options.reasoningEffort };
+    }
 
     // Pre-flight diagnostics — input size matters for "why is this slow"
     // triage on thorough RAG queries. Total input char count is a cheap
@@ -120,7 +123,7 @@ export class AzureFoundryResponsesProvider implements LLMProvider {
     }, 0);
     const reqStart = performance.now();
     console.log(
-      `[foundry-responses] POST ${deployment} — items: ${input.length}, ~${inputChars} chars, max_output: ${body.max_output_tokens}`,
+      `[foundry-responses] POST ${deployment} — items: ${input.length}, ~${inputChars} chars, max_output: ${body.max_output_tokens}, effort: ${options?.reasoningEffort ?? 'default'}`,
     );
 
     const res = await fetch(url, {
