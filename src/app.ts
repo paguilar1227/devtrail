@@ -374,6 +374,53 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ==========================================================================
+  // Diagnostics — read-only introspection of the entity graph layer.
+  // Useful for triaging "why didn't this content show up in find_mentions"
+  // type questions when direct DB access isn't available.
+  // ==========================================================================
+
+  // GET /api/v1/diagnostics/entities — all entities with edge counts
+  app.get('/api/v1/diagnostics/entities', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '100');
+    const result = await deps.db.query(
+      `SELECT e.id, e.canonical_name, e.type, e.aliases,
+              array_length(e.aliases, 1) AS alias_count,
+              (SELECT count(*)::int FROM chunk_entities ce WHERE ce.entity_id = e.id) AS edge_count,
+              (SELECT count(DISTINCT c.content_item_id)::int
+                 FROM chunk_entities ce
+                 JOIN chunks c ON c.id = ce.chunk_id
+                WHERE ce.entity_id = e.id) AS doc_count
+         FROM entities e
+        ORDER BY edge_count DESC, e.canonical_name ASC
+        LIMIT $1`,
+      [limit],
+    );
+    return c.json({ entities: result.rows });
+  });
+
+  // GET /api/v1/diagnostics/content/:id/edges — all chunk_entities for one content item
+  app.get('/api/v1/diagnostics/content/:id/edges', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const result = await deps.db.query(
+      `SELECT c.id AS chunk_id, c.chunk_index,
+              e.id AS entity_id, e.canonical_name, e.type,
+              ce.confidence, ce.mention_text
+         FROM chunks c
+         JOIN chunk_entities ce ON ce.chunk_id = c.id
+         JOIN entities e ON e.id = ce.entity_id
+        WHERE c.content_item_id = $1
+        ORDER BY c.chunk_index ASC, ce.confidence DESC`,
+      [id],
+    );
+    return c.json({
+      content_item_id: id,
+      edge_count: result.rows.length,
+      edges: result.rows,
+    });
+  });
+
+  // ==========================================================================
   // MCP endpoint — stateless mode (sessionIdGenerator: undefined).
   // Each request gets a fresh server + transport. No session persistence,
   // no "server already initialized" issues, no session-id header dance.
