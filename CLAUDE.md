@@ -2,263 +2,282 @@
 
 Project-specific instructions for AI sessions working on this codebase.
 
-## Development Approach
+## Reality check first
 
-### Test Locally First
+Before trusting anything in this file, this CLAUDE.md, prior session notes, or your auto-memory: **verify against the current code**. Architecture changes happen between sessions. Cheap checks before committing to a mental model:
 
-Never push untested code to production. The cycle is:
+- `git log --oneline -20` — what changed recently
+- `find src -type f -name '*.ts' | sort` — what files actually exist
+- `ls migrations/` — what schema is current
+- `cat package.json` — what dependencies are current
+- A live `/health` hit on production confirms what's deployed
 
-1. Write/modify code
-2. Run `npx tsc --noEmit` — catch type errors before anything else
-3. Run `npx vitest run` — unit + integration tests (453 tests)
-4. Run `npm run test:e2e` — end-to-end against real PostgreSQL (requires `docker compose up -d`)
-5. Only then commit and push
+If a memory or doc references a file path, function, or entity name that no longer exists in the repo, treat the doc as stale and update it. **Don't chase a phantom architecture.** Past pivots have completely replaced the entity model and code layout — assumptions from older sessions go stale fast.
 
-If you need to verify LLM behavior (prompts, parsing), write a quick test script and run it locally with `GEMINI_API_KEY=... npx tsx test-script.ts`. Don't deploy to production to test prompts.
+## What Open Brain v2 is (current state — verified 2026-04-24)
 
-### Plan Before You Act
+A NotebookLM-style personal knowledge base + productivity tool. Single user. No multi-tenancy.
 
-Before implementing a feature:
-- Understand what exists — read the relevant source files
-- Identify what changes — list the files that need modification
-- Consider testing — what tests need to be added or updated
-- Think about callers — if you change a function signature, who calls it
+- **Projects** group everything else.
+- **Content items** are documents (uploaded reference material) and notes (self-authored). Both get chunked for search.
+- **Chunks** are the unit of vector search.
+- **Todos** with optional project membership, recursive subtasks, comments.
+- **Entities + chunk_entities** form a graph layer over the corpus — extracted at ingest, used to expand vector retrieval along entity edges.
 
-Don't start coding until you have a clear picture.
+There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine**. Those existed in pre-pivot versions and were deleted in the V2 rewrite (April 2026). If you find references to them anywhere outside legacy infra (`functions/consolidation-trigger`), fix the docs.
 
-### Commit Style
+## Stack
 
-One commit per logical unit of work. Group source + tests in the same commit. Not so small they're a pain to review, not so large they're hard to backtrack.
+| Layer | Tech |
+|------|------|
+| API | Hono on Node 20, served by `@hono/node-server` |
+| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
+| Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
+| Blob storage | Azure Blob Storage |
+| Container | Docker on Azure Container Apps |
 
-Good: `feat: cascade done — completing parent auto-completes subtasks`
-Bad: `update files` or committing each file separately
+## Models (see `src/server.ts`)
 
-### After Pushing
+| Role | Provider | Model |
+|------|----------|-------|
+| Embeddings | Gemini | `gemini-embedding-2-preview` (3072d, multimodal) |
+| Metadata + entity extraction | Anthropic | `claude-haiku-4-5-20251001` |
+| Query depth classifier | Anthropic | `claude-haiku-4-5-20251001` |
+| RAG fast path | Azure Foundry chat completions | `gpt-5-4` |
+| RAG thorough path | Azure Foundry Responses API | `gpt-5-4-pro` |
 
-After `git push origin main`, poll for CI + Deploy completion:
+## Schema (3 migrations, see `migrations/`)
+
+- `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
+- `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
+- `003_entities_graph.sql` — entities, chunk_entities, `published_at` column on content_items
+
+Auto-migration runs on container startup (`runMigrations()` in `src/server.ts`). It checks for table existence and applies missing migrations idempotently.
+
+**No HNSW indexes.** B1ms tier doesn't have memory for HNSW init at 3072 dims. Sequential scan is fine at single-user scale.
+
+## Code layout
+
+```
+src/
+├── app.ts                  # Hono app factory: REST routes + MCP mount + static web
+├── server.ts               # Entry point: deps wiring + migrations + serve
+├── config.ts               # Zod-validated env config
+├── capture/
+│   ├── chunker.ts          # 500/100 sliding window with sentence-boundary alignment
+│   ├── ingest-trace.ts     # Per-ingest trace IDs + fingerprints
+│   ├── metadata.ts         # Haiku metadata: title, topics, tags, extracted_text, published_at
+│   └── url-detect.ts       # Classify URL type (YouTube, X, PDF, image, audio, html)
+├── db/                     # Raw SQL, no ORM. One module per table.
+│   ├── client.ts           # pg.Pool wrapper that registers pgvector types on first use
+│   ├── projects.ts
+│   ├── content-items.ts
+│   ├── chunks.ts
+│   ├── todos.ts
+│   ├── todo-comments.ts
+│   └── entities.ts         # entities + chunk_entities edges
+├── services/               # Business logic. Adapters (REST, MCP) call into here.
+│   ├── index.ts            # ServiceDeps interface (DI contract)
+│   ├── projects.ts
+│   ├── content-items.ts    # createContentItem orchestrates dedup→upload→metadata→chunk→embed→graph
+│   ├── todos.ts
+│   ├── todo-comments.ts
+│   ├── search.ts           # Hybrid vector + graph search with RRF fusion + retrieval_path
+│   ├── rag.ts              # Q&A: depth classify → search → synthesize via fast or pro
+│   ├── query-depth.ts      # Haiku classifier: fast vs thorough + entity extraction
+│   ├── entities.ts         # extract → resolve → map mentions to chunks → persist edges
+│   └── url-ingest.ts       # YouTube / X / PDF / HTML ingestion → content-items pipeline
+├── providers/
+│   ├── types.ts            # EmbeddingProvider, LLMProvider interfaces
+│   ├── gemini-embedding.ts
+│   ├── gemini-llm.ts
+│   ├── anthropic-llm.ts
+│   ├── azure-foundry-llm.ts        # Chat completions (gpt-5-4)
+│   ├── azure-foundry-responses.ts  # Responses API (gpt-5-4-pro)
+│   ├── pdf-extract.ts      # pdf-parse v2 PDFParse class
+│   ├── youtube-transcript.ts
+│   ├── firecrawl.ts        # HTML extraction fallback
+│   ├── xai.ts              # X/Twitter live-search via Grok
+│   └── json-utils.ts       # extractJson() — strips markdown fences from LLM output
+├── mcp/
+│   └── server.ts           # 8 MCP tools (see "MCP tools" below)
+└── storage/
+    └── blob.ts             # Azure Blob upload/download
+```
+
+### Service layer pattern
+
+Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
+
+## MCP tools (8 total — defined in `src/mcp/server.ts`)
+
+1. `list_projects` — list all (filter by status optional)
+2. `create_project`
+3. `list` — entity_type-filtered browse (document / note / todo)
+4. `get` — fetch by UUID, auto-detects type (project / content / todo)
+5. `create` — discriminated union over document / note / quick_note / todo
+6. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
+7. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
+8. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
+
+The MCP server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code). It tells the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs. **No `update_*` or `delete_*` tools** — the web UI handles edits.
+
+### Project membership (asymmetric — easy to get wrong)
+
+| Entity | Membership field |
+|--------|------------------|
+| document, note, quick_note | `project_ids[]` (array, multi-project) |
+| todo | `project_id` (single string, nullable = personal Inbox) |
+
+Mixing them up will make the call fail.
+
+## REST API
+
+Auth: `Authorization: Bearer <api-key>` or `?key=<api-key>`. Same key for `/api/*` and `/mcp`.
+
+Routes (see `src/app.ts`):
+
+- `GET /health`
+- `GET|POST|PUT|DELETE /api/v1/projects[/:id]` + `POST /api/v1/projects/:id/restore`
+- `GET|POST|PUT|DELETE /api/v1/content[/:id]` + `POST /api/v1/content/from-url` + `POST /api/v1/content/:id/restore`
+  - `POST /api/v1/content` accepts JSON or `multipart/form-data` (with `file` field for uploads)
+- `GET|POST|PUT|DELETE /api/v1/todos[/:id]` + restore
+- `GET|POST|PUT|DELETE /api/v1/todos/:id/comments[/:cid]`
+- `POST /api/v1/search` — hybrid vector + graph
+- `POST /api/v1/find-mentions`
+- `POST /api/v1/rag` — RAG Q&A with `depth: 'auto' | 'fast' | 'thorough'`
+- `ALL /mcp` — stateless MCP, fresh server + transport per request
+
+Soft delete by default (`archived = true`); pass `?hard=true` for permanent delete.
+
+## Development workflow
+
+### Local cycle
+
+```bash
+npx tsc --noEmit           # types
+npm test                    # full vitest run (12 files, 88 tests as of 2026-04-24)
+docker compose up -d        # local Postgres on port 5434 (avoid clashing with 5432)
+npm run dev                 # tsx watch on src/server.ts
+```
+
+There is **no separate e2e suite**. The integration tests in `tests/integration/` already exercise the full app surface (REST + MCP) against mocked providers and an in-memory or test pg.
+
+### Plan-first
+
+Before implementing a feature: read the relevant services, list the files that change, identify call sites, write tests at the right layer. Don't start coding until the picture is clear.
+
+### Commit style
+
+One commit per logical unit. Group source + tests in the same commit. Conventional-style prefixes: `feat:`, `fix:`, `feat(graph):`, `fix(search):`, etc. (See `git log` for style.)
+
+### After pushing
+
+CI and Deploy run independently on every push to `main`. Both must pass. Poll until both are done:
 
 ```bash
 while true; do
   RESULT=$(gh run list --repo paguilar1227/open-brain-v2 --limit 2 --json status,conclusion,name --jq '.[] | "\(.status) \(.conclusion) \(.name)"')
-  CI=$(echo "$RESULT" | grep "CI" | head -1)
-  DEPLOY=$(echo "$RESULT" | grep "Deploy" | head -1)
-  CI_DONE=$(echo "$CI" | grep "completed")
-  DEPLOY_DONE=$(echo "$DEPLOY" | grep "completed")
-  if [ -n "$CI_DONE" ] && [ -n "$DEPLOY_DONE" ]; then
-    echo "CI: $(echo "$CI" | cut -d' ' -f2)"
-    echo "Deploy: $(echo "$DEPLOY" | cut -d' ' -f2)"
-    break
+  CI=$(echo "$RESULT" | grep "^completed.*CI$" | head -1)
+  DEPLOY=$(echo "$RESULT" | grep "^completed.*Deploy" | head -1)
+  if [ -n "$CI" ] && [ -n "$DEPLOY" ]; then
+    echo "$CI"; echo "$DEPLOY"; break
   fi
   sleep 5
 done
 ```
 
-Check both CI AND Deploy. CI can pass while Deploy fails (or vice versa). Report both results.
+CI passing while Deploy fails (and vice versa) is possible. Report both.
 
-### Ask Before Destructive Actions
+### Ask before destructive actions
 
-Always confirm before:
-- Deleting files (could they be needed later?)
-- Force pushing, resetting, or rewriting git history
-- Modifying Azure infrastructure
-- Exposing user's IP or sensitive information
+Confirm before:
+- Deleting files (could they still be needed?)
+- Force-pushing, resetting, or rewriting git history
+- Modifying Azure infra
+- Exposing secrets or the user's IP
 
-## Testing Philosophy
+## Test layout
 
-### Test Layers
+| Layer | Path | What |
+|-------|------|------|
+| Unit | `tests/unit/**` | Single modules: providers, db client, mcp server wiring, capture utilities, storage |
+| Integration | `tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
+| Integration | `tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
+| Integration | `tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
+| Integration | `tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
 
-| Layer | What | Mocking | Location |
-|-------|------|---------|----------|
-| Unit | Individual modules, functions | Everything mocked | `tests/unit/` |
-| Integration (Telegram) | Webhook → intent → action → reply pipeline | Mocked bot, real handlers | `tests/integration/telegram-*.ts` |
-| Integration (LLM) | NL parsing quality with real Gemini Flash | Only LLM is real | `tests/integration/nl-reminder-parsing.test.ts` |
-| E2E | REST API + MCP tools against real PostgreSQL | Only AI providers + blob mocked | `tests/e2e/api-e2e.test.ts` |
-| Manual | Telegram UI, button interactions | Nothing mocked | User tests in Telegram app |
+Mocks live in `tests/helpers/mocks.ts`. Add new tests at the appropriate layer when you change behavior. Bug fixes get a regression test.
 
-### When to Write Tests
-
-- Every new feature gets tests at the appropriate layer
-- Every bug fix gets a regression test that reproduces the failure
-- If you change a function's behavior, update its tests
-- If the LLM prompt changes, verify the section 19 NL tests still pass
-
-### Telegram Pipeline Tests and OOM
-
-The Telegram integration tests create full Hono apps with mocked grammY bots. These are memory-intensive. The test suite uses `pool: 'forks'` with 4GB per fork. If tests OOM:
-- Split the test file — each file gets its own fork
-- Check mocks for infinite recursion (e.g., a mock that matches too broadly and triggers recursive DB calls)
-- The T6 mock bug that caused OOM: a mock returned children for ANY SQL containing 'status', which triggered infinite `completeChildren()` recursion
-
-### Running Tests
-
+Run a single file:
 ```bash
-# Unit + Integration
-npx vitest run
-
-# E2E (requires docker compose up -d)
-npm run test:e2e
-
-# Specific test file
-npx vitest run tests/unit/db/reminders.test.ts
-
-# LLM integration tests need the API key
-GEMINI_API_KEY=<key> npx vitest run tests/integration/nl-reminder-parsing.test.ts
+npx vitest run tests/integration/rest-api.test.ts
 ```
 
-## Known Gotchas
+## Known gotchas
 
-### Gemini 2.5 Flash
+### LLMs
 
-- `maxTokens` must be >= 1024. Flash uses internal thinking tokens that count against the output budget. At 256, the model runs out after preamble text like "Here is the JSON requested:" and never outputs the actual JSON.
-- `responseMimeType: 'application/json'` is unreliable. Flash often wraps JSON in markdown code blocks. The `extractJson()` function in `src/providers/gemini-llm.ts` strips the wrapping.
-- `llmJsonParse()` in `src/telegram/llm-parse.ts` retries up to 3 times for non-JSON responses.
-- Model IDs change. `gemini-2.0-flash` was retired. Always verify the current model ID if you get 404s.
+- **Markdown-wrapped JSON.** Anthropic and Gemini both sometimes return JSON inside ` ```json … ``` ` fences even with `responseFormat: 'json'`. Always pipe `LLMProvider` JSON output through `extractJson()` from `src/providers/json-utils.ts` before `JSON.parse`.
+- **Output token budget.** Haiku 4.5 metadata calls use `maxTokens: 8192` for PDF-scale inputs (raised from 2048 — see `fix(metadata): raise Flash maxTokens 2048→8192 for PDF-scale inputs`). For entity extraction, 4096 is enough because we cap input at 50k chars.
+- **Model IDs change.** Verify the current ID if you get 404s. The codebase pins Haiku to `claude-haiku-4-5-20251001` explicitly.
 
 ### Gemini Embedding 2
 
-- Model ID: `gemini-embedding-2-preview` (not `text-embedding-004` or experimental IDs)
-- Must explicitly request 3072 dimensions (default is 768)
-- Supported MIME types: `image/png`, `image/jpeg`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/quicktime`, `application/pdf`
-- The Generative Language API must be enabled in Google Cloud Console for the project associated with the API key
+- Model ID: `gemini-embedding-2-preview`. Default dim is 768 — we explicitly request 3072.
+- Multimodal: accepts `image/png`, `image/jpeg`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/quicktime`, `application/pdf`.
+- The Generative Language API must be enabled on the GCP project tied to the API key.
 
 ### PostgreSQL / pgvector
 
-- `db.query()` calls `ensureVector()` which registers pgvector types. This fails if the `vector` extension doesn't exist yet. Migrations must use `pool.query()` directly.
-- HNSW indexes can't be created on B1ms tier (memory limit for 3072-dim vectors). Sequential scans are used instead.
-- Auto-migration runs on app startup — checks if tables exist, creates them if not.
+- `db.query()` calls `ensureVector()` which lazily registers pgvector types on first use. Migrations that create the `vector` extension must use `pool.query()` directly (not `db.query()`) to avoid the chicken-and-egg.
+- HNSW is **not** in use — too memory-hungry for B1ms at 3072 dims. Sequential scan is the current cost.
+- Migrations are checked by table-existence probes in `runMigrations()`. Adding a new migration: add the file and a new probe in `src/server.ts`.
 
-### Telegram
+### Search and RAG
 
-- Webhook must respond 200 immediately. Processing happens in background via `bot.handleUpdate()`. Never tie the HTTP response to handler completion.
-- Track `update_id` to prevent duplicate processing. Telegram retries if it doesn't get a fast 200.
-- `bot.init()` must be called before `bot.handleUpdate()` works.
-- All media handlers need explicit try/catch for guaranteed user reply on error.
-- Telegram reports `application/octet-stream` for many document types — infer from file extension via `src/telegram/mime-utils.ts`.
-- `switch_inline_current_chat` requires inline mode. Action menu uses callback buttons with pending state instead.
+- `search()` returns hits with a `retrieval_path` array showing which path (vector / entity expansion / both) reached the chunk. RRF fusion combines the lists. `graph: false` opts out of expansion.
+- `ragQuery()` first runs the depth classifier (Haiku) which both classifies fast/thorough AND extracts named entities to seed graph expansion. `depth: 'fast'|'thorough'` skips the classifier (zeroes its timing).
+- Per-stage timing is on every RAG response (`meta.timings_ms`). Use it to diagnose latency.
 
-### Azure
+### URL ingestion
 
-- ACR role assignments across resource groups can't be in Bicep — must use CLI.
-- Container App revisions need unique image tags (git SHA). Pushing `latest` alone doesn't trigger a new revision.
-- `minReplicas: 1` is set for always-on (no cold starts).
+- YouTube: tries direct scrape → Firecrawl → xAI as fallbacks. Only succeeds when one returns a transcript.
+- X/Twitter: xAI Grok live-search primary, Firecrawl stealth fallback.
+- PDFs: downloaded as bytes → text via `pdf-parse` v2 PDFParse class. Watch for the v2 API change — older docs reference a function import that no longer exists.
+- HTML: Firecrawl markdown extraction. Reject results shorter than 300 chars or matching error/placeholder titles.
+- Dedup: by `source_url` first, then by `file_hash` for binary downloads.
 
-## Code Organization
+### Legacy infrastructure (cleanup candidates)
 
-### Key Directories
+- `functions/consolidation-trigger/` and the deploy step that publishes it (`Azure Function` step in `.github/workflows/deploy.yml`) are leftovers from the pre-pivot architecture. The function probably no-ops, but it's still being deployed. Consider removing on a quiet day.
+- `scripts/deploy.sh` also still publishes the function. If you delete the function, update this too.
 
-```
-src/
-├── services/        # Service layer — ALL business logic lives here (hexagonal architecture)
-│   ├── index.ts            # ServiceDeps interface — dependency injection contract
-│   ├── captures.ts         # captureThought, searchThoughts, listCaptures, archive/unarchive
-│   ├── comments.ts         # addComment, listComments, getComment, updateComment, deleteComment
-│   ├── consolidation.ts    # runConsolidation, getConsolidationLogs
-│   ├── facts.ts            # getFact, listFacts, updateFact, approveRejectFact, reviewPendingFacts
-│   ├── insights.ts         # getInsight, listInsights, updateInsight, approveRejectInsight
-│   ├── profile.ts          # getUserProfile (LLM synthesis), getBrainStats
-│   ├── reminders.ts        # Full CRUD + createReminder (depth validation, embedding), completeReminder (cascade)
-│   ├── tags.ts             # updateTags (allowlist validation + routing), getAllowedTags
-│   └── checkin.ts          # getDailyCheckinContext — 24h activity + reflective questionnaire for check-in sessions
-├── telegram/        # Bot adapter (thin — calls service layer)
-│   ├── webhook.ts          # Entry point — wires everything
-│   ├── command-handlers.ts # /remind, /todos, /done, /delete, /edit, /move, /comment, /subtask, callback handlers
-│   ├── nl-router.ts        # NL intent classifier + action handlers + media handlers
-│   ├── llm-parse.ts        # llmJsonParse retry helper
-│   ├── state.ts            # Shared state types (lastActions, pendingSubtask, pendingAction)
-│   ├── prompts.ts          # LLM prompt templates (intent classifier, reminder parser)
-│   ├── mime-utils.ts       # MIME type inference + summarization routing
-│   └── handlers.ts         # Per-message-type handler functions
-├── capture/         # Universal ingest pipeline
-│   ├── pipeline.ts         # Orchestrates dedup, embedding, metadata, DB insert
-│   ├── metadata.ts         # Gemini Flash metadata + tag extraction (piggybacked on one LLM call)
-│   └── tags.ts             # ALLOWED_TAGS (14 tags), TAG_DESCRIPTIONS, validateTags(), isValidTag()
-├── consolidation/   # 3-phase consolidation (DBSCAN → Opus → embed)
-├── retrieval/       # Profile synthesis + tiered search
-├── mcp/             # MCP server + 24 tools (thin adapter over service layer)
-├── db/              # PostgreSQL query modules (6 tables)
-│   └── reminder-comments.ts  # includes getCommentById, updateComment, deleteComment
-├── providers/       # AI provider abstraction (Gemini, Anthropic)
-├── storage/         # Azure Blob Storage
-├── notifications/   # Formatting, review, digest, due date checker
-├── config.ts        # Zod-validated environment config
-├── app.ts           # Hono HTTP server + REST API (thin adapter over service layer)
-└── server.ts        # Entry point (migration, App Insights, background checkers)
-```
-
-### Service Layer Pattern
-
-**All business logic goes through `src/services/`.** The three adapter surfaces — REST API (`src/app.ts`), MCP tools (`src/mcp/`), and Telegram bot (`src/telegram/`) — are thin wrappers. They parse input, call a service function, and format the response. They contain no business logic.
-
-This means:
-- To add a new operation, add a function to the appropriate `src/services/*.ts` module first.
-- Call that function from any adapter that needs it — don't re-implement in each adapter.
-- Service functions take `ServiceDeps` as first argument, making them trivially unit-testable with mocks.
-- Never import adapter code from services. The dependency direction is: adapters → services → DB/providers.
-
-### Tag System
-
-`src/capture/tags.ts` is the single source of truth for the tag allowlist. It exports:
-- `ALLOWED_TAGS` — 14-element const array. Used for Zod validation in MCP tools and as the prompt list in metadata extraction.
-- `TAG_DESCRIPTIONS` — map from tag name to one-line description. Injected into the Gemini Flash metadata prompt so the LLM knows what each tag means.
-- `validateTags(tags: string[]): string[]` — filters to valid tags, deduplicates.
-- `isValidTag(tag: string): boolean` — single tag check.
-
-**To expand the allowlist:** Add the new tag to both `ALLOWED_TAGS` and `TAG_DESCRIPTIONS` in `src/capture/tags.ts`. No migration needed — tags are stored in `text[]` columns with no DB-level constraint. The allowlist is code-only.
-
-### State Machines in Telegram
-
-The bot uses three per-chat state maps for multi-step interactions:
-
-- `pendingSubtask` — set by `/subtask` button or `action-subtask`, cleared when next text message creates the subtask
-- `pendingAction` — set by `action-edit/comment/move/comment-edit` buttons, cleared when next text message executes the action. The `comment-edit` variant also stores `commentId` alongside `reminderId`.
-- `lastActions` — tracks the most recent action per chat for undo support
-
-The `action-comments:{id}` callback shows the comment list for a reminder with per-comment ✏ Edit and 🗑 Delete buttons. Editing sets `pendingAction` to `comment-edit`; deleting runs immediately.
-
-Check order in `message:text` handler: pendingSubtask → pendingAction → undo fast-path → LLM intent classifier → capture thought (default)
-
-### Adding a New Telegram Command
-
-1. Add or update the business logic in `src/services/` first — never put logic directly in the handler
-2. Add the handler in `src/telegram/command-handlers.ts`
-3. Register it with `bot.command('name', handler)`
-4. Add undo support if the action is reversible (`lastActions.set(...)`)
-5. Add short ID resolution if it takes a reminder ID (`resolveReminderId`)
-6. Add tests in `tests/integration/telegram-pipeline.test.ts` or a new split file
-7. Update `ARCHITECTURE.md` and the design spec
-
-### Adding a New MCP Tool
-
-1. Add or update the business logic in `src/services/` first — MCP tools should be thin wrappers
-2. Add the tool registration in `src/mcp/profiler-tools.ts` or `src/mcp/reminder-tools.ts`
-3. Use Zod for parameter validation
-4. Add an E2E test in `tests/e2e/api-e2e.test.ts`
-5. Update `ARCHITECTURE.md`, `README.md`, and the design spec tool count + table (currently 24)
-
-### MCP Server Instructions
-
-The `McpServer` in `src/mcp/server.ts` is created with an `instructions` field. MCP clients that support it (Claude, etc.) receive this string on connection and apply it automatically — no user setup needed. The instructions tell the AI to call `brain_help`, proactively capture, and suggest reminders.
-
-For AI clients that don't support MCP server instructions (ChatGPT, raw API), the `get_user_prompt` tool returns the same behavioral instructions as a portable system prompt users can paste into their client's custom instructions field once.
-
-## Production Environment
+## Production environment
 
 - **App URL:** `https://your-app.your-env.region.azurecontainerapps.io`
-- **MCP URL:** `https://your-app.your-env.region.azurecontainerapps.io/mcp?key=<api-key>`
-- **API Key:** stored in Azure Key Vault (`your-keyvault/open-brain-api-key`)
-- **Telegram Bot:** `@OpenBrainToolkitBot`
-- **PostgreSQL:** `your-pg-server.postgres.database.azure.com`
-- **Consolidation:** Azure Function, every 30 minutes (configurable via `CONSOLIDATION_SCHEDULE`)
-- **Docker compose (local dev):** port 5434 (not 5432, which is used by other projects)
+- **MCP URL:** `<app-url>/mcp?key=<api-key>` (stateless, per-request server)
+- **Health:** `<app-url>/health` returns `{"ok":true,"service":"open-brain","version":"2.0.0"}`
+- **API key:** Azure Key Vault `your-keyvault/open-brain-api-key`
+- **PostgreSQL:** `your-pg-server.postgres.database.azure.com` (Azure Postgres Flexible Server)
+- **Azure Container App:** resource group `openbrain-rg`, name `openbrain-prod-api`
+- **Local dev Postgres:** port 5434 (so it doesn't clash with other projects on 5432)
 
-## Failure Scenarios to Watch For
+## Failure modes that have happened
 
-These have all happened in production. Tests exist for most, but be vigilant:
+These are real, not hypothetical. Tests cover most.
 
-1. LLM returns non-JSON even with `responseFormat: 'json'` — always use `llmJsonParse` with retry
-2. Telegram webhook retry loops — always respond 200 immediately, process in background
-3. Silent failures in catch blocks — always log errors, always reply to user
-4. MIME type misdetection — always infer from extension when Telegram says `application/octet-stream`
-5. File dedup bypass — LLM generates different summaries for same file; file hash is the real dedup gate
-6. Relative dates without context — always inject `TODAY'S DATE` and `CURRENT TIME (UTC)` into LLM prompts
-7. Mock infinite recursion in tests — be specific with SQL pattern matching in mocks, don't use broad `includes('status')` matchers
+1. **Markdown-fenced JSON breaking parses** — fixed by routing all JSON through `extractJson()` in `json-utils.ts`. Whenever you add a new LLM-JSON path, route it through there.
+2. **PDF parsing API change** — `pdf-parse` v2 ships a `PDFParse` class instead of the v1 default-import function. Use the class.
+3. **Firecrawl HTML returning placeholder pages** — error/404/"Example Domain" titles must be rejected; bare-minimum content length must be > 300 chars to count as real ingestion.
+4. **xAI X-search returning miss responses** — detect failure phrases up front and surface a clean `X_SEARCH_MISS:` error rather than saving useless content.
+5. **YouTube snowflake IDs vs date windows** — decode the post snowflake to derive a ±6hr search window so x_search can actually find the post.
+6. **HNSW init OOM** — don't try to add the index on B1ms. If you need faster search, either upsize the DB or use a smaller embedding dim.
+7. **Past phantom-architecture sessions** — if the doc and the code disagree, the code wins. Update the doc immediately.
+
+## When you finish a task
+
+- Run `npx tsc --noEmit` and `npm test` before committing.
+- Update CLAUDE.md if you changed an entity, table, MCP tool, or service-layer contract. Stale docs cost more than they save.
+- If you delete or rename a service / table / file, grep the docs for it (`grep -rn 'old-name' --include='*.md'`) and fix or remove references.
