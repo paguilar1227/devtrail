@@ -3,7 +3,9 @@ import { cors } from 'hono/cors';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { ServiceDeps } from './services/index.js';
+import type { BlobStorage } from './storage/blob.js';
 import { createMcpServer } from './mcp/server.js';
+import { resolveUploadMime } from './capture/mime-utils.js';
 import * as projectsSvc from './services/projects.js';
 import * as contentSvc from './services/content-items.js';
 import * as todosSvc from './services/todos.js';
@@ -85,7 +87,7 @@ export function createApp(deps: ServiceDeps) {
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
     const include_archived = c.req.query('include_archived') === 'true';
     const items = await contentSvc.listContentItems(deps, { type, project_id, tags, limit, include_archived });
-    return c.json({ items: items.map(stripEmbedding) });
+    return c.json({ items: items.map((it) => stripAndSignContent(deps.blobStorage, it)) });
   });
 
   app.post('/api/v1/content', async (c) => {
@@ -111,7 +113,7 @@ export function createApp(deps: ServiceDeps) {
       if (uploaded && uploaded.size > 0) {
         file = {
           data: Buffer.from(await uploaded.arrayBuffer()),
-          mimeType: uploaded.type || 'application/octet-stream',
+          mimeType: resolveUploadMime(uploaded.type, uploaded.name),
           filename: uploaded.name,
         };
       }
@@ -170,7 +172,7 @@ export function createApp(deps: ServiceDeps) {
     if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
     const item = await contentSvc.getContentItem(deps, id);
     if (!item) return c.json({ error: 'Not found' }, 404);
-    return c.json({ item: stripEmbedding(item) });
+    return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
   });
 
   app.put('/api/v1/content/:id', async (c) => {
@@ -187,7 +189,7 @@ export function createApp(deps: ServiceDeps) {
       tags: body.tags,
     });
     if (!item) return c.json({ error: 'Not found' }, 404);
-    return c.json({ item: stripEmbedding(item) });
+    return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
   });
 
   app.delete('/api/v1/content/:id', async (c) => {
@@ -407,6 +409,22 @@ export function createApp(deps: ServiceDeps) {
 function stripEmbedding<T extends { embedding?: unknown }>(obj: T): Omit<T, 'embedding'> {
   const { embedding, ...rest } = obj;
   return rest;
+}
+
+/**
+ * Like stripEmbedding, but also rewrites blob_url to a SAS-signed URL the
+ * client can actually fetch. Used for content_items responses; todos don't
+ * have blob_url so they keep using stripEmbedding directly.
+ */
+function stripAndSignContent<T extends { embedding?: unknown; blob_url?: string | null }>(
+  blobStorage: BlobStorage,
+  obj: T,
+): Omit<T, 'embedding'> {
+  const stripped = stripEmbedding(obj) as Omit<T, 'embedding'> & { blob_url?: string | null };
+  if (stripped.blob_url) {
+    stripped.blob_url = blobStorage.getReadSasUrl(stripped.blob_url);
+  }
+  return stripped;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

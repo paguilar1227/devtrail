@@ -1,122 +1,124 @@
 # Open Brain v2
 
-Open Brain is a bonding layer between human and AI — a personal knowledge system that maintains a living profile of the user and supports their daily workflow. Its primary purpose is to help AI tools quickly understand who the user is right now: preferences, identity, habits, skills, relationships, opinions. Its secondary purpose is to serve as a personal productivity layer (reminders, todos) that feeds back into the profile. It is not a journal or historical record, though it passively preserves change history for future use.
+Personal knowledge base + productivity tool. Single user. NotebookLM-style: organize knowledge into **projects**, dump documents/notes/todos into them, run hybrid semantic + entity-graph search across everything.
 
-Open Brain 2.0 transforms the original thought-capture tool into a personal search engine powered by three layered improvements: write-time consolidation, retrieval-time synthesis, and multimodal embeddings. Raw captures are synthesized into facts (a living profile), which are further distilled into insights (cross-cutting patterns). Every tier is independently searchable via pgvector.
+Open Brain runs as a single Hono process serving three surfaces — REST API, MCP server, and a Vite/React web UI — backed by PostgreSQL + pgvector and Azure Blob Storage. Multimedia ingestion (PDF/image/audio) and URL ingestion (YouTube/X/HTML) flow through the same chunking + embedding + entity-extraction pipeline.
 
 ## Features
 
-### Profiler
+### Content & retrieval
 
-- **Three-tier knowledge architecture:** raw captures -> synthesized facts -> cross-cutting insights
-- **Multimodal capture:** text, photos, voice memos, documents (PDF, CSV, HTML, JSON, etc.)
-- **Tag system:** 14 curated semantic tags (preference, decision, skill, goal, etc.) for filtered retrieval — auto-classified by LLM, or provided by MCP callers
-- **Tag-filtered search:** `search_thoughts("coding style", { tags: ["preference"] })` returns only preference-type results
-- **Semantic dedup:** cosine similarity check prevents duplicate captures
-- **Consolidation pipeline:** DBSCAN clustering + Claude Opus reasoning promotes captures to facts and insights
-- **Review system:** autonomous, hybrid (default), or ask modes for fact/insight approval
+- **Project-scoped knowledge:** documents and notes can belong to multiple projects; todos belong to one (or live in a personal Inbox).
+- **Multimodal ingestion:** PDFs, images (with OCR), audio (with transcription), all chunked and embedded via Gemini Embedding 2 (3072d, multimodal).
+- **URL ingestion:** YouTube transcripts, X/Twitter threads, PDFs, HTML articles — `source_url` preserved and surfaced in citations.
+- **Hybrid search:** vector seed + graph expansion along chunk→entity edges, fused via Reciprocal Rank Fusion. Each hit includes a `retrieval_path` explaining how it was reached.
+- **Entity graph layer:** Haiku 4.5 extracts entities at ingest, resolved against a canonical registry (exact name, alias, embedding similarity). `find_mentions` returns every chunk that mentions a given entity.
+- **RAG with auto-depth routing:** classifier picks fast (Azure GPT-5.4, ~3-5s) or thorough (Azure GPT-5.4 Pro Responses API, 15-60s) per question. Per-stage timing breakdown in every response.
 
-### Reminders & Todos
+### Tasks
 
-- **Hierarchical tasks:** Project > Section > Task with subtask nesting (up to 4 levels)
-- **Rich metadata:** status, priority (P1/P2/P3), due dates, categories, comments
-- **Comment management:** view, edit, and delete comments via Telegram action menu or MCP tools
-- **Cascade behaviors:** completing a parent auto-completes children; deleting cascades to subtasks + comments
-- **Reparenting/move:** move tasks between parents or to root level, children follow
-- **Short IDs:** use first 8 characters of UUID for commands (e.g., `/done 4e0bd1b2`)
-- **Due date notifications:** per-reminder alerts when due + daily report with brain activity stats at configured time
-- **Profile feedback loop:** completed reminders feed into consolidation as profile signal
+- **Hierarchical todos** with subtasks, comments, status (`not_started` / `in_progress` / `paused` / `done`), priority (P1/P2/P3), due dates, tags.
+- **Cascade behavior:** hard-deleting a parent todo cascades to all descendants (`parent_id ON DELETE CASCADE`); deleting a content item cascades to its chunks + chunk_entities.
+- **Soft delete + restore:** archive/unarchive on every entity.
 
-### Telegram Bot
+### MCP server (8 tools)
 
-- **Natural language interface:** LLM-powered intent classifier routes messages to create, list, complete, update, comment, move, or undo — no commands needed
-- **Slash commands:** `/remind`, `/todos`, `/done`, `/delete`, `/edit`, `/move`, `/comment`, `/subtask`, `/review`
-- **Inline keyboard:** numbered task buttons with done (checkmark), status cycle (not_started -> in_progress -> paused -> blocked -> not_started), and action menu (gear icon)
-- **Action menu:** per-task actions via inline buttons — edit, comment, move, delete, subtask
-- **Undo:** say "undo" to reverse the last action (create, complete, update, comment)
-- **Pending state machines:** subtask creation and action menu flows maintain conversational state
-- **Media capture:** photos, voice memos, and documents are captured with AI summarization
-- **MIME detection:** 25 file extension mappings when Telegram sends `application/octet-stream`
-
-### MCP Tools (24 total)
-
-**Profiler (14 tools):** brain_help, get_user_prompt, get_user_profile, search_thoughts, capture_thought, brain_stats, archive_thought, unarchive_thought, update_fact, review_pending, approve_reject, run_consolidation, update_tags, daily_checkin
-
-**Reminders (10 tools):** create_reminder, list_reminders, get_reminder_detail, update_reminder, complete_reminder, delete_reminder, add_reminder_comment, list_projects, edit_comment, delete_comment
-
-MCP-compatible clients (Claude, etc.) receive behavioral instructions automatically on connection — including tag system guidance and search patterns. For other AI clients, call `get_user_prompt` once to get a system prompt you can paste into custom instructions.
+`list_projects`, `create_project`, `list`, `get`, `create`, `search` (hybrid), `find_mentions` (graph), `save_from_url`. The server includes behavioral instructions that are auto-applied by Claude.ai / Claude Code on connection — no user setup needed.
 
 ## Architecture
 
-| Layer | Service |
-|-------|---------|
-| API / MCP / Telegram webhook | Azure Container App (minReplicas: 1, always-on) |
-| Consolidation pipeline | Azure Function (timer trigger, every 30 min) |
-| Database | Azure Database for PostgreSQL Flexible Server + pgvector |
-| File storage | Azure Blob Storage |
-| Container registry | Azure Container Registry (shared, existing) |
-
-The Container App hosts three surfaces on a single process: a REST API (`/api/v1/*`), an MCP server (`/mcp`), and the Telegram webhook handler. All three surfaces are thin adapters over a shared **service layer** (`src/services/`) that owns all business logic — hexagonal architecture / ports and adapters pattern. The Azure Function runs the consolidation pipeline on a timer: capture -> fact promotion -> insight generation, using Claude Opus 4.6 for reasoning.
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Runtime | Node.js 20 / TypeScript |
-| API framework | Hono |
-| Database | PostgreSQL + pgvector |
-| Embeddings | Gemini Embedding 2 (3072 dims) |
-| LLM (metadata + retrieval + intent) | Gemini 2.5 Flash |
-| LLM (consolidation) | Claude Opus 4.6 |
-| Bot | Telegram (grammY) |
-| MCP | Model Context Protocol 2024-11-05 |
-| Infrastructure | Azure Bicep |
+| Layer | Technology |
+|-------|-----------|
+| API | Hono on Node 20, served by `@hono/node-server` |
+| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
+| Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
+| Blob storage | Azure Blob Storage (private; SAS-signed read URLs at API response time) |
+| Container | Docker on Azure Container Apps |
+| Embeddings | Gemini Embedding 2 (`gemini-embedding-2-preview`, 3072d, multimodal) |
+| Metadata + entity extraction | Anthropic Claude Haiku 4.5 |
+| Query depth classifier | Anthropic Claude Haiku 4.5 |
+| RAG fast path | Azure Foundry chat completions (gpt-5-4) |
+| RAG thorough path | Azure Foundry Responses API (gpt-5-4-pro) |
 | CI/CD | GitHub Actions (OIDC) |
 
-## Local Development
+The Container App hosts all three surfaces in a single process. Adapters are thin; all business logic lives in `src/services/` (see `CLAUDE.md` for the layout). Migrations auto-apply on startup.
+
+## Schema
+
+3 migrations under `migrations/`:
+
+- `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
+- `002_source_url.sql` — adds `source_url` to content_items for URL-ingested entries
+- `003_entities_graph.sql` — entities + chunk_entities tables, `published_at` on content_items (content time vs ingest time)
+
+## Local development
 
 ```bash
-# 1. Start PostgreSQL with pgvector (port 5434 on host)
+# 1. Local Postgres (pgvector image, mapped to host port 5434 to avoid clashing with the system 5432)
 docker compose up -d
 
-# 2. Install dependencies
+# 2. Backend deps
 npm install
 
-# 3. Configure environment
+# 3. Web UI deps
+cd web && npm install && cd ..
+
+# 4. Configure environment
 cp .env.example .env
-# Edit .env with your API keys
-# Note: docker compose maps to port 5434, so use:
-# DATABASE_URL=postgresql://openbrain:openbrain@localhost:5434/openbrain
+# edit .env — DATABASE_URL=postgresql://openbrain:openbrain@localhost:5434/openbrain
+# plus GEMINI_API_KEY, ANTHROPIC_API_KEY, AZURE_STORAGE_CONNECTION_STRING,
+#       AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_KEY, XAI_API_KEY, FIRECRAWL_API_KEY,
+#       OPEN_BRAIN_API_KEY (any string for local)
 
-# 4. Start the dev server (hot reload, runs migrations on startup)
+# 5. Backend dev server (auto-runs migrations on first boot)
 npm run dev
-```
 
-The server auto-runs migrations on startup. No manual `psql` needed.
+# 6. (separately) Web dev server
+cd web && npm run dev
+```
 
 ## Testing
 
-453 tests across 47 files: unit, integration (mocked bot + real handlers), LLM integration (real Gemini calls), and E2E (real PostgreSQL).
+88 tests across 12 files: provider-level mocks, MCP server wiring, REST integration against a test pg, URL detection, multimodal upload paths, chunker, blob client.
 
 ```bash
-# Unit + integration tests (uses vitest forks pool to avoid OOM)
+# Type check
+npx tsc --noEmit
+
+# All tests
 npm test
 
-# E2E tests (requires docker compose PostgreSQL on port 5434)
-npm run test:e2e
-
-# LLM integration tests (requires GEMINI_API_KEY)
-npm run test:integration
+# Single file
+npx vitest run tests/integration/rest-api.test.ts
 ```
 
-The test suite uses `pool: 'forks'` with `--max-old-space-size=4096` to avoid OOM when running integration tests that create many full app instances.
+There is no separate e2e suite in the repo. The integration tests already exercise the full app surface against mocked providers. For full live-system validation see [`E2E_TEST_PLAN.md`](./E2E_TEST_PLAN.md) — a manual test plan that hits production.
 
 ## Deployment
 
-See [SETUP.md](./SETUP.md) for the complete first-time Azure deployment guide, including all gotchas discovered during the initial deploy.
+GitHub Actions deploys on every push to `main` (`.github/workflows/deploy.yml`). Build the container, push to ACR, update the Azure Container App.
 
-Subsequent deploys after setup are handled by GitHub Actions on push to `main`, or manually via:
+For first-time setup, see [`SETUP.md`](./SETUP.md). Manual deploy from a local machine:
 
 ```bash
 RESOURCE_GROUP=<rg> ACR_NAME=<acr> ./scripts/deploy.sh
 ```
+
+## Production
+
+| | |
+|--|--|
+| App URL | `https://your-app.your-env.region.azurecontainerapps.io` |
+| Health | `<app-url>/health` returns `{"ok":true,"service":"open-brain","version":"2.0.0"}` |
+| MCP | `<app-url>/mcp?key=<api-key>` (stateless, per-request server) |
+| API key | Azure Key Vault: `your-keyvault/open-brain-api-key` |
+| Database | `your-pg-server.postgres.database.azure.com` |
+| Storage | Azure Blob; `Allow Blob Public Access = false`; API generates short-lived SAS read URLs in responses |
+
+## Documentation
+
+- [`CLAUDE.md`](./CLAUDE.md) — instructions for AI sessions working on this codebase
+- [`E2E_TEST_PLAN.md`](./E2E_TEST_PLAN.md) — reproducible 52-test live-system validation
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — deeper architectural notes (currently being updated for V2)
+- [`SETUP.md`](./SETUP.md) — first-time Azure deployment walkthrough (currently being updated for V2)
