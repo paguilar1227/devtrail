@@ -398,6 +398,43 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ entities: result.rows });
   });
 
+  // POST /api/v1/diagnostics/backfill-entities — re-run entity extraction
+  // for a single content item or for all items. Idempotent: edges that
+  // already exist (chunk_id, entity_id PK) are skipped on conflict.
+  // Body: { content_item_id?: string }   omit = backfill the whole corpus
+  app.post('/api/v1/diagnostics/backfill-entities', async (c) => {
+    const { buildGraphEdges } = await import('./services/entities.js');
+    const { getChunksByContentItem } = await import('./db/chunks.js');
+
+    let body: { content_item_id?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty body OK */ }
+
+    const targetId = body.content_item_id;
+    const itemQuery = targetId
+      ? `SELECT id, title, content FROM content_items WHERE id = $1 AND archived = false`
+      : `SELECT id, title, content FROM content_items WHERE archived = false AND content IS NOT NULL ORDER BY created_at ASC`;
+    const items = await deps.db.query(itemQuery, targetId ? [targetId] : []);
+
+    const results: Array<{ id: string; title: string; entity_count: number; edge_count: number; error?: string }> = [];
+    for (const row of items.rows) {
+      try {
+        const chunks = await getChunksByContentItem(deps.db, row.id);
+        if (chunks.length === 0) {
+          results.push({ id: row.id, title: row.title, entity_count: 0, edge_count: 0, error: 'no chunks' });
+          continue;
+        }
+        const r = await buildGraphEdges(deps, row.content ?? '', chunks);
+        results.push({ id: row.id, title: row.title, entity_count: r.entityCount, edge_count: r.edgeCount });
+      } catch (err) {
+        results.push({
+          id: row.id, title: row.title, entity_count: 0, edge_count: 0,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return c.json({ processed: results.length, results });
+  });
+
   // GET /api/v1/diagnostics/content/:id/edges — all chunk_entities for one content item
   app.get('/api/v1/diagnostics/content/:id/edges', async (c) => {
     const id = c.req.param('id');

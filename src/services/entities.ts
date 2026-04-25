@@ -51,11 +51,19 @@ Return ONLY the JSON array. No preamble, no markdown fences.`;
  * Extract entities from a document's text via Haiku. Returns raw entities;
  * resolution against the existing entities table happens in the resolve step.
  */
+/**
+ * Below this length we don't bother calling Haiku — the few cents per call
+ * adds up across the corpus and content this short rarely names entities.
+ * Lower than the previous 100-char threshold so OCR'd images and short
+ * audio transcriptions still get processed (they were silently skipped).
+ */
+const MIN_CONTENT_FOR_EXTRACTION = 30;
+
 export async function extractEntities(
   deps: ServiceDeps,
   content: string,
 ): Promise<RawEntity[]> {
-  if (!content || content.trim().length < 100) {
+  if (!content || content.trim().length < MIN_CONTENT_FOR_EXTRACTION) {
     return [];
   }
 
@@ -200,10 +208,16 @@ export function mapMentionsToChunks(
       }
     }
 
-    // Fallback: if no mention matched any chunk (Haiku gave spans not in the
-    // text, or our chunker split them across boundaries), try the canonical
-    // name + aliases. Links entity to every chunk containing the surface.
-    if (!raw.mentions.some((m) => chunks.some((c) => c.content && c.content.includes(m.slice(0, 80))))) {
+    // Always run the surface-name sweep AFTER the primary mention loop.
+    // Haiku returns at most 5 mentions per entity (often just 1), but the
+    // entity may appear in multiple chunks. Without this sweep, only the
+    // chunk(s) containing Haiku's quoted mentions get linked — multi-chunk
+    // documents end up with sparse coverage. The sweep adds edges to any
+    // chunk that contains the canonical name or an alias, only if no edge
+    // for (chunk, entity) was created by the primary mapping (so we don't
+    // overwrite a high-confidence verbatim mention with a generic surface
+    // hit).
+    {
       const surfaces = [raw.canonical_name, ...raw.aliases];
       for (const chunk of chunks) {
         if (!chunk.content) continue;
