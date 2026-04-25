@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 import { createBlobStorage } from './storage/blob.js';
 import { GeminiEmbeddingProvider } from './providers/gemini-embedding.js';
+import { GeminiLLMProvider } from './providers/gemini-llm.js';
 import { AnthropicLLMProvider } from './providers/anthropic-llm.js';
 import { AzureFoundryLLMProvider } from './providers/azure-foundry-llm.js';
 import { AzureFoundryResponsesProvider } from './providers/azure-foundry-responses.js';
@@ -18,7 +19,13 @@ const db = createDbClient(config.databaseUrl);
 // Model roles:
 //   embeddingProvider: Gemini Embedding 2 (3072-dim, unified multimodal)
 //   metadataLLM:       Claude Haiku 4.5 — lowest hallucination (~3%) on
-//                      entity/topic extraction. Replaces Gemini 2.5 Flash.
+//                      entity/topic extraction. Used for text, image OCR,
+//                      and pdf-extracted text. Anthropic doesn't yet
+//                      support audio/video input though.
+//   mediaMetadataLLM:  Gemini 3 Flash Preview — fallback for audio/video
+//                      where Haiku has no support. Used only when Haiku
+//                      can't handle the media; everything else stays on
+//                      Haiku for consistency + entity-extraction quality.
 //   queryDepthLLM:     Haiku 4.5 again — classifies RAG questions as
 //                      fast vs thorough. Tiny prompt, ~$0.0001/call.
 //   ragFastLLM:        Azure gpt-5-4 (chat completions) — default RAG
@@ -27,11 +34,13 @@ const db = createDbClient(config.databaseUrl);
 //                      used on multi-hop / comparison / inference questions.
 //                      15-60s response.
 const haiku = new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001');
+const geminiMedia = new GeminiLLMProvider(config.geminiApiKey, 'gemini-3-flash-preview');
 
 const deps: ServiceDeps = {
   db,
   embeddingProvider: new GeminiEmbeddingProvider(config.geminiApiKey),
   metadataLLM: haiku,
+  mediaMetadataLLM: geminiMedia,
   queryDepthLLM: haiku,
   ragFastLLM: new AzureFoundryLLMProvider({
     endpoint: config.azureOpenAIEndpoint,

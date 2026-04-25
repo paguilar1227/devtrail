@@ -27,6 +27,12 @@ function mockDeps(): ServiceDeps {
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },
+    mediaMetadataLLM: {
+      complete: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ title: 'Auto-generated', topics: [], tags: [], extracted_text: null }),
+        tokensUsed: { input: 0, output: 0, total: 0 },
+      }),
+    },
     ragFastLLM: {
 
       complete: vi.fn().mockResolvedValue({
@@ -66,6 +72,7 @@ function mockDeps(): ServiceDeps {
       upload: vi.fn().mockResolvedValue('https://blob/url'),
       exists: vi.fn().mockResolvedValue(false),
       getUrl: vi.fn().mockReturnValue('https://blob/url'),
+      getReadSasUrl: vi.fn((u: string) => u),
     },
     config: { apiKey: 'test-key' } as any,
   };

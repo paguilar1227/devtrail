@@ -102,15 +102,26 @@ export async function createContentItem(
   }
 
   // Step 3: metadata extraction (title, tags, topics).
-  // For PDFs where we have extracted text, feed that to Flash (text-only) for
-  // fast metadata — don't resend the large PDF binary.
+  // For PDFs where we have extracted text, feed that to the metadata LLM as
+  // text only — don't resend the large PDF binary.
   const filesForMeta = pdfText === null && input.file
     ? [{ data: input.file.data, mimeType: input.file.mimeType }]
     : undefined;
   const contentForMeta = pdfText
     ? `${input.content ?? ''}\n\n${pdfText}`.trim().slice(0, 50000) // cap prompt size
     : input.content ?? '';
-  const metadata = await extractMetadata(deps.metadataLLM, contentForMeta, filesForMeta);
+  // Provider routing: Anthropic Haiku doesn't accept audio/video content
+  // blocks, so for those mime types we route to Gemini Flash (which does).
+  // Everything else — text, images, pdf-extracted text — stays on Haiku
+  // for consistency and entity-extraction quality.
+  const needsMediaLLM = filesForMeta?.some(
+    (f) => f.mimeType.startsWith('audio/') || f.mimeType.startsWith('video/'),
+  );
+  const llmForMeta = needsMediaLLM ? deps.mediaMetadataLLM : deps.metadataLLM;
+  if (needsMediaLLM) {
+    console.log(`[content] Routing metadata to mediaMetadataLLM for ${filesForMeta!.map((f) => f.mimeType).join(', ')}`);
+  }
+  const metadata = await extractMetadata(llmForMeta, contentForMeta, filesForMeta);
   recordStage(trace, 'metadata.title', metadata.title);
   recordStage(trace, 'metadata.extracted_text', metadata.extracted_text);
   if (isEchoOf(trace.stages['metadata.extracted_text'] ?? null, trace.stages['input.content'] ?? null)) {

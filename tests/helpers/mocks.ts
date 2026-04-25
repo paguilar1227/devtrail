@@ -33,5 +33,6 @@ export function mockBlobStorage(): BlobStorage {
     upload: vi.fn().mockResolvedValue('https://blob.storage/file'),
     exists: vi.fn().mockResolvedValue(false),
     getUrl: vi.fn().mockReturnValue('https://blob.storage/file'),
+    getReadSasUrl: vi.fn((url: string) => url),  // pass-through in tests
   };
 }

@@ -3,17 +3,17 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LLMProvider, LLMMessage, LLMOptions, LLMResponse } from './types.js';
 import { extractJson } from './json-utils.js';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-
 export class GeminiLLMProvider implements LLMProvider {
   private client: GoogleGenerativeAI;
+  private defaultModel: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, defaultModel: string = 'gemini-2.5-flash') {
     this.client = new GoogleGenerativeAI(apiKey);
+    this.defaultModel = defaultModel;
   }
 
   async complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse> {
-    const modelName = options?.model ?? DEFAULT_MODEL;
+    const modelName = options?.model ?? this.defaultModel;
     const model = this.client.getGenerativeModel({
       model: modelName,
       ...(options?.systemPrompt && { systemInstruction: options.systemPrompt }),
