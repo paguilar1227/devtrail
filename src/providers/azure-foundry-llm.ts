@@ -91,6 +91,18 @@ export class AzureFoundryLLMProvider implements LLMProvider {
       body.response_format = { type: 'json_object' };
     }
 
+    const inputChars = chatMessages.reduce((sum, m) => {
+      if (typeof m.content === 'string') return sum + m.content.length;
+      return sum + m.content.reduce(
+        (s, p) => s + (p.type === 'text' ? p.text.length : 0),
+        0,
+      );
+    }, 0);
+    const reqStart = performance.now();
+    console.log(
+      `[foundry-llm] POST ${deployment} — msgs: ${chatMessages.length}, ~${inputChars} chars, max_completion: ${body.max_completion_tokens}`,
+    );
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -99,14 +111,17 @@ export class AzureFoundryLLMProvider implements LLMProvider {
       },
       body: JSON.stringify(body),
     });
+    const httpMs = Math.round(performance.now() - reqStart);
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      console.error(`[foundry-llm] HTTP ${res.status} after ${httpMs}ms: ${text.slice(0, 300)}`);
       throw new Error(`Azure Foundry ${res.status} (${deployment}): ${text.slice(0, 500)}`);
     }
 
     const json = (await res.json()) as AzureChatResponse;
     if (json.error) {
+      console.error(`[foundry-llm] API error: ${json.error.code} ${json.error.message}`);
       throw new Error(`Azure Foundry error: ${json.error.code ?? ''} ${json.error.message ?? ''}`.trim());
     }
 
@@ -115,12 +130,19 @@ export class AzureFoundryLLMProvider implements LLMProvider {
       content = extractJson(content);
     }
 
+    const usage = json.usage ?? {};
+    console.log(
+      `[foundry-llm] OK ${deployment} — http ${httpMs}ms, ` +
+      `tokens(in/out/total): ${usage.prompt_tokens ?? 0}/${usage.completion_tokens ?? 0}/${usage.total_tokens ?? 0}, ` +
+      `content: ${content.length} chars`,
+    );
+
     return {
       content,
       tokensUsed: {
-        input: json.usage?.prompt_tokens ?? 0,
-        output: json.usage?.completion_tokens ?? 0,
-        total: json.usage?.total_tokens ?? 0,
+        input: usage.prompt_tokens ?? 0,
+        output: usage.completion_tokens ?? 0,
+        total: usage.total_tokens ?? 0,
       },
     };
   }

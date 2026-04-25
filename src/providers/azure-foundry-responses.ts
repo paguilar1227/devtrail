@@ -40,6 +40,13 @@ interface ResponsesAPIResult {
     input_tokens?: number;
     output_tokens?: number;
     total_tokens?: number;
+    // Azure Foundry Responses API reports reasoning tokens separately when
+    // a reasoning-tier deployment (e.g. gpt-5-4-pro) is in use. Reasoning
+    // tokens count toward output_tokens but represent invisible "thinking"
+    // — they're often the dominant cost on thorough queries.
+    output_tokens_details?: {
+      reasoning_tokens?: number;
+    };
   };
   error?: { code?: string; message?: string };
 }
@@ -101,6 +108,21 @@ export class AzureFoundryResponsesProvider implements LLMProvider {
       body.text = { format: { type: 'json_object' } };
     }
 
+    // Pre-flight diagnostics — input size matters for "why is this slow"
+    // triage on thorough RAG queries. Total input char count is a cheap
+    // proxy for token count; ~4 chars/token for English.
+    const inputChars = input.reduce((sum, item) => {
+      if (typeof item.content === 'string') return sum + item.content.length;
+      return sum + item.content.reduce(
+        (s, p) => s + (p.type === 'input_text' ? p.text.length : 0),
+        0,
+      );
+    }, 0);
+    const reqStart = performance.now();
+    console.log(
+      `[foundry-responses] POST ${deployment} — items: ${input.length}, ~${inputChars} chars, max_output: ${body.max_output_tokens}`,
+    );
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -109,14 +131,20 @@ export class AzureFoundryResponsesProvider implements LLMProvider {
       },
       body: JSON.stringify(body),
     });
+    const httpMs = Math.round(performance.now() - reqStart);
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      console.error(`[foundry-responses] HTTP ${res.status} after ${httpMs}ms: ${text.slice(0, 300)}`);
       throw new Error(`Azure Responses ${res.status} (${deployment}): ${text.slice(0, 500)}`);
     }
 
+    const parseStart = performance.now();
     const json = (await res.json()) as ResponsesAPIResult;
+    const parseMs = Math.round(performance.now() - parseStart);
+
     if (json.error) {
+      console.error(`[foundry-responses] API error: ${json.error.code} ${json.error.message}`);
       throw new Error(`Azure Responses error: ${json.error.code ?? ''} ${json.error.message ?? ''}`.trim());
     }
 
@@ -125,12 +153,30 @@ export class AzureFoundryResponsesProvider implements LLMProvider {
       content = extractJson(content);
     }
 
+    const usage = json.usage ?? {};
+    const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? 0;
+    const outputTokens = usage.output_tokens ?? 0;
+    const visibleOutputTokens = Math.max(0, outputTokens - reasoningTokens);
+    // Count what kinds of items came back — a reasoning deployment may
+    // return both 'reasoning' and 'message' items, and most of the wall
+    // time is typically "invisible" reasoning, not message generation.
+    const itemCounts = (json.output ?? []).reduce<Record<string, number>>((acc, item) => {
+      const t = item.type ?? 'unknown';
+      acc[t] = (acc[t] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log(
+      `[foundry-responses] OK ${deployment} — http ${httpMs}ms, parse ${parseMs}ms, ` +
+      `tokens(in/out/reason/visible): ${usage.input_tokens ?? 0}/${outputTokens}/${reasoningTokens}/${visibleOutputTokens}, ` +
+      `output_items: ${JSON.stringify(itemCounts)}, content: ${content.length} chars`,
+    );
+
     return {
       content,
       tokensUsed: {
-        input: json.usage?.input_tokens ?? 0,
-        output: json.usage?.output_tokens ?? 0,
-        total: json.usage?.total_tokens ?? 0,
+        input: usage.input_tokens ?? 0,
+        output: outputTokens,
+        total: usage.total_tokens ?? 0,
       },
     };
   }

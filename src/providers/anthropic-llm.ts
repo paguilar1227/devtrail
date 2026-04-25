@@ -42,12 +42,26 @@ export class AnthropicLLMProvider implements LLMProvider {
     }
     const systemPrompt = systemPromptPieces.filter(Boolean).join('\n\n') || undefined;
 
+    const inputChars = anthropicMessages.reduce((sum, m) => {
+      if (typeof m.content === 'string') return sum + m.content.length;
+      return sum + m.content.reduce(
+        (s, p: any) => s + (p.type === 'text' ? (p.text as string).length : 0),
+        0,
+      );
+    }, 0);
+    const reqStart = performance.now();
+    const model = options?.model ?? this.defaultModel;
+    console.log(
+      `[anthropic] POST ${model} — msgs: ${anthropicMessages.length}, ~${inputChars} chars, max_tokens: ${options?.maxTokens ?? DEFAULT_MAX_TOKENS}`,
+    );
+
     const response = await this.client.messages.create({
-      model: options?.model ?? this.defaultModel,
+      model,
       max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
       ...(systemPrompt && { system: systemPrompt }),
       messages: anthropicMessages,
     });
+    const httpMs = Math.round(performance.now() - reqStart);
 
     let content = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
@@ -57,6 +71,12 @@ export class AnthropicLLMProvider implements LLMProvider {
     if (options?.responseFormat === 'json') {
       content = extractJson(content);
     }
+
+    console.log(
+      `[anthropic] OK ${model} — http ${httpMs}ms, ` +
+      `tokens(in/out): ${response.usage.input_tokens}/${response.usage.output_tokens}, ` +
+      `content: ${content.length} chars`,
+    );
 
     return {
       content,
