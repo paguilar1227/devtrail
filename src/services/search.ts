@@ -144,15 +144,38 @@ export async function searchWithTimings(
         }
       }
 
-      // Fetch the actual chunk rows + parent info. Filter by project for
-      // consistency with the vector path.
+      // Fetch the actual chunk rows + parent info. Apply the SAME filters
+      // (project / tags / parent type) here as the vector-seed path, so
+      // graph-expanded chunks can't slip past user-specified scopes.
+      // Without this, e.g. tags:['pgvector'] would correctly drop the
+      // vector seed list to tagged chunks but expanded chunks would
+      // bypass the filter and leak in via entity edges.
       const expandedChunkIds = [...chunkBestEntity.keys()];
       if (expandedChunkIds.length > 0) {
-        const projFilter = projectId
-          ? `AND $2::uuid = ANY(ci.project_ids)`
-          : ``;
+        // Mirror the vector-path parent_type filter: only when entityTypes
+        // restricts to a single chunk-bearing type (document or note).
+        const restrictParentType = entityTypes && entityTypes.length === 1
+          && (entityTypes[0] === 'document' || entityTypes[0] === 'note')
+            ? entityTypes[0]
+            : null;
+
+        const conditions: string[] = [
+          'c.id = ANY($1::uuid[])',
+          'ci.archived = false',
+        ];
         const paramsList: unknown[] = [expandedChunkIds];
-        if (projectId) paramsList.push(projectId);
+        if (projectId) {
+          paramsList.push(projectId);
+          conditions.push(`$${paramsList.length}::uuid = ANY(ci.project_ids)`);
+        }
+        if (tags && tags.length > 0) {
+          paramsList.push(tags);
+          conditions.push(`ci.tags @> $${paramsList.length}::text[]`);
+        }
+        if (restrictParentType) {
+          paramsList.push(restrictParentType);
+          conditions.push(`ci.type = $${paramsList.length}`);
+        }
 
         const res = await deps.db.query(
           `SELECT c.id, c.content_item_id, c.chunk_index, c.chunk_type, c.content, c.metadata, c.created_at,
@@ -160,9 +183,7 @@ export async function searchWithTimings(
                   ci.tags AS parent_tags, ci.source_url AS parent_source_url
              FROM chunks c
              JOIN content_items ci ON ci.id = c.content_item_id
-            WHERE c.id = ANY($1::uuid[])
-              AND ci.archived = false
-              ${projFilter}`,
+            WHERE ${conditions.join(' AND ')}`,
           paramsList,
         );
 
