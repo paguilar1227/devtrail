@@ -15,6 +15,9 @@ import {
   type EntityType, type EntityRow,
 } from '../db/entities.js';
 import type { ChunkRow } from '../db/chunks.js';
+import { mapConcurrent } from '../util/concurrency.js';
+
+const ENTITY_RESOLVE_CONCURRENCY = 6;
 
 export interface RawEntity {
   canonical_name: string;
@@ -162,13 +165,35 @@ export async function resolveEntity(
     return similar.entity;
   }
 
-  // Step 4: new entity
-  return insertEntity(deps.db, {
-    canonicalName: raw.canonical_name,
-    type: raw.type,
-    aliases: Array.from(new Set([raw.canonical_name, ...raw.aliases])),
-    embedding,
-  });
+  // Step 4: new entity. Catch the (canonical_name, type) unique-constraint
+  // race — concurrent resolves of the same canonical can both pass steps 1-3,
+  // but only one insert wins. The loser re-fetches via the now-existing row.
+  try {
+    return await insertEntity(deps.db, {
+      canonicalName: raw.canonical_name,
+      type: raw.type,
+      aliases: Array.from(new Set([raw.canonical_name, ...raw.aliases])),
+      embedding,
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      const existing = await findEntityByCanonical(deps.db, raw.canonical_name, raw.type);
+      if (existing) {
+        await mergeEntityAliases(deps.db, existing.id, raw.aliases);
+        return existing;
+      }
+    }
+    throw err;
+  }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === '23505'
+  );
 }
 
 /**
@@ -178,7 +203,7 @@ export async function resolveEntity(
  */
 export function mapMentionsToChunks(
   raws: RawEntity[],
-  resolvedEntities: EntityRow[],
+  resolvedEntities: Array<EntityRow | null>,
   chunks: Array<{ id: string; content: string | null }>,
 ): Array<{ chunkId: string; entityId: string; confidence: number; mentionText: string | null }> {
   const edges = new Map<string, { chunkId: string; entityId: string; confidence: number; mentionText: string | null }>();
@@ -252,20 +277,28 @@ export async function buildGraphEdges(
   const raw = await extractEntities(deps, fullText);
   if (raw.length === 0) return { entityCount: 0, edgeCount: 0 };
 
-  const resolved: EntityRow[] = [];
-  for (const r of raw) {
-    try {
-      resolved.push(await resolveEntity(deps, r));
-    } catch (err) {
-      console.warn(`[entities] resolve failed for "${r.canonical_name}":`, err instanceof Error ? err.message : err);
-    }
-  }
+  // Resolve in parallel with bounded concurrency. Failures are swallowed
+  // per-entity (matching prior behavior); resolved[i] is null on failure so
+  // mapMentionsToChunks can keep array indices aligned with `raw`.
+  const resolved: Array<EntityRow | null> = await mapConcurrent(
+    raw,
+    ENTITY_RESOLVE_CONCURRENCY,
+    async (r) => {
+      try {
+        return await resolveEntity(deps, r);
+      } catch (err) {
+        console.warn(`[entities] resolve failed for "${r.canonical_name}":`, err instanceof Error ? err.message : err);
+        return null;
+      }
+    },
+  );
+  const successCount = resolved.filter((e): e is EntityRow => e !== null).length;
 
   const edges = mapMentionsToChunks(raw, resolved, chunks);
   if (edges.length > 0) {
     await insertChunkEntities(deps.db, edges);
   }
 
-  console.log(`[entities] resolved ${resolved.length}/${raw.length}, inserted ${edges.length} edges`);
-  return { entityCount: resolved.length, edgeCount: edges.length };
+  console.log(`[entities] resolved ${successCount}/${raw.length}, inserted ${edges.length} edges`);
+  return { entityCount: successCount, edgeCount: edges.length };
 }

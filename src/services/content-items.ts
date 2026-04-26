@@ -18,6 +18,9 @@ import {
 } from '../capture/ingest-trace.js';
 import { buildGraphEdges } from './entities.js';
 import { getChunksByContentItem } from '../db/chunks.js';
+import { mapConcurrent } from '../util/concurrency.js';
+
+const EMBED_CONCURRENCY = 6;
 
 export interface CreateContentInput {
   type: ContentType;
@@ -121,7 +124,50 @@ export async function createContentItem(
   if (needsMediaLLM) {
     console.log(`[content] Routing metadata to mediaMetadataLLM for ${filesForMeta!.map((f) => f.mimeType).join(', ')}`);
   }
-  const metadata = await extractMetadata(llmForMeta, contentForMeta, filesForMeta);
+
+  // Pipeline parallelism (A): when fullText is computable without metadata,
+  // kick off chunk + whole-item embeddings in parallel with metadata extraction.
+  // Safe when: we have preliminary text AND either no file, or the file is a
+  // PDF whose text we already extracted. Audio/video/image-only files need
+  // metadata.extracted_text to populate fullText, so they stay sequential.
+  const preliminaryParts: string[] = [];
+  if (input.content) preliminaryParts.push(input.content);
+  if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
+    preliminaryParts.push(pdfText);
+  }
+  const preliminaryFullText = preliminaryParts.join('\n\n').trim();
+  const fullTextKnownEarly = preliminaryFullText.length > 0 && (!input.file || pdfText !== null);
+
+  const shouldWholeEmbed = input.type === 'document' && Boolean(input.file);
+
+  const metadataPromise = extractMetadata(llmForMeta, contentForMeta, filesForMeta);
+
+  // Pre-chunk + embed in parallel with metadata when safe.
+  let earlyTextChunks: string[] | null = null;
+  let earlyChunkEmbedsPromise: Promise<number[][]> | null = null;
+  if (fullTextKnownEarly) {
+    earlyTextChunks = chunkText(preliminaryFullText);
+    console.log(`[content] Early-pipeline: ${earlyTextChunks.length} chunk(s) embedding in parallel with metadata`);
+    earlyChunkEmbedsPromise = mapConcurrent(
+      earlyTextChunks,
+      EMBED_CONCURRENCY,
+      (text) => deps.embeddingProvider.embed(text),
+    );
+  }
+
+  let earlyWholeEmbedPromise: Promise<number[] | null> | null = null;
+  if (fullTextKnownEarly && shouldWholeEmbed && input.file) {
+    const fileForEmbed = { data: input.file.data, mimeType: input.file.mimeType };
+    earlyWholeEmbedPromise = deps.embeddingProvider
+      .embed(preliminaryFullText, [fileForEmbed])
+      .catch((err) => {
+        console.warn(`[content] Whole-item multimodal embedding failed:`, err);
+        warnings.push('Whole-item embedding failed; relying on chunks only.');
+        return null;
+      });
+  }
+
+  const metadata = await metadataPromise;
   recordStage(trace, 'metadata.title', metadata.title);
   recordStage(trace, 'metadata.extracted_text', metadata.extracted_text);
   if (isEchoOf(trace.stages['metadata.extracted_text'] ?? null, trace.stages['input.content'] ?? null)) {
@@ -159,14 +205,16 @@ export async function createContentItem(
     ? input.tags
     : metadata.tags;
 
-  // Step 6: whole-item embedding (for hybrid search on docs with media)
+  // Step 6: whole-item embedding — use the early result if we started one,
+  // else compute now (audio/video/image case where we needed metadata.extracted_text).
   let wholeItemEmbedding: number[] | null = null;
-  const shouldWholeEmbed = input.type === 'document' && input.file;
-  if (shouldWholeEmbed) {
+  if (earlyWholeEmbedPromise) {
+    wholeItemEmbedding = await earlyWholeEmbedPromise;
+  } else if (shouldWholeEmbed && input.file) {
     try {
       wholeItemEmbedding = await deps.embeddingProvider.embed(
         fullText || metadata.title,
-        input.file ? [{ data: input.file.data, mimeType: input.file.mimeType }] : undefined,
+        [{ data: input.file.data, mimeType: input.file.mimeType }],
       );
     } catch (err) {
       console.warn(`[content] Whole-item multimodal embedding failed, skipping:`, err);
@@ -195,24 +243,32 @@ export async function createContentItem(
     publishedAt: metadata.published_at,
   });
 
-  // Step 8: chunk the text and embed each chunk
+  // Step 8: chunk the text and embed each chunk. Use early embeddings if we
+  // ran them in parallel with metadata (safe path); otherwise embed now.
   let chunkCount = 0;
   if (fullText) {
-    const textChunks = chunkText(fullText);
-    console.log(`[content] Split into ${textChunks.length} text chunk(s) — total tokens ~${approximateTokens(fullText)}`);
-
-    const chunksToInsert: ChunkInsert[] = [];
-    for (let i = 0; i < textChunks.length; i++) {
-      const chunkEmbedding = await deps.embeddingProvider.embed(textChunks[i]);
-      chunksToInsert.push({
-        contentItemId: inserted.id,
-        chunkIndex: i,
-        chunkType: 'text' as ChunkType,
-        content: textChunks[i],
-        embedding: chunkEmbedding,
-        metadata: { token_estimate: approximateTokens(textChunks[i]) },
-      });
+    let textChunks: string[];
+    let embeddings: number[][];
+    if (earlyChunkEmbedsPromise && earlyTextChunks) {
+      textChunks = earlyTextChunks;
+      embeddings = await earlyChunkEmbedsPromise;
+    } else {
+      textChunks = chunkText(fullText);
+      console.log(`[content] Split into ${textChunks.length} text chunk(s) — total tokens ~${approximateTokens(fullText)}`);
+      embeddings = await mapConcurrent(
+        textChunks,
+        EMBED_CONCURRENCY,
+        (text) => deps.embeddingProvider.embed(text),
+      );
     }
+    const chunksToInsert: ChunkInsert[] = textChunks.map((text, i) => ({
+      contentItemId: inserted.id,
+      chunkIndex: i,
+      chunkType: 'text' as ChunkType,
+      content: text,
+      embedding: embeddings[i],
+      metadata: { token_estimate: approximateTokens(text) },
+    }));
     await insertChunks(deps.db, chunksToInsert);
     chunkCount = chunksToInsert.length;
   } else if (input.file && input.type === 'document') {
@@ -298,18 +354,18 @@ export async function updateContentItem(
     await deleteChunksByContentItem(deps.db, id);
     if (patch.content) {
       const textChunks = chunkText(patch.content);
-      const chunks: ChunkInsert[] = [];
-      for (let i = 0; i < textChunks.length; i++) {
-        const embedding = await deps.embeddingProvider.embed(textChunks[i]);
-        chunks.push({
+      const chunks: ChunkInsert[] = await mapConcurrent(
+        textChunks,
+        EMBED_CONCURRENCY,
+        async (text, i) => ({
           contentItemId: id,
           chunkIndex: i,
           chunkType: 'text' as ChunkType,
-          content: textChunks[i],
-          embedding,
-          metadata: { token_estimate: approximateTokens(textChunks[i]) },
-        });
-      }
+          content: text,
+          embedding: await deps.embeddingProvider.embed(text),
+          metadata: { token_estimate: approximateTokens(text) },
+        }),
+      );
       await insertChunks(deps.db, chunks);
     }
   }
