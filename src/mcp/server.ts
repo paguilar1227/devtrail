@@ -350,8 +350,8 @@ Use this INSTEAD of \`create\` whenever the user wants to save something they've
 Dedup: if this URL is already saved, returns the existing item with \`deduped: true\`. Safe to call repeatedly.
 
 Supported URLs:
-- YouTube (youtube.com/watch?v=..., youtu.be/...) → transcript via youtube-transcript
-- X/Twitter (x.com/user/status/..., twitter.com/user/status/...) → thread via xAI live-search, Firecrawl fallback
+- YouTube (youtube.com/watch?v=..., youtu.be/..., shorts, embed) → transcript via Supadata
+- X/Twitter (x.com/user/status/..., twitter.com/user/status/...) → thread via xAI x_search
 - PDF URLs, image URLs, audio URLs → downloaded and run through the file pipeline
 - Everything else → treated as HTML, Firecrawl markdown extraction
 

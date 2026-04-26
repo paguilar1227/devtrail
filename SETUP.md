@@ -24,6 +24,7 @@ You will need API keys/values for everything below before running Bicep:
 | `anthropicApiKey` | Anthropic Console → https://console.anthropic.com/account/keys |
 | `xaiApiKey` | xAI console (used for X/Twitter live search via Grok) |
 | `firecrawlApiKey` | Firecrawl dashboard (used for HTML extraction fallback during URL ingest) |
+| `supadataApiKey` | Supadata dashboard (used for YouTube transcript ingest — single primary source, no fallback) |
 | Azure OpenAI endpoint + key | An Azure Foundry / Azure OpenAI resource with `gpt-5-4` (chat completions) and `gpt-5-4-pro` (Responses API) deployments |
 
 The Azure OpenAI resource doesn't have to live in the same resource group — point at any one you have access to. The Container App reads the endpoint + key + the two deployment names from Key Vault.
@@ -129,7 +130,8 @@ az containerapp secret set \
     azure-openai-endpoint="https://<your-foundry-resource>.openai.azure.com" \
     azure-openai-key="<azure-openai-key>" \
     xai-api-key="<xai-key>" \
-    firecrawl-api-key="<firecrawl-key>"
+    firecrawl-api-key="<firecrawl-key>" \
+    supadata-api-key="<supadata-key>"
 
 az containerapp update \
   --name openbrain-prod-api --resource-group openbrain-rg \
@@ -139,7 +141,8 @@ az containerapp update \
     AZURE_RAG_DEPLOYMENT=gpt-5-4 \
     AZURE_DEEP_RAG_DEPLOYMENT=gpt-5-4-pro \
     XAI_API_KEY=secretref:xai-api-key \
-    FIRECRAWL_API_KEY=secretref:firecrawl-api-key
+    FIRECRAWL_API_KEY=secretref:firecrawl-api-key \
+    SUPADATA_API_KEY=secretref:supadata-api-key
 ```
 
 `AZURE_RAG_DEPLOYMENT` and `AZURE_DEEP_RAG_DEPLOYMENT` default to `gpt-5-4` / `gpt-5-4-pro` in `src/config.ts`; override only if your deployment names differ.

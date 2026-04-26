@@ -10,6 +10,7 @@ const configSchema = z.object({
   anthropicApiKey: z.string().min(1),
   xaiApiKey: z.string().min(1),
   firecrawlApiKey: z.string().min(1),
+  supadataApiKey: z.string().min(1),
   azureOpenAIEndpoint: z.string().min(1),
   azureOpenAIKey: z.string().min(1),
   azureRagDeployment: z.string().min(1),          // fast-path: chat completions (gpt-5-4)
@@ -31,6 +32,7 @@ export function loadConfig(): Config {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     xaiApiKey: process.env.XAI_API_KEY,
     firecrawlApiKey: process.env.FIRECRAWL_API_KEY,
+    supadataApiKey: process.env.SUPADATA_API_KEY,
     azureOpenAIEndpoint: process.env.AZURE_OPENAI_ENDPOINT,
     azureOpenAIKey: process.env.AZURE_OPENAI_KEY,
     azureRagDeployment: process.env.AZURE_RAG_DEPLOYMENT || 'gpt-5-4',

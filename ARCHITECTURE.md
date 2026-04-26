@@ -288,8 +288,8 @@ Anthropic SDK doesn't accept audio input — it silently maps non-text content t
 
 | Pattern | Type | Fetcher |
 |---------|------|---------|
-| `youtube.com/watch?v=` / `youtu.be/...` | youtube | `youtube-transcript` → Firecrawl → xAI Grok (live search) |
-| `x.com/...` / `twitter.com/...` | x | xAI Grok live-search → Firecrawl stealth fallback |
+| `youtube.com/watch?v=` / `youtu.be/...` / shorts / embed | youtube | Supadata `/v1/youtube/transcript` (single call, no fallback by design) |
+| `x.com/...` / `twitter.com/...` | x | xAI Grok x_search |
 | `*.pdf` (or content-type) | pdf | Direct download → `pdf-parse` v2 (PDFParse class) |
 | `image/*`, `audio/*` | media | Direct download → blob → metadata via Haiku/Gemini |
 | Anything else | html | Firecrawl markdown extraction |
@@ -299,7 +299,7 @@ Failure modes (all hit in production at least once, all covered by tests in `tes
 - Firecrawl returning `Example Domain` / 404 placeholder pages → reject content shorter than 300 chars or matching error titles
 - xAI X-search returning miss responses (templated "I couldn't find...") → detect failure phrases and surface a clean `X_SEARCH_MISS:` error
 - YouTube snowflake IDs vs xAI date windows → decode the post snowflake to derive a ±6h search window so xAI can find the post
-- 240s Azure response timeout on chained fallbacks — server-side ingest still completes; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
+- Supadata transient failures → no fallback by design; the call fails loudly and the user retries. Past silent fallback ladders chained 60–180s of latency that exceeded Azure's 240s response timeout. Predictable failure beats unpredictable success here.
 
 ---
 
@@ -657,8 +657,8 @@ open-brain-v2/
 │   │   ├── azure-foundry-llm.ts        Chat completions (gpt-5-4)
 │   │   ├── azure-foundry-responses.ts  Responses API (gpt-5-4-pro) with reasoning support
 │   │   ├── pdf-extract.ts              pdf-parse v2 PDFParse class + control-char sanitizer
-│   │   ├── youtube-transcript.ts
-│   │   ├── firecrawl.ts                HTML extraction fallback
+│   │   ├── supadata.ts                 YouTube transcript via Supadata (single-call, no fallback)
+│   │   ├── firecrawl.ts                HTML extraction
 │   │   ├── xai.ts                      X/Twitter live-search via Grok
 │   │   └── json-utils.ts               extractJson() — strips markdown fences from LLM output
 │   ├── mcp/
@@ -737,7 +737,8 @@ Validated by `loadConfig()` in `src/config.ts` on startup. All required values t
 | `GEMINI_API_KEY` | Yes | — | Google Gemini API key (embeddings + audio/video metadata) |
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key (Haiku for metadata, entity extraction, query depth) |
 | `XAI_API_KEY` | Yes | — | xAI API key (X/Twitter live search via Grok) |
-| `FIRECRAWL_API_KEY` | Yes | — | Firecrawl API key (HTML extraction fallback) |
+| `FIRECRAWL_API_KEY` | Yes | — | Firecrawl API key (HTML extraction) |
+| `SUPADATA_API_KEY` | Yes | — | Supadata API key (YouTube transcripts) |
 | `AZURE_OPENAI_ENDPOINT` | Yes | — | Azure Foundry / Azure OpenAI endpoint URL |
 | `AZURE_OPENAI_KEY` | Yes | — | Azure Foundry / Azure OpenAI key |
 | `AZURE_RAG_DEPLOYMENT` | No | `gpt-5-4` | Deployment name for fast-path RAG (chat completions) |

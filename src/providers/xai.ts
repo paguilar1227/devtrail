@@ -100,24 +100,6 @@ If the post with ID ${parsed.postId} is NOT in the x_search results for that win
   }
 
   /**
-   * Fetch a YouTube video's transcript via web_search. Grok's web tool can
-   * browse YouTube pages and extract captions.
-   */
-  async fetchYoutubeTranscript(url: string): Promise<LiveSearchResult> {
-    const prompt = `Fetch the full transcript (captions) of this YouTube video: ${url}
-
-Return the complete spoken content as plain text. Do NOT summarize, analyze, or add commentary. Just the raw transcript.
-
-If the video has no captions available, respond with exactly: NO_CAPTIONS_AVAILABLE`;
-
-    const result = await this.callAgentTools(prompt, [{ type: 'web_search' } as Record<string, unknown>]);
-    if (result.content.trim() === 'NO_CAPTIONS_AVAILABLE' || /\bNO_CAPTIONS_AVAILABLE\b/.test(result.content)) {
-      throw new Error('No captions available for this YouTube video.');
-    }
-    return result;
-  }
-
-  /**
    * Core Agent Tools API call. Extracts the assistant text from the
    * /v1/responses output.
    */

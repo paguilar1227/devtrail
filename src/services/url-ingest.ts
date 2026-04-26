@@ -7,23 +7,22 @@
  * Dedup: if we already have a content item for this URL, return it instead of
  * re-ingesting.
  *
- * Supported URL types (Tier 1):
- *   - YouTube → transcript via `youtube-transcript` npm package
- *   - X/Twitter threads → xAI Grok live-search primary, Firecrawl stealth fallback
+ * Supported URL types:
+ *   - YouTube → Supadata transcript API (single call, no fallback by design)
+ *   - X/Twitter threads → xAI Grok x_search
  *   - PDF / image / audio / video direct links → download bytes, reuse the file pipeline
  *   - Generic HTML → Firecrawl markdown extraction
  */
 
 import type { ServiceDeps } from './index.js';
-import { fetchYouTubeTranscript } from '../providers/youtube-transcript.js';
 import { findByUrl, updateContentItem as dbUpdate } from '../db/content-items.js';
 import { createContentItem } from './content-items.js';
 import { FirecrawlClient } from '../providers/firecrawl.js';
 import { XaiClient } from '../providers/xai.js';
+import { SupadataClient } from '../providers/supadata.js';
 import {
   detectUrlType,
   detectUrlTypeByPattern,
-  extractYouTubeVideoId,
   normalizeUrl,
   type UrlType,
 } from '../capture/url-detect.js';
@@ -153,60 +152,25 @@ async function handleYoutube(
   opts: IngestFromUrlInput,
   trace: IngestTrace,
 ): Promise<IngestFromUrlResult> {
-  const videoId = extractYouTubeVideoId(url);
-  if (!videoId) throw new Error('Could not extract YouTube video ID from URL.');
-
-  // Tier 1: direct scrape of the watch page (fast, free).
-  // Tier 2: Firecrawl stealth (managed proxy, bypasses YouTube bot detection).
-  // Tier 3: xAI web_search (Grok browses the page server-side via Agent Tools API).
-  let transcript = '';
-
-  try {
-    const items = await fetchYouTubeTranscript(videoId);
-    transcript = items.map((t) => t.text).join(' ');
-    if (!transcript.trim()) throw new Error('Empty transcript from direct scrape.');
-    console.log(`[url-ingest][youtube] direct scrape succeeded — length: ${transcript.length}`);
-  } catch (scrapeErr) {
-    console.warn(
-      `[url-ingest][youtube] direct scrape failed, trying Firecrawl:`,
-      scrapeErr instanceof Error ? scrapeErr.message : scrapeErr,
-    );
-    try {
-      const firecrawl = new FirecrawlClient(deps.config.firecrawlApiKey);
-      const res = await firecrawl.scrape(url, { stealth: true });
-      transcript = res.markdown;
-      if (!transcript.trim()) throw new Error('Firecrawl returned empty content.');
-      console.log(`[url-ingest][youtube] Firecrawl succeeded — length: ${transcript.length}`);
-    } catch (fcErr) {
-      console.warn(
-        `[url-ingest][youtube] Firecrawl failed, trying xAI:`,
-        fcErr instanceof Error ? fcErr.message : fcErr,
-      );
-      try {
-        const xai = new XaiClient(deps.config.xaiApiKey);
-        const res = await xai.fetchYoutubeTranscript(url);
-        transcript = res.content;
-        console.log(`[url-ingest][youtube] xAI fallback succeeded — length: ${transcript.length}`);
-      } catch (xaiErr) {
-        throw new Error(
-          `Couldn't fetch YouTube transcript — direct scrape, Firecrawl, AND xAI all failed. ${
-            xaiErr instanceof Error ? xaiErr.message : xaiErr
-          }`,
-        );
-      }
-    }
-  }
-
-  if (!transcript.trim()) {
-    throw new Error('YouTube transcript was empty after all fetch attempts.');
-  }
+  // Single source of truth: Supadata's /v1/youtube/transcript endpoint.
+  // No fallback by design — the previous direct-scrape → Firecrawl → xAI ladder
+  // chained 60-180s of latency on cold cases (YouTube blocks Azure datacenter
+  // IPs, so direct scrape almost always fell through). Supadata is 1-5s and
+  // returns a clean transcript. If it fails, we let the failure surface to
+  // the caller rather than silently mask it.
+  const supadata = new SupadataClient(deps.config.supadataApiKey);
+  const res = await supadata.fetchYouTubeTranscript(url, { lang: 'en' });
+  const transcript = res.content;
 
   recordStage(trace, 'youtube.transcript', transcript);
+  if (res.lang && res.lang !== 'en') {
+    addNote(trace, `requested-lang=en, supadata-served=${res.lang}`);
+  }
 
   const result = await createContentItem(deps, {
     type: 'document',
     content: transcript,
-    title: opts.title, // auto-generated via Gemini Flash if omitted
+    title: opts.title, // auto-generated via metadata LLM if omitted
     projectIds: opts.projectIds,
     tags: opts.tags,
     sourceUrl: url,

@@ -3,15 +3,17 @@
  * dedup, and source_url surfacing.
  *
  * Mocks:
- *   - the YouTube transcript provider
+ *   - Supadata client (YouTube transcripts)
  *   - xAI and Firecrawl providers (mocked at module level via vi.mock)
  *   - fetch (for HEAD content-type detection + binary downloads)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock providers BEFORE importing anything that uses them
-vi.mock('../../src/providers/youtube-transcript.js', () => ({
-  fetchYouTubeTranscript: vi.fn(),
+vi.mock('../../src/providers/supadata.js', () => ({
+  SupadataClient: vi.fn().mockImplementation(() => ({
+    fetchYouTubeTranscript: vi.fn(),
+  })),
 }));
 
 vi.mock('../../src/providers/firecrawl.js', () => ({
@@ -23,13 +25,12 @@ vi.mock('../../src/providers/firecrawl.js', () => ({
 vi.mock('../../src/providers/xai.js', () => ({
   XaiClient: vi.fn().mockImplementation(() => ({
     fetchXThread: vi.fn(),
-    fetchYoutubeTranscript: vi.fn(),
   })),
 }));
 
 import { createApp } from '../../src/app.js';
 import type { ServiceDeps } from '../../src/services/index.js';
-import { fetchYouTubeTranscript } from '../../src/providers/youtube-transcript.js';
+import { SupadataClient } from '../../src/providers/supadata.js';
 import { FirecrawlClient } from '../../src/providers/firecrawl.js';
 import { XaiClient } from '../../src/providers/xai.js';
 
@@ -102,6 +103,7 @@ function mockDeps(): ServiceDeps {
       apiKey: 'test-key',
       xaiApiKey: 'xai-test',
       firecrawlApiKey: 'fc-test',
+      supadataApiKey: 'sd-test',
     } as any,
   };
 }
@@ -142,6 +144,9 @@ describe('POST /api/v1/content/from-url', () => {
       return { rows: [] } as any;
     });
 
+    const supadataFetch = vi.fn();
+    vi.mocked(SupadataClient).mockImplementation(() => ({ fetchYouTubeTranscript: supadataFetch }) as any);
+
     const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
       method: 'POST', headers: AUTH,
       body: JSON.stringify({ url: 'https://youtu.be/dQw4w9WgXcQ' }),
@@ -152,15 +157,18 @@ describe('POST /api/v1/content/from-url', () => {
     expect(body.deduped).toBe(true);
     expect(body.id).toBe('existing-1');
     expect(body.title).toBe('Already saved');
-    // YouTube transcript should NOT be fetched on dedup path
-    expect(fetchYouTubeTranscript).not.toHaveBeenCalled();
+    // Supadata should NOT be hit on dedup path
+    expect(supadataFetch).not.toHaveBeenCalled();
   });
 
-  it('ingests YouTube — calls transcript provider, creates item with source_url', async () => {
-    vi.mocked(fetchYouTubeTranscript).mockResolvedValue([
-      { text: 'We are' },
-      { text: 'no strangers to love' },
-    ]);
+  it('ingests YouTube — single Supadata call, no fallback chain', async () => {
+    const supadataFetch = vi.fn().mockResolvedValue({
+      content: 'We are no strangers to love',
+      lang: 'en',
+      availableLangs: ['en', 'es'],
+    });
+    vi.mocked(SupadataClient).mockImplementation(() => ({ fetchYouTubeTranscript: supadataFetch }) as any);
+
     // Mocks for the createContentItem DB calls (insert chunks, insert content_item)
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO content_items')) return { rows: [{ id: 'new-ci' }] } as any;
@@ -179,8 +187,12 @@ describe('POST /api/v1/content/from-url', () => {
     expect(body.url_type).toBe('youtube');
     expect(body.deduped).toBe(false);
 
-    // Verify transcript provider was called with the right video ID
-    expect(fetchYouTubeTranscript).toHaveBeenCalledWith('dQw4w9WgXcQ');
+    // Single Supadata call — no fallback ladder behind it
+    expect(supadataFetch).toHaveBeenCalledTimes(1);
+    expect(supadataFetch).toHaveBeenCalledWith(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      { lang: 'en' },
+    );
 
     // Verify source_url was passed through to insertContentItem
     const insertCall = vi.mocked(deps.db.query).mock.calls.find(
@@ -198,7 +210,7 @@ describe('POST /api/v1/content/from-url', () => {
       title: 'First post…',
       content: '@user: hello world\n@other: reply',
     });
-    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread, fetchYoutubeTranscript: vi.fn() }) as any);
+    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread }) as any);
 
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO content_items')) return { rows: [{ id: 'x-ci' }] } as any;
@@ -338,15 +350,17 @@ describe('POST /api/v1/content/from-url', () => {
     expect(body.url_type).toBe('youtube'); // regression: was always 'html'
   });
 
-  it('returns 400 with clear error when ALL THREE YouTube transcript paths fail', async () => {
-    // Tier 1: direct scrape fails
-    vi.mocked(fetchYouTubeTranscript).mockRejectedValue(new Error('No captions available'));
-    // Tier 2: Firecrawl fallback also fails
-    const firecrawlScrape = vi.fn().mockRejectedValue(new Error('Firecrawl unavailable'));
+  it('surfaces Supadata errors without retry — fail loudly, no fallback by design', async () => {
+    const supadataFetch = vi.fn().mockRejectedValue(
+      new Error('Supadata: HTTP 404 not-found — Video not found (245ms, url: https://youtu.be/xxxxxxxxxxx)'),
+    );
+    vi.mocked(SupadataClient).mockImplementation(() => ({ fetchYouTubeTranscript: supadataFetch }) as any);
+
+    // Track the other clients to assert they weren't called
+    const firecrawlScrape = vi.fn();
     vi.mocked(FirecrawlClient).mockImplementation(() => ({ scrape: firecrawlScrape }) as any);
-    // Tier 3: xAI fallback also fails
-    const xaiYt = vi.fn().mockRejectedValue(new Error('xAI web_search unavailable'));
-    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread: vi.fn(), fetchYoutubeTranscript: xaiYt }) as any);
+    const xaiThread = vi.fn();
+    vi.mocked(XaiClient).mockImplementation(() => ({ fetchXThread: xaiThread }) as any);
 
     const res = await app.fetch(new Request('http://localhost/api/v1/content/from-url', {
       method: 'POST', headers: AUTH,
@@ -355,9 +369,11 @@ describe('POST /api/v1/content/from-url', () => {
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain('transcript');
-    expect(firecrawlScrape).toHaveBeenCalled();
-    expect(xaiYt).toHaveBeenCalled();
+    expect(body.error).toContain('Supadata');
+    expect(supadataFetch).toHaveBeenCalledTimes(1);
+    // No fallback fetchers were ever consulted
+    expect(firecrawlScrape).not.toHaveBeenCalled();
+    expect(xaiThread).not.toHaveBeenCalled();
   });
 });
 
