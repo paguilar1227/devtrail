@@ -116,6 +116,17 @@ export async function extractMetadata(
       published_at: publishedAt,
     };
 
+    // Loud warning when binary input produces no text. The audio/mp4 silent-failure
+    // bug (Voice Memos uploads → empty content → "Untitled" title) hid here for a
+    // while because a successful empty result was indistinguishable from a real
+    // unsupported-mime / unsupported-codec failure.
+    if (files && files.length > 0 && extractedText === null) {
+      console.warn(
+        `[metadata] WARN: binary input(s) [${mimeTypes}] produced null extracted_text — ` +
+        `likely an unsupported mime/codec or empty media. Title fell back to "${result.title}".`,
+      );
+    }
+
     console.log(`[metadata] Result — title: "${result.title}", tags: [${result.tags.join(', ')}], extracted_text: ${extractedText ? `${extractedText.length} chars` : 'null'}, published: ${publishedAt ?? 'null'}`);
     return result;
   } catch (err) {
