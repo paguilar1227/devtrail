@@ -1,17 +1,32 @@
 # Open Brain v2 — First-Time Azure Deployment Guide
 
-This guide documents every step required to go from zero to a running production deployment, including the gotchas encountered during the initial deploy.
+This walks you from zero to a running production deployment, including the gotchas hit during the initial deploy. Subsequent deploys are handled by GitHub Actions on every push to `main` (`.github/workflows/deploy.yml`).
+
+> **Heads-up — legacy infra still in the templates.** The Bicep templates and `scripts/deploy.sh` were authored against the pre-V2 architecture (Telegram bot + consolidation Azure Function). The app no longer reads any Telegram env vars and the function is a no-op, but the Bicep parameters and deploy step are still in place. They're flagged in §11 below; the user-flow steps in this doc reflect what the V2 app actually needs.
 
 ---
 
 ## 1. Prerequisites
 
-- **Azure CLI** (`az`) — logged in with `az login`
+- **Azure CLI** (`az`) — logged in (`az login`)
 - **Docker Desktop** — running
-- **GitHub CLI** (`gh`) — logged in with `gh auth login`
+- **GitHub CLI** (`gh`) — logged in (`gh auth login`)
 - **Node.js 20+**
-- **Azure Functions Core Tools** (`func`) — for publishing the Function App
-- An existing **Azure Container Registry** (ACR) — this project uses a shared ACR, not a dedicated one
+- An existing **Azure Container Registry** (ACR). This project shares an ACR with other projects in `shared-rg` rather than provisioning a dedicated one.
+
+You will need API keys/values for everything below before running Bicep:
+
+| Value | Where to get it |
+|-------|-----------------|
+| `dbAdminPassword` | Generate a strong password; store somewhere safe |
+| `apiKey` (Open Brain) | Generate any random string — this is your bearer token for `/api/v1/*` and `?key=` for `/mcp` |
+| `geminiApiKey` | Google AI Studio → https://aistudio.google.com/app/apikey |
+| `anthropicApiKey` | Anthropic Console → https://console.anthropic.com/account/keys |
+| `xaiApiKey` | xAI console (used for X/Twitter live search via Grok) |
+| `firecrawlApiKey` | Firecrawl dashboard (used for HTML extraction fallback during URL ingest) |
+| Azure OpenAI endpoint + key | An Azure Foundry / Azure OpenAI resource with `gpt-5-4` (chat completions) and `gpt-5-4-pro` (Responses API) deployments |
+
+The Azure OpenAI resource doesn't have to live in the same resource group — point at any one you have access to. The Container App reads the endpoint + key + the two deployment names from Key Vault.
 
 ---
 
@@ -23,21 +38,20 @@ az group create \
   --location eastus
 ```
 
-Use whatever name and region you prefer. The name used here is `openbrain-rg`.
+Use whatever region you prefer. The name `openbrain-rg` matches what's referenced in the rest of this doc.
 
 ---
 
-## 3. Push the Docker Image to ACR First
+## 3. Push the Docker Image to ACR FIRST
 
-**This must happen before deploying Bicep.** The Container App Bicep module references an image in ACR at deploy time. If the image does not exist, Bicep fails with an image pull error. This is a chicken-and-egg problem: you need the Container App resource to exist to pull the image, but Bicep won't create the resource if it can't pull the image.
-
-The solution is to push the image before running the Bicep deployment.
+**Must happen before deploying Bicep.** The Container App module references an image at deploy time. If the image doesn't exist, Bicep fails with an image pull error. You can't create the Container App resource to pull the image before pushing — chicken and egg. Push first.
 
 ```bash
-ACR_NAME=yourregistry   # your shared ACR name
+ACR_NAME=yourregistry         # your shared ACR name
 IMAGE_TAG=$(git rev-parse --short HEAD)
 
-# Always build for linux/amd64 — required when building on Apple Silicon (M-series Macs)
+# linux/amd64 is required when building on Apple Silicon — Docker defaults to arm64
+# on M-series Macs, which fails to run on Azure's x86-64 infra.
 docker build --platform linux/amd64 \
   -t ${ACR_NAME}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
 
@@ -50,20 +64,40 @@ docker push ${ACR_NAME}.azurecr.io/open-brain-v2:latest
 ```
 
 > **Gotcha — use git SHA tags, not just `latest`.**
-> Azure Container Apps will not create a new revision if you push a new image under the same `latest` tag. The Container App only detects a change when the image reference in its configuration changes. Always push with a unique tag (git SHA) and deploy using that tag. The `latest` tag is a convenience alias only.
-
-> **Gotcha — `--platform linux/amd64` is required on Apple Silicon.**
-> Without it, Docker builds an arm64 image which fails to run on Azure's x86-64 infrastructure.
+> Azure Container Apps only creates a new revision when the image *reference* changes. Pushing a new image under the same `:latest` tag is invisible to Container Apps. Always push with a unique tag (the git SHA works) and deploy that tag. `latest` is a convenience alias only.
 
 ---
 
-## 4. Assign AcrPull Role to the Container App Identity
+## 4. Deploy Infrastructure (Bicep)
 
-**This must also happen before deploying Bicep** (or immediately after, before the Container App first tries to pull).
+Secrets are passed via CLI — they are intentionally absent from `parameters.json` to keep credentials out of source control.
 
-The Container App uses a managed identity to pull images from ACR. Because the ACR lives in a different resource group (`shared-rg`) than the Container App (`openbrain-rg`), this role assignment cannot be expressed in Bicep at resource group scope. It must be done via CLI.
+```bash
+az deployment group create \
+  --resource-group openbrain-rg \
+  --template-file infra/main.bicep \
+  --parameters @infra/parameters.json \
+  --parameters \
+    dbAdminPassword="<postgres-admin-password>" \
+    apiKey="<your-open-brain-api-key>" \
+    geminiApiKey="<your-gemini-api-key>" \
+    anthropicApiKey="<your-anthropic-api-key>" \
+    telegramBotToken="unused" \
+    telegramWebhookSecret="unused" \
+    telegramChatId="unused"
+```
 
-First, get the managed identity's principal ID from the Bicep output (available after Bicep deploys). If you are doing this before Bicep runs, create the identity manually or do this step immediately after Bicep completes and before any revision is triggered.
+The non-secret values (`environment`, `acrName`, `acrResourceGroup`, `consolidationSchedule`) are already in `infra/parameters.json`.
+
+> **About the `telegram*` parameters.** The current Bicep schema marks them required (`@secure()` with no default). The V2 app doesn't read them — the values just land in Key Vault unused. Pass any non-empty placeholder. Removing these parameters from Bicep is on the cleanup list.
+
+> **About the Azure OpenAI / xAI / Firecrawl keys.** These are read by the V2 app but **not** in the current Bicep schema. After Bicep deploys, set them on the Container App directly (see §6).
+
+---
+
+## 5. Assign AcrPull to the Container App's Managed Identity (cross-RG)
+
+The Container App pulls images from the ACR using its managed identity. Because the ACR lives in a different resource group (`shared-rg`) than the Container App (`openbrain-rg`), this role assignment can't be expressed in Bicep at resource-group scope. Do it via CLI right after Bicep deploys, before the first revision tries to pull.
 
 ```bash
 PRINCIPAL_ID=$(az containerapp show \
@@ -84,124 +118,95 @@ az role assignment create \
 
 ---
 
-## 5. Deploy Infrastructure (Bicep)
+## 6. Set the V2-Only Secrets on the Container App
 
-Secrets are passed directly on the CLI — they are intentionally omitted from `parameters.json` to avoid committing credentials to source control.
-
-```bash
-az deployment group create \
-  --resource-group openbrain-rg \
-  --template-file infra/main.bicep \
-  --parameters @infra/parameters.json \
-  --parameters \
-    dbAdminPassword="<postgres-admin-password>" \
-    apiKey="<your-open-brain-api-key>" \
-    geminiApiKey="<your-gemini-api-key>" \
-    anthropicApiKey="<your-anthropic-api-key>" \
-    telegramBotToken="<your-telegram-bot-token>" \
-    telegramWebhookSecret="<your-telegram-webhook-secret>" \
-    telegramChatId="<your-telegram-chat-id>"
-```
-
-### Where to get each secret
-
-| Parameter | Where to get it |
-|-----------|----------------|
-| `dbAdminPassword` | Generate a strong password; store it somewhere safe |
-| `apiKey` | Generate any random string — this is your Open Brain REST API key |
-| `geminiApiKey` | Google AI Studio: https://aistudio.google.com/app/apikey |
-| `anthropicApiKey` | Anthropic Console: https://console.anthropic.com/account/keys |
-| `telegramBotToken` | BotFather on Telegram (see Section 10) |
-| `telegramWebhookSecret` | Generate a random string — used to verify Telegram webhook calls |
-| `telegramChatId` | Your personal Telegram chat ID (send a message to @userinfobot) |
-
-The non-secret parameters (`environment`, `acrName`, `acrResourceGroup`, `consolidationSchedule`) are already set in `infra/parameters.json`.
-
----
-
-## 6. Database Migration
-
-No manual migration step is needed. The app checks on every startup whether the database tables exist. If they do not, it reads `migrations/001_initial_schema.sql` and runs it. This check uses the raw PostgreSQL pool (not the pgvector-typed client) so it works even before the `vector` extension is registered.
-
-Migration is idempotent — it is safe to restart the app multiple times.
-
-If you ever need to run the migration manually:
+The Bicep template predates the V2 stack and doesn't wire the Azure OpenAI / xAI / Firecrawl keys yet. Set them as Container App secrets and surface them as env vars:
 
 ```bash
-npm run migrate  # requires DATABASE_URL to be set
+az containerapp secret set \
+  --name openbrain-prod-api --resource-group openbrain-rg \
+  --secrets \
+    azure-openai-endpoint="https://<your-foundry-resource>.openai.azure.com" \
+    azure-openai-key="<azure-openai-key>" \
+    xai-api-key="<xai-key>" \
+    firecrawl-api-key="<firecrawl-key>"
+
+az containerapp update \
+  --name openbrain-prod-api --resource-group openbrain-rg \
+  --set-env-vars \
+    AZURE_OPENAI_ENDPOINT=secretref:azure-openai-endpoint \
+    AZURE_OPENAI_KEY=secretref:azure-openai-key \
+    AZURE_RAG_DEPLOYMENT=gpt-5-4 \
+    AZURE_DEEP_RAG_DEPLOYMENT=gpt-5-4-pro \
+    XAI_API_KEY=secretref:xai-api-key \
+    FIRECRAWL_API_KEY=secretref:firecrawl-api-key
 ```
 
----
-
-## 7. HNSW Vector Indexes — Deferred
-
-The schema defines HNSW indexes on all `embedding vector(3072)` columns. These indexes significantly speed up approximate nearest-neighbor search at scale.
-
-However, **the B1ms PostgreSQL tier (the cheapest Flexible Server SKU) does not have enough memory to build HNSW indexes for 3072-dimension vectors.** PostgreSQL requires the entire index to fit in `maintenance_work_mem` during build, and 3072-dim HNSW exceeds what B1ms can allocate.
-
-The migration currently omits the HNSW index creation. Sequential scans (`ORDER BY embedding <=> $1`) work correctly and perform fine at single-user scale (thousands of rows, not millions). If the dataset grows or performance becomes a concern, either upgrade to a larger SKU or reduce embedding dimensions using Matryoshka truncation (Gemini Embedding 2 supports this without re-embedding).
+`AZURE_RAG_DEPLOYMENT` and `AZURE_DEEP_RAG_DEPLOYMENT` default to `gpt-5-4` / `gpt-5-4-pro` in `src/config.ts`; override only if your deployment names differ.
 
 ---
 
-## 8. Enable the Gemini Generative Language API
+## 7. Database Migrations
 
-The `@google/generative-ai` Node.js SDK routes all requests through the **Generative Language API** endpoint (`generativelanguage.googleapis.com`), even when you supply a Vertex AI service account key. This API is not enabled by default on Google Cloud projects.
+There is **no manual migration step**. On every container start, `runMigrations()` in `src/server.ts` checks for table existence (`projects`, `content_items.source_url`, `entities`) and applies any missing migrations idempotently. Restarting the app multiple times is safe.
 
-If you see errors like `API has not been used in project ... before or it is disabled`, enable it here:
+Migrations on disk (`migrations/`):
+
+- `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
+- `002_source_url.sql` — adds `source_url` to content_items (URL ingest)
+- `003_entities_graph.sql` — entities, chunk_entities, `published_at` on content_items
+
+Run manually if you want to (e.g., to re-init a dev DB from scratch):
+
+```bash
+psql "$DATABASE_URL" -f migrations/001_schema.sql
+psql "$DATABASE_URL" -f migrations/002_source_url.sql
+psql "$DATABASE_URL" -f migrations/003_entities_graph.sql
+```
+
+> **`scripts/deploy.sh` is stale here.** It references `migrations/001_initial_schema.sql`, which doesn't exist. The auto-migration on startup is the canonical path; that script step is dead code.
+
+> **No HNSW indexes.** B1ms (the cheapest Postgres Flexible Server SKU) doesn't have enough memory to build HNSW for 3072-dim vectors — the index has to fit in `maintenance_work_mem` during build, and B1ms can't allocate it. Sequential scan on cosine distance (`ORDER BY embedding <=> $1`) is fine at single-user scale (low thousands of chunks, well under 100ms/query). To unblock larger corpora, either upsize the DB or use Matryoshka truncation on Gemini Embedding 2 (smaller dim, then HNSW fits).
+
+---
+
+## 8. Disable Public Blob Access + SAS-Signed URLs
+
+The storage account is created with `Allow Blob Public Access = false` and the container with `publicAccess: 'None'`. Direct URLs from `blob_url` are not downloadable as-is.
+
+The API generates **short-lived SAS read URLs** (default 60 min) at response time via `BlobStorage.getReadSasUrl()` (`src/storage/blob.ts`). All `/api/v1/content` endpoints that return `blob_url` rewrite it to a signed URL before responding. No further config needed once the storage account is created.
+
+If you flip `allowBlobPublicAccess` to true for any reason, the SAS code is a no-op pass-through for already-public URLs; nothing breaks, but you lose access control.
+
+---
+
+## 9. Enable the Gemini Generative Language API
+
+The `@google/generative-ai` Node SDK routes through `generativelanguage.googleapis.com`. That API is **not enabled by default** on Google Cloud projects. If you see `API has not been used in project ... or it is disabled`, enable it:
 
 https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview
 
-Select the Google Cloud project associated with your API key, then click Enable.
+Select the GCP project tied to your Gemini API key, then click **Enable**.
 
-> **Gotcha — correct embedding model ID.**
-> The model ID for embeddings is `gemini-embedding-2-preview` (not `text-embedding-preview-...` or other experimental IDs that appear in some documentation). Using the wrong model ID causes a 404.
-
----
-
-## 9. Telegram Bot Setup
-
-1. Open Telegram and message **@BotFather**
-2. Send `/newbot` and follow the prompts — you get a bot token
-3. Register the webhook after the Container App is deployed:
-
-```bash
-APP_URL=https://<your-container-app-fqdn>
-BOT_TOKEN=<your-telegram-bot-token>
-WEBHOOK_SECRET=<your-telegram-webhook-secret>   # same value passed to Bicep
-
-curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-  --data-urlencode "url=${APP_URL}/telegram/webhook" \
-  --data-urlencode "secret_token=${WEBHOOK_SECRET}"
-```
-
-The `secret_token` causes Telegram to include an `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. The server validates this header and rejects requests without it.
-
-To get your personal chat ID (needed for `telegramChatId`):
-- Send any message to your bot
-- Call `https://api.telegram.org/bot<token>/getUpdates` — the `chat.id` in the response is your ID
-- Or message @userinfobot directly
+> **Embedding model ID.** Use `gemini-embedding-2-preview` (3072d, multimodal). Other IDs in scattered docs (`text-embedding-preview-...`) will 404. The codebase pins this in `src/server.ts`.
 
 ---
 
-## 10. GitHub Actions OIDC Setup
+## 10. GitHub Actions (OIDC)
 
-The CI/CD pipeline authenticates to Azure using OIDC (no stored credentials). The pipeline pushes the Docker image to ACR and deploys the Container App and Function App on every push to `main`.
+CI + CD authenticate to Azure via OIDC — no stored credentials. CI runs typecheck + tests on every PR/push (`.github/workflows/ci.yml`). Deploy runs on every push to `main` (`.github/workflows/deploy.yml`): build the image with the commit SHA tag, push to ACR, update the Container App revision.
 
-### App Registration and Service Principal
+### App registration + service principal (one-time)
 
 ```bash
-# Create the app registration
 az ad app create --display-name "open-brain-v2-cicd"
 
 APP_ID=$(az ad app list --display-name "open-brain-v2-cicd" --query "[0].appId" -o tsv)
-
-# Create the service principal
 az ad sp create --id "${APP_ID}"
-
 SP_OBJECT_ID=$(az ad sp show --id "${APP_ID}" --query id -o tsv)
 ```
 
-### Federated Credential
+### Federated credential
 
 ```bash
 az ad app federated-credential create \
@@ -214,141 +219,141 @@ az ad app federated-credential create \
   }'
 ```
 
-Replace `<your-github-username>` with your actual GitHub username.
-
-### Role Assignments
+### Role assignments
 
 ```bash
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 RG_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/openbrain-rg"
 ACR_ID=$(az acr show --name yourregistry --resource-group shared-rg --query id -o tsv)
 
-# Contributor on the Open Brain resource group (to update Container App + Function App)
+# Contributor on the project RG (update Container App + Function App)
 az role assignment create \
-  --assignee-object-id "${SP_OBJECT_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role Contributor \
-  --scope "${RG_ID}"
+  --assignee-object-id "${SP_OBJECT_ID}" --assignee-principal-type ServicePrincipal \
+  --role Contributor --scope "${RG_ID}"
 
-# AcrPush on the shared ACR (to push Docker images)
+# AcrPush on the shared ACR
 az role assignment create \
-  --assignee-object-id "${SP_OBJECT_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role AcrPush \
-  --scope "${ACR_ID}"
+  --assignee-object-id "${SP_OBJECT_ID}" --assignee-principal-type ServicePrincipal \
+  --role AcrPush --scope "${ACR_ID}"
 ```
 
-### GitHub Secrets and Variables
+### GitHub repo settings
 
-In your GitHub repo settings, add:
-
-**Secrets** (Settings > Secrets and variables > Actions > Secrets):
+**Secrets** (Settings → Secrets and variables → Actions → Secrets):
 
 | Secret | Value |
 |--------|-------|
-| `AZURE_CLIENT_ID` | The `appId` of your app registration |
-| `AZURE_TENANT_ID` | Your Azure tenant ID (`az account show --query tenantId -o tsv`) |
-| `AZURE_SUBSCRIPTION_ID` | Your Azure subscription ID (`az account show --query id -o tsv`) |
+| `AZURE_CLIENT_ID` | `appId` from the app registration |
+| `AZURE_TENANT_ID` | `az account show --query tenantId -o tsv` |
+| `AZURE_SUBSCRIPTION_ID` | `az account show --query id -o tsv` |
+| `GEMINI_API_KEY` | Used by CI for tests that exercise embedding/LLM mocks (won't actually call Gemini) |
 
-**Variables** (Settings > Secrets and variables > Actions > Variables):
+**Variables** (Settings → Secrets and variables → Actions → Variables):
 
 | Variable | Value |
 |----------|-------|
 | `ACR_NAME` | `yourregistry` |
 | `AZURE_RESOURCE_GROUP` | `openbrain-rg` |
 | `CONTAINER_APP_NAME` | `openbrain-prod-api` |
-| `FUNCTION_APP_NAME` | `openbrain-prod-func` |
+| `FUNCTION_APP_NAME` | `openbrain-prod-func` (still referenced by the Functions step — see §11) |
 
 ---
 
-## 11. MCP Connector (Claude.ai)
+## 11. Legacy Infrastructure (cleanup candidates)
 
-To connect Open Brain to Claude.ai as an MCP server:
+The following are deployed but **not used** by the V2 app. They're slated for removal but still in the templates — leave them alone for now unless you want to do the cleanup pass.
+
+| Item | Why it's still here |
+|------|---------------------|
+| `infra/modules/function-app.bicep` + `functions/consolidation-trigger/` | Pre-pivot timer trigger that ran the captures-facts-insights consolidation pipeline. The V2 app has no captures/facts/insights; the function is a no-op. |
+| `telegramBotToken` / `telegramWebhookSecret` / `telegramChatId` Bicep params | Pre-pivot Telegram bot. No V2 code reads these. |
+| `consolidationSchedule` parameter | Cron for the no-op function. Ignored. |
+| `Azure/functions-action` step in `deploy.yml` | Publishes the no-op function. Wastes a CI minute. |
+| `psql ... migrations/001_initial_schema.sql` step in `scripts/deploy.sh` | References a migration filename that doesn't exist. Auto-migration on startup is the real path. |
+
+When you do the cleanup, also remove `Function App` references from this doc and `ARCHITECTURE.md`.
+
+---
+
+## 12. MCP Connector (Claude.ai / Claude Desktop / Claude Code)
 
 ```
 https://<your-container-app-fqdn>/mcp?key=<your-open-brain-api-key>
 ```
 
-In Claude.ai settings, add this as a custom MCP connector URL. The `key` query parameter is equivalent to the `x-brain-key` header.
+Add this URL as a custom MCP connector. The `key` query parameter is equivalent to the `Authorization: Bearer ...` header that the REST API uses, so the same key works for both surfaces. The MCP server is stateless — a fresh `McpServer + WebStandardStreamableHTTPServerTransport` is constructed per request.
 
 ---
 
-## 12. Verify the Deployment
+## 13. Verify the Deployment
 
 ```bash
 APP_URL=https://<your-container-app-fqdn>
 API_KEY=<your-open-brain-api-key>
 
-# Health check
+# Health (no auth)
 curl ${APP_URL}/health
+# expected: {"ok":true,"service":"open-brain","version":"2.0.0"}
 
-# Test capture
-curl -X POST ${APP_URL}/api/v1/capture \
-  -H "Authorization: Bearer ${API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "First capture — deployment test", "source": "api"}'
+# Authenticated list
+curl -s -H "Authorization: Bearer ${API_KEY}" "${APP_URL}/api/v1/projects" | jq
+
+# Create a project
+curl -s -X POST -H "Authorization: Bearer ${API_KEY}" -H "Content-Type: application/json" \
+  "${APP_URL}/api/v1/projects" -d '{"name":"smoke-test"}' | jq
 ```
 
-A successful capture returns a 201 with the new capture's ID.
+For a full end-to-end validation, work through `E2E_TEST_PLAN.md` — 52 reproducible tests across the REST + MCP surfaces against production.
 
 ---
 
 ## Deployment Order Summary
 
-Getting the order wrong causes failures. The correct order is:
+Order matters; getting it wrong leaves you debugging Bicep image-pull failures or Container App revisions that won't update.
 
-1. Build and push Docker image to ACR with a git SHA tag
-2. Deploy Bicep (`az deployment group create`)
-3. Assign AcrPull role to the Container App managed identity (cross-RG, must be CLI)
-4. Register Telegram webhook
-5. Set up GitHub OIDC (one-time)
-
-After the initial setup, GitHub Actions handles all subsequent deploys automatically on push to `main`.
+1. Build + push Docker image to ACR with a git SHA tag (§3)
+2. Deploy Bicep — `az deployment group create` (§4)
+3. Assign AcrPull to the Container App's managed identity (cross-RG, CLI only) (§5)
+4. Set the V2-only secrets on the Container App (§6)
+5. Verify (§13)
+6. (One-time) Set up GitHub Actions OIDC (§10) — every subsequent deploy is automatic on push to `main`
 
 ---
 
-## Configurable Settings
+## Configurable Settings (V2)
 
-| Setting | Environment Variable | Default |
-|---------|---------------------|---------|
-| Consolidation schedule | `CONSOLIDATION_SCHEDULE` (Azure Function app setting) | `0 */30 * * * *` (every 30 min) |
-| Review mode | `REVIEW_MODE` | `hybrid` |
-| Daily digest | `DAILY_DIGEST_ENABLED` | `true` |
-| Timezone | `TIMEZONE` | `America/Chicago` |
-| Daily report time | `DAILY_REPORT_TIME` | `09:00` |
-| Server port | `PORT` | `3000` |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | HTTP server port |
+| `NODE_ENV` | `development` | `development` / `production` / `test` |
+| `TIMEZONE` | `America/Chicago` | IANA timezone (used for date math; minimally surfaced today) |
+| `AZURE_RAG_DEPLOYMENT` | `gpt-5-4` | Azure OpenAI deployment name for fast-path RAG (chat completions) |
+| `AZURE_DEEP_RAG_DEPLOYMENT` | `gpt-5-4-pro` | Azure OpenAI deployment name for thorough-path RAG (Responses API) |
 
-The consolidation schedule uses Azure Functions CRON format (6 fields, seconds first). Common values:
-- Every 30 minutes: `0 */30 * * * *`
-- Every hour: `0 0 * * * *`
-- Daily at 6 AM UTC: `0 0 6 * * *`
+All other values (`DATABASE_URL`, `OPEN_BRAIN_API_KEY`, the various `*_API_KEY` and `AZURE_*` keys) are required — `loadConfig()` in `src/config.ts` throws on missing values.
 
 ---
 
 ## Provider Gotchas
 
-### Gemini 2.5 Flash
+### LLM JSON output
 
-- **`maxTokens` must be >= 1024:** Gemini 2.5 Flash's thinking tokens consume the output token budget. If `maxTokens` is too low, the model may exhaust the budget on thinking before producing any output. All LLM calls in the codebase use at least `maxTokens: 1024`.
-- **`extractJson` for markdown wrapping:** Setting `responseMimeType: 'application/json'` does not guarantee clean JSON. Gemini often wraps JSON responses in markdown code blocks. The `extractJson()` function in `src/providers/gemini-llm.ts` strips this wrapping as a post-processing step.
-- **`llmJsonParse` retry helper:** Gemini's JSON output is non-deterministic. The `llmJsonParse<T>()` function (3 retry attempts) wraps all critical LLM JSON parsing paths.
+- Anthropic Haiku and Gemini both occasionally wrap JSON in markdown fences even when JSON mode is requested. Every LLM-JSON path is run through `extractJson()` in `src/providers/json-utils.ts` before `JSON.parse`. If you add a new JSON-producing call, route it through there.
+- Haiku metadata calls use `maxTokens: 8192` for PDF-scale inputs (a 2048 default truncates real-world PDFs). Entity extraction caps input at 50K chars and uses `maxTokens: 4096`.
+- `gpt-5-4-pro` on Azure Foundry **rejects `reasoning_effort: 'low'`** (HTTP 400 with `"param": "reasoning.effort"`). Only `medium` (default) and `high` are accepted. May change with `gpt-5.5+`; re-test on model swaps.
+
+### PDF parsing
+
+- `pdf-parse` v2 ships a `PDFParse` class — the v1 default-import function is gone. Use the class.
+- Extracted PDF text can leak NUL/FF/VT control bytes that break strict JSON parsers (jq, `JSON.parse`). `sanitizeControlChars()` in `src/providers/pdf-extract.ts` strips them before persisting.
 
 ### Container App
 
-- **minReplicas: 1 (always-on):** The Container App is configured with `minReplicas: 1` to eliminate cold start latency for Telegram webhooks and due date notifications. It does not scale to zero.
+- `minReplicas: 1` (always-on) — eliminates cold-start latency. Doesn't scale to zero.
+- HTTP response timeout ≈ 240s. URL ingestion (especially YouTube) can exceed that when fallback fetchers chain. Server completes the work either way; the client just sees 504. There's an open task to convert URL ingest to async + 202 (job_id polling).
 
 ---
 
-## E2E Tests
+## Local Development
 
-E2E tests require a running PostgreSQL instance with pgvector. The docker compose file maps port 5434 on the host to 5432 in the container:
-
-```bash
-# Start the database
-docker compose up -d
-
-# Run E2E tests (uses E2E_DATABASE_URL)
-E2E_DATABASE_URL=postgresql://openbrain:openbrain@localhost:5434/openbrain npm run test:e2e
-```
-
-In CI, the GitHub Actions workflow uses a PostgreSQL service container on the default port 5432. See `.github/workflows/ci.yml`.
+For local dev, see `README.md` — there's a `docker-compose.yml` that brings up a `pgvector/pgvector:pg16` container on host port **5434** (not 5432, to avoid clashing with a system Postgres) and `npm run dev` (`tsx watch src/server.ts`) for the backend. Web UI is `cd web && npm run dev`. Auto-migrations apply on first boot.

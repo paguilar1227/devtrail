@@ -1,657 +1,468 @@
 # Open Brain v2 — Architecture
 
-This document is the authoritative reference for the Open Brain v2 codebase. It is written for AI agents: precise, complete, and factual. If this document and the design spec disagree, this document reflects what is actually built.
+Authoritative reference for the V2 codebase. Written for AI agents and humans who want a complete, factual picture of what is *actually built* — not what was designed in the V1 era.
+
+> **Reality check first.** Architecture changes happen between sessions. Cheap checks before trusting this doc:
+> - `git log --oneline -20` — recent changes
+> - `find src -type f -name '*.ts' | sort` — what files actually exist
+> - `ls migrations/` — current schema
+> - `cat package.json` — current deps
+> - `curl <app-url>/health` — what's deployed
+>
+> If a memory or doc references a file/function/entity that no longer exists in the repo, **the code wins**. Update or remove the stale doc.
 
 ---
 
-## 1. Purpose & Philosophy
+## 1. Purpose
 
-Open Brain is a **bonding layer between human and AI** — a personal knowledge system that maintains a living profile of the user and supports their daily workflow. It exists so that any AI tool can call Open Brain and instantly understand who the user is *right now*: preferences, identity, habits, skills, relationships, opinions.
+Open Brain v2 is a **single-user, NotebookLM-style personal knowledge base + productivity tool**. The user organizes knowledge into **projects**; each project contains documents (uploaded reference material), notes (self-authored), and todos (with subtasks + comments). Hybrid semantic + entity-graph search spans everything. A retrieval-augmented Q&A surface routes between a fast model and a reasoning model based on the question.
 
-Its secondary purpose is a personal productivity layer (reminders, todos) that feeds back into the profile. What someone reminds themselves about reveals interests, priorities, and active projects.
+There is **no multi-tenancy**. There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine** — those existed in the pre-V2 architecture and were deleted in the April 2026 rewrite. Vestigial Bicep parameters and the `functions/consolidation-trigger/` folder still exist as cleanup candidates (see §16).
 
-**Core design principle: living profile, not a journal.** Facts and insights always reflect present-tense, current state. Raw captures preserve history implicitly (they are immutable). The `previous_versions` field on facts passively tracks how the profile has evolved, but this data is never surfaced in default retrieval.
+Three client surfaces:
 
-**Why this exists:** The user's Claude usage is infrequent and topic-diverse. Consecutive sessions are often completely unrelated. Chronological recency is meaningless — the system needs to answer "who is this person?" not "what did they do last."
+| Surface | Path | Used by |
+|---------|------|---------|
+| REST API | `/api/v1/*` | Web UI, scripts, automated tests |
+| MCP server | `/mcp` | Claude.ai, Claude Desktop, Claude Code, ChatGPT, any MCP-aware client |
+| Web UI | `/` (static) | The user's browser |
+
+All three surfaces run in a single Hono process on Node 20, deployed as a Docker container to Azure Container Apps.
 
 ---
 
 ## 2. System Overview
 
 ```
-                              Internet
-                                 |
-                  +--------------+--------------+
-                  |              |              |
-             Telegram       MCP Clients     REST API
-             Webhook        (Claude, etc)   Clients
-                  |              |              |
-                  +--------------+--------------+
-                                 |
-                    Azure Container App (always-on)
-                    +---------------------------------+
-                    |  Hono HTTP Server (:3000)       |
-                    |                                 |
-                    |  /api/v1/*    REST endpoints    |
-                    |  /mcp         MCP server        |
-                    |  /telegram/*  Webhook handler   |
-                    |  /           Health check       |
-                    |                                 |
-                    |  Background:                    |
-                    |    Due date checker (60s poll)   |
-                    |    Daily report (60s poll)       |
-                    +---------------------------------+
-                         |              |          |
-              +----------+    +---------+    +-----+------+
-              |               |              |            |
-         PostgreSQL      Azure Blob     Gemini API   Anthropic API
-         + pgvector      Storage
-                                       Embedding 2   Claude Opus 4.6
-                                       Flash 2.5
-
-                    Azure Function App (timer trigger)
-                    +---------------------------------+
-                    |  Consolidation pipeline          |
-                    |  CRON: 0 */30 * * * * (default)  |
-                    |  Calls same code as manual trigger|
-                    +---------------------------------+
+                        Internet
+                            |
+                +-----------+-----------+
+                |           |           |
+            Web UI      MCP Clients  REST API
+            (browser)   (Claude*)    (curl, web UI fetch)
+                |           |           |
+                +-----------+-----------+
+                            |
+            Azure Container App (minReplicas: 1, always-on)
+            +---------------------------------------------+
+            |  Hono process on :3000                       |
+            |                                              |
+            |  /                Static web UI from web/dist|
+            |  /health          {"ok":true,...}            |
+            |  /api/v1/*        REST adapter (src/app.ts)  |
+            |  /mcp             MCP adapter (per-request)  |
+            |                                              |
+            |  Auto-migrations on startup (001/002/003)    |
+            +---------------------------------------------+
+                |              |              |
+                |              |              |
+       +--------+        +-----+-----+     +-+----+-----+
+       |                 |           |     |             |
+   PostgreSQL        Azure Blob   Gemini   Anthropic   Azure Foundry
+   + pgvector        Storage      API      API         (OpenAI)
+   (B1ms,            (private,
+    no HNSW)         SAS URLs)    Embedding   Haiku 4.5   gpt-5-4
+                                  2 + Flash   (Claude)    gpt-5-4-pro
+                                              + xAI + Firecrawl
+                                              for URL ingest fallbacks
 ```
 
-### Architecture Pattern
+### Architecture pattern: thin adapters, fat services
 
-Open Brain uses a **hexagonal architecture** (ports and adapters). All business logic lives in `src/services/`. The three entry-point surfaces — REST API, MCP server, and Telegram bot — are thin adapters: they parse inputs, call service functions, and format responses. No business logic lives in adapters.
+All business logic lives in `src/services/`. The two API adapters — REST in `src/app.ts`, MCP in `src/mcp/server.ts` — are thin: parse input, call a service function, format response. Service functions accept `ServiceDeps` (the dependency injection container with db, providers, blob, config) as their first argument.
 
-### Components
-
-| Component | Azure Service | Purpose |
-|-----------|---------------|---------|
-| API + MCP + Telegram | Container App (minReplicas: 1) | HTTP server hosting all three surfaces |
-| Consolidation | Function App (timer trigger) | Scheduled capture-to-fact-to-insight pipeline |
-| Database | PostgreSQL Flexible Server (B1ms) + pgvector | All data, vector search |
-| File Storage | Blob Storage | Multimodal files (images, audio, video, PDFs) |
-| Secrets | Key Vault | All API keys and connection strings |
-| Monitoring | App Insights + Log Analytics | Telemetry, dependency tracking |
-| Container Registry | ACR (shared, existing in shared-rg) | Docker images |
-
-### AI Models
-
-| Task | Model | Provider | Model ID | Why |
-|------|-------|----------|----------|-----|
-| Embeddings (multimodal) | Gemini Embedding 2 | Google | `gemini-embedding-2-preview` | Only model with native text+image+audio+video embedding in a single vector space |
-| Metadata extraction | Gemini 2.5 Flash | Google | `gemini-2.5-flash` | Fast, cheap, structured output for pipeline hot path |
-| Intent classification | Gemini 2.5 Flash | Google | `gemini-2.5-flash` | Real-time NL parsing in Telegram |
-| Retrieval synthesis | Gemini 2.5 Flash | Google | `gemini-2.5-flash` | Speed+quality balance for on-demand `get_user_profile` |
-| Consolidation | Claude Opus 4.6 | Anthropic | `claude-opus-4-6` | Best reasoning + nuance preservation for profile synthesis |
+Direction of dependencies: **adapters → services → db/providers**. Adapters never call other adapters. Services never import adapter code. This makes service-layer functions trivial to unit-test (pass mocks via `ServiceDeps`) and lets new adapter surfaces drop in without touching business logic.
 
 ---
 
-## 3. Data Architecture
+## 3. Stack
 
-### Three-Tier Model
+| Layer | Tech |
+|-------|------|
+| API | Hono on Node 20, served by `@hono/node-server` |
+| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| MCP | `@modelcontextprotocol/sdk` over `WebStandardStreamableHTTPServerTransport` (stateless, fresh server + transport per request) |
+| Database | PostgreSQL Flexible Server (B1ms) + pgvector (3072-dim, sequential scan — no HNSW) |
+| Blob storage | Azure Blob Storage (`Allow Blob Public Access = false`; SAS read URLs at API response time) |
+| Container | Docker on Azure Container Apps |
+| CI/CD | GitHub Actions (OIDC) |
+| Migrations | Auto-applied on container startup via `runMigrations()` in `src/server.ts` |
 
-Data flows through three tiers: raw captures -> synthesized facts -> cross-cutting insights. Each tier is independently searchable via vector embeddings. Relationships are many-to-many at both promotion boundaries.
+### AI models
 
-```
-captures (Tier 1)                     facts (Tier 2)                     insights (Tier 3)
-+-----------------------+             +-----------------------+          +-----------------------+
-| Raw, immutable inputs |  ---------> | Synthesized profile   | -------> | Cross-cutting patterns|
-| status: pending ->    |  many:many  | knowledge. Mutable.   | many:many| from multiple facts.  |
-|   consolidated        |  via        | Carries previous_     | via      | Highest value tier.   |
-| Never deleted.        |  source_    | versions for history. | source_  |                       |
-+-----------------------+  capture_   +-----------------------+ fact_    +-----------------------+
-                           ids[]                                ids[]
+| Role | Provider | Model ID | Dependency-injection key |
+|------|----------|----------|--------------------------|
+| Embeddings | Gemini | `gemini-embedding-2-preview` (3072d, multimodal) | `embeddingProvider` |
+| Metadata + entity extraction (text, image OCR, pdf-extracted text) | Anthropic | `claude-haiku-4-5-20251001` | `metadataLLM` |
+| Metadata for audio/video (Haiku doesn't accept audio input) | Gemini | `gemini-3-flash-preview` | `mediaMetadataLLM` |
+| Query depth classifier + query-entity extractor | Anthropic | `claude-haiku-4-5-20251001` | `queryDepthLLM` |
+| RAG fast path | Azure Foundry chat completions | `gpt-5-4` (default; `AZURE_RAG_DEPLOYMENT`) | `ragFastLLM` |
+| RAG thorough path | Azure Foundry Responses API | `gpt-5-4-pro` (default; `AZURE_DEEP_RAG_DEPLOYMENT`) | `ragDeepLLM` |
 
-reminders                             reminder_comments
-+-----------------------+             +-----------------------+
-| Tasks with hierarchy  | 1:many ---> | Chronological progress|
-| (Project > Section >  | via         | log entries per task  |
-|  Task > Subtask)      | reminder_id |                       |
-+-----------------------+             +-----------------------+
-
-consolidation_log
-+-----------------------+
-| Audit trail for every |
-| consolidation run     |
-+-----------------------+
-```
-
-### Tables
-
-| Table | Purpose | Row Count Growth |
-|-------|---------|-----------------|
-| `captures` | Tier 1 raw inputs. Immutable once written. Marked `consolidated` after processing. | Grows with usage |
-| `facts` | Tier 2 synthesized profile knowledge. Mutable by consolidation and user edits. | Tens to low hundreds |
-| `insights` | Tier 3 cross-cutting patterns derived from 2+ facts. | Tens |
-| `reminders` | Tasks with Project/Section/Task hierarchy, subtask nesting via `parent_id`. | Grows with usage |
-| `reminder_comments` | Chronological progress log entries per task. | Grows with usage |
-| `consolidation_log` | One row per consolidation run with metrics. | One per run |
-
-### Extensibility Conventions
-
-Every content table shares a **core table shape**:
-
-```sql
-id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
-content         text NOT NULL
-embedding       vector(3072)
-metadata        jsonb
-source          text[]          -- array: ['telegram'], ['mcp'], ['api'], or union for promoted tiers
-tags            text[]          -- semantic tags from the 14-tag allowlist (see Tag System section)
-archived        boolean DEFAULT false
-created_at      timestamptz DEFAULT now()
-updated_at      timestamptz DEFAULT now()
-```
-
-Rules:
-1. **Everything gets an embedding** — enables cross-type semantic search.
-2. **Type-specific columns** are added alongside the core shape, not instead of it. Use `metadata` JSONB for exploratory/infrequent attributes.
-3. **All embeddings are 3072 dimensions** (Gemini Embedding 2 maximum, explicitly requested).
-4. **New data types feeding profile signal** should add a reader in the consolidation pipeline.
-5. **Source is an array** — captures have single-element source arrays; facts and insights inherit the union of all contributing captures' sources.
-6. **Tags are arrays** — multiple tags per item are valid. Tags are validated against the 14-tag allowlist.
-
-### Tag System
-
-Every capture, fact, and insight is semantically classified with tags. Tags enable filtered retrieval: `search_thoughts("coding style", { tags: ["preference"] })` returns only preference-type results about coding, not all coding-related entries.
-
-**14 allowed tags:**
-
-| Tag | What it captures |
-|-----|-----------------|
-| `preference` | How the user likes things done |
-| `decision` | A choice made with rationale |
-| `problem-solution` | A problem encountered and how it was resolved |
-| `pattern` | A recurring behavior or habit observed over time |
-| `goal` | An aspiration, target, or planned direction |
-| `opinion` | A stance or belief with reasoning |
-| `skill` | A capability or expertise level |
-| `relationship` | Knowledge about a specific person |
-| `resource` | A tool, link, article, or reference worth recalling |
-| `idea` | An uncommitted exploration or possibility |
-| `interest` | A hobby, passion, or thing enjoyed |
-| `health` | Medical, fitness, dietary, or wellness information |
-| `dislike` | Something to avoid or never suggest |
-| `milestone` | A significant achievement or turning point |
-
-**Tag assignment:**
-- **Telegram and REST API captures:** auto-classified by Gemini Flash during metadata extraction (piggybacked on the existing metadata prompt — no extra LLM call).
-- **MCP captures:** AI caller may provide tags upfront via `capture_thought({ tags: [...] })`; if omitted or invalid, pipeline auto-classifies.
-- **Facts:** start as the union of all contributing captures' tags; consolidation LLM may refine (add/remove).
-- **Insights:** start as the union of all contributing facts' tags; consolidation LLM may refine.
-- `update_tags` MCP tool allows manual tag correction on any tier item.
-
-**Expanding the allowlist:** Add the new tag to `ALLOWED_TAGS` in `src/capture/tags.ts` and `TAG_DESCRIPTIONS`. No migration needed — the allowlist is a code-only constant. Run `npx vitest run` to verify unit tests still pass.
+Wired in `src/server.ts`. The `ServiceDeps` interface is in `src/services/index.ts`.
 
 ---
 
-## 4. Capture Pipeline
+## 4. Data Architecture
 
-**Entry point:** All entry points (Telegram, MCP, REST) converge on `POST /api/v1/capture`.
-
-**Implementation:** `src/capture/pipeline.ts`
-
-### Pipeline Steps
+5 core tables + 2 graph-layer tables. No ORM — raw SQL via the `pg` driver, with one `db/*.ts` module per table.
 
 ```
-1. Compute file hashes (SHA-256)
+projects
+  +------------------------+
+  | id, name, description, |
+  | status, archived,      |
+  | created/updated_at     |
+  +------------------------+
+        ^                ^
+        | uuid[]         | uuid (FK, ON DELETE SET NULL)
+        |                |
+content_items          todos
+  +-----------+        +------------------+
+  | id        |        | id               |
+  | type:     |        | content          |
+  |  document |        | status           |
+  |  /note    |        | priority         |
+  | content   |        | due_date         |
+  | source_url|        | parent_id (rec)  |
+  | published_at        | tags[]           |
+  | tags[]    |        | embedding(3072)  |  ← also chunked+embedded
+  | project_ids[]      | archived         |
+  | mime_type |        +------------------+
+  | blob_url  |              ^
+  | file_hash |              | uuid (FK, ON DELETE CASCADE)
+  +-----------+              |
+       |                todo_comments
+       | uuid (FK,      +------------------+
+       |  ON DELETE     | id, todo_id,     |
+       |  CASCADE)      | content,         |
+       v               | created/updated  |
+   chunks               +------------------+
+  +-----------+
+  | id        |
+  | content_  |
+  |  item_id  |
+  | content   |
+  | embedding |
+  | chunk_idx |
+  +-----------+
+       ^
+       | uuid (FK,
+       |  ON DELETE CASCADE)
        |
-2. File hash check (exact match)
-   - ALL files already exist? -> BLOCK as duplicate
-   - Some match? -> reuse URLs for those, upload the rest
-       |
-3. Convert files for embedding (src/capture/media-convert.ts)
-   - sharp for images (HEIC->JPEG, WebP->PNG, etc.)
-   - ffmpeg for audio (OGG->WAV) and video (->MP4)
-   - Conversion happens AFTER hash check (hash the original bytes)
-   - Original file (not converted) is uploaded to blob storage
-       |
-4. Generate embedding (Gemini Embedding 2, text + file bytes together)
-       |
-5. Semantic dedup check (cosine similarity > 0.95 -> BLOCK)
-   - Checks against ALL captures, not just recent
-       |
-6. Upload files to Blob Storage  }  (parallel)
-7. Extract metadata via LLM      }  (parallel)
-       |
-8. INSERT into captures table (status = 'pending')
+       v
+  chunk_entities (graph layer)        entities (graph layer)
+  +--------------------+               +-------------------------+
+  | chunk_id (FK)      |   many:many   | id                      |
+  | entity_id (FK)     |<------------->| canonical_name          |
+  | confidence         |               | type: person/org/concept|
+  | created_at         |               |       /tool/paper       |
+  +--------------------+               | aliases[]               |
+                                       | embedding(3072)         |
+                                       +-------------------------+
 ```
 
-**Key design decisions:**
-- File hash check is a **storage optimization**. Same image with different text context is a different thought — the semantic check handles that.
-- Files are only uploaded AFTER passing both dedup checks.
-- The `convertForEmbedding` function returns an empty buffer if ffmpeg is unavailable, allowing graceful degradation (file stored but not embedded).
-- Metadata extraction uses Gemini Flash with `responseFormat: 'json'` and `maxTokens: 1024`. Fallback returns empty arrays on parse failure.
+### Project membership (asymmetric — easy to mistake)
 
-**Supported MIME types for embedding:** `image/png`, `image/jpeg`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/quicktime`, `application/pdf`. Others are converted or skipped.
+| Entity | Field | Cardinality |
+|--------|-------|-------------|
+| `content_items` (documents, notes) | `project_ids` (uuid[]) | Multi-project; empty array = personal/Inbox |
+| `todos` | `project_id` (uuid, nullable) | Single project; `null` = personal Inbox |
 
----
+Mixing them up is a top-3 bug source — REST and MCP both fail loudly when the wrong field is sent. The MCP server's `INSTRUCTIONS` block calls this out explicitly.
 
-## 5. Consolidation Pipeline
+### Why some FKs cascade and others don't
 
-**Implementation:** `src/consolidation/runner.ts`, `phase1.ts`, `phase2.ts`, `phase3.ts`, `clustering.ts`
+| Relationship | Constraint | Reason |
+|--------------|-----------|--------|
+| `chunks.content_item_id` → `content_items.id` | `ON DELETE CASCADE` | A chunk only exists as part of its parent item |
+| `chunk_entities.chunk_id` → `chunks.id` | `ON DELETE CASCADE` | A graph edge only exists for an existing chunk |
+| `chunk_entities.entity_id` → `entities.id` | `ON DELETE CASCADE` | Same — edges to a deleted entity have no meaning |
+| `todos.parent_id` → `todos.id` | `ON DELETE CASCADE` | Subtasks die with their parent (recursive) |
+| `todo_comments.todo_id` → `todos.id` | `ON DELETE CASCADE` | Comments die with their todo |
+| `todos.project_id` → `projects.id` | `ON DELETE SET NULL` | Orphaned todos become Inbox items |
+| `content_items.project_ids` → `projects.id` | `uuid[]` (no FK) | Multi-project membership; can't be a single FK |
 
-### Schedule
+Because `project_ids` is `uuid[]`, deleting a project does **not** cascade-delete its content. To prevent dangling references, `deleteProjectHard()` runs `array_remove(project_ids, $1::uuid)` across all content_items in the same transaction. So a doc that only belonged to a deleted project ends up with `project_ids: []` (back in personal scope), not a stale UUID. Verified end-to-end in `E2E_TEST_PLAN.md` T9.4.
 
-Configurable via `CONSOLIDATION_SCHEDULE` environment variable. Default: `0 */30 * * * *` (every 30 minutes). Also manually triggerable via `POST /api/v1/consolidation/trigger` or the `run_consolidation` MCP tool.
+### Embeddings
 
-### Guard Rails
+- `chunks.embedding`, `todos.embedding`, `entities.embedding` are all `vector(3072)`.
+- Sequential scan only — no HNSW. B1ms can't allocate enough `maintenance_work_mem` for HNSW init at 3072 dims, and at single-user scale (low thousands of chunks) sequential cosine is well under 100ms/query. To unblock larger corpora: upsize the DB tier, or use Matryoshka truncation on Gemini Embedding 2 to a smaller dim where HNSW fits.
 
-- **Skip if nothing to do:** No pending captures AND no completed reminders AND no facts updated since last run -> log `no-op` and exit.
-- **Token budgets:** Phase 1: 80,000 tokens. Phase 2: 50,000 tokens. If Phase 1 exhausts its budget, remaining captures stay `pending` for next run.
-- **user_edited protection:** Facts with `origin = 'user_edited'` are never overwritten. Contradicting evidence creates a new `pending_review` fact instead.
-- **Partial commit:** Phase 1 commits per-cluster (each cluster is its own transaction). Phase 2 commits atomically (all-or-nothing).
+### Migrations
 
-### Phase 1: Capture -> Fact Promotion
+Three SQL files under `migrations/`:
 
-1. Load all pending captures + recently completed reminders (profile signal).
-2. Load all active facts (confidence >= 0.0 for context).
-3. **DBSCAN clustering** on embedding vectors (cosine distance, `eps=0.3`, `minSamples=2`). Noise points become individual single-item clusters.
-4. For each cluster, send to Claude Opus with existing facts as context. LLM returns actions:
-   - `create_fact` — new profile fact with category and confidence
-   - `update_fact` — update existing fact, store previous version
-   - `flag_review` — flag for user review
-   - `merge_facts` — merge semantic duplicates, archive the weaker one
-   - `discard` — noise (must meet ALL 7 noise criteria)
-5. Mark processed captures as `status = 'consolidated'`.
+| File | Adds |
+|------|------|
+| `001_schema.sql` | `projects`, `content_items`, `chunks`, `todos`, `todo_comments` + pgvector extension + B-tree/GIN indexes |
+| `002_source_url.sql` | `source_url` column on `content_items` for URL-ingested entries |
+| `003_entities_graph.sql` | `entities`, `chunk_entities`, `published_at` column on `content_items` |
 
-**Noise criteria:** A capture is only discarded if ALL of these are true: no preference/opinion/value judgment, no person/relationship info, no habit/routine/pattern, no skill/tool/tech, no goal/aspiration/plan, no emotional response, and is purely transactional. Default: **create a fact with low confidence (0.3-0.4)**.
-
-**Review mode logic (hybrid):**
-- Auto-approved: categories `preference`, `habit`, `skill`, `history`
-- Flagged for review: categories `personality`, `opinion`, `relationship`; confidence shifts > 0.15; contradictions to `user_edited` facts
-
-### Phase 2: Fact -> Insight Generation
-
-1. Load all active facts (confidence >= 0.3, not rejected).
-2. Load existing insights.
-3. Requires minimum 2 facts to run.
-4. Send to Claude Opus. LLM returns:
-   - `insights` — new cross-cutting patterns (must cite 2+ source facts)
-   - `updates` — existing insights updated due to fact changes
-   - `invalidations` — insights contradicted by new evidence (archived)
-5. All new insights default to `review_status = 'pending_review'`.
-6. All Phase 2 writes are atomic (single transaction).
-
-### Phase 3: Re-embed + Notify
-
-1. Find all facts and insights with `embedding IS NULL` (newly created or updated).
-2. Generate embeddings for each via Gemini Embedding 2.
-3. If items are pending review and notifications enabled, send Telegram notification.
-
-### Consolidation Log
-
-Every run writes to `consolidation_log` with status (`success`, `partial`, `failed`, `no-op`), counts, token usage, and duration. App Insights metrics are also tracked.
+Auto-applied by `runMigrations()` in `src/server.ts` on every container start, idempotently (each migration is gated on a table-existence or column-existence probe). Adding a new migration means: drop the file, add a probe in `runMigrations()`. Migrations that create the `vector` extension must use `pool.query()` directly (not the pgvector-typed client) to avoid the chicken-and-egg of registering pgvector types before the extension exists.
 
 ---
 
-## 6. Retrieval
+## 5. Service Layer
 
-**Implementation:** `src/retrieval/profile.ts`, `src/retrieval/search.ts`
+`src/services/index.ts` defines the `ServiceDeps` interface — the DI contract that every service function takes as its first argument:
 
-### get_user_profile (session bootstrap)
+```typescript
+interface ServiceDeps {
+  db: DbClient;
+  embeddingProvider: EmbeddingProvider;
+  metadataLLM: LLMProvider;       // Haiku 4.5 — text, image OCR, pdf-extracted text
+  mediaMetadataLLM: LLMProvider;  // Gemini 3 Flash Preview — audio/video
+  ragFastLLM: LLMProvider;        // Azure gpt-5-4
+  ragDeepLLM: LLMProvider;        // Azure gpt-5-4-pro
+  queryDepthLLM: LLMProvider;     // Haiku 4.5 — fast/thorough classifier + entity extractor
+  blobStorage: BlobStorage;
+  config: Config;
+}
+```
 
-Answers "who is this person?" Called at the start of an AI session.
-
-1. Load all approved insights (`review_status IN ('auto_approved', 'user_approved')`)
-2. Load high-confidence facts (>= 0.7) not already covered by any insight's `source_fact_ids`
-3. Load active reminders (not_started, in_progress, researching) — shows current focus
-4. Synthesize into a coherent profile summary via Gemini Flash (third person, organized by category)
-
-If no data exists, returns: `"No profile data yet. Start capturing thoughts to build your profile."`
-
-### search_thoughts (mid-session query)
-
-Answers "what does this person think about X?" Tiered search with conditional evidence.
-
-1. Embed query via Gemini Embedding 2
-2. **Tier 1:** Search insights. If matches found, return them.
-3. **Tier 2:** Search facts. If matches found, return them. If confidence < 0.7, append source captures as evidence.
-4. **Tier 3:** Fall back to raw captures.
-
-Response includes `tier`, `confidence`, `content`, `category`, and optionally `note` and `evidence` array for low-confidence results.
-
----
-
-## 7. Service Layer
-
-**Implementation:** `src/services/`
-
-Open Brain uses a **hexagonal architecture** (ports and adapters pattern). All business logic lives in the service layer. The three adapter surfaces — REST API, MCP server, and Telegram bot — are thin wrappers that translate their input format, call the appropriate service function, and format the response. No business logic belongs in adapters.
-
-### Design Principles
-
-- **Adapters are thin:** REST routes, MCP tool handlers, and Telegram command handlers should contain no business logic — only argument parsing, service calls, and response formatting.
-- **Services own the logic:** validation, embedding, cross-table coordination, and error checking all happen in `src/services/`.
-- **Dependencies are injected:** every service function takes a `ServiceDeps` object as its first argument. This makes unit testing trivial — pass mocks.
-- **No circular imports:** adapters import services; services import DB modules and providers. Services never import adapters.
-
-### Service Modules
+### Service modules (`src/services/`)
 
 | Module | Responsibility |
 |--------|---------------|
-| `captures.ts` | `captureThought` (full pipeline), `searchThoughts`, `listCaptures`, `getCapture`, `archiveCapture`, `unarchiveCapture` |
-| `comments.ts` | `addComment`, `listComments`, `getComment`, `updateComment`, `deleteComment` — owns comment validation and re-embedding |
-| `consolidation.ts` | `runConsolidation` (delegates to pipeline), `getConsolidationLogs` |
-| `facts.ts` | `getFact`, `listFacts`, `updateFact` (re-embeds, sets `user_edited`), `archiveFact`, `unarchiveFact`, `reviewPendingFacts`, `approveRejectFact` |
-| `insights.ts` | `getInsight`, `listInsights`, `updateInsight`, `archiveInsight`, `unarchiveInsight`, `reviewPendingInsights`, `approveRejectInsight` |
-| `profile.ts` | `getUserProfile` (LLM synthesis), `getBrainStats` (dashboard counts) |
-| `reminders.ts` | Full CRUD + `createReminder` (validates depth, embeds), `completeReminder` (cascade), `deleteReminder` (cascade), `reparentReminder`, `resolveReminderId`, `listProjects`, notification-support queries |
-| `tags.ts` | `updateTags` (validates allowlist, routes to correct DB table), `getAllowedTags` |
-| `index.ts` | `ServiceDeps` interface — the dependency injection contract |
-
-### Adding to the Service Layer
-
-When a new feature needs business logic:
-1. Add the function to the appropriate `src/services/*.ts` module (or create a new module).
-2. Call it from the adapter (REST route, MCP tool, or Telegram handler) — do not duplicate logic across adapters.
-3. Test the service function directly in unit tests; test the adapter integration in integration/E2E tests.
+| `index.ts` | `ServiceDeps` interface |
+| `projects.ts` | Project CRUD + soft/hard delete + project-UUID scrub on hard delete |
+| `content-items.ts` | `createContentItem` orchestrates: dedup → optional blob upload → metadata extraction → chunking → embedding → entity-graph wiring |
+| `todos.ts` | Todo + subtask CRUD with depth/parent management, embedding on insert/update |
+| `todo-comments.ts` | Comment CRUD |
+| `search.ts` | `searchWithTimings()` — hybrid vector + graph search with RRF fusion + per-hit `retrieval_path` |
+| `rag.ts` | `ragQuery()` — depth classify → search → synthesize via fast or thorough LLM, returns answer + citations + per-stage timing |
+| `query-depth.ts` | Haiku-based fast/thorough classifier; **also** extracts named entities from the query (used by both RAG and search to seed graph expansion) |
+| `entities.ts` | `extractEntities` (Haiku) → resolve against canonical registry (exact name, alias, embedding similarity > 0.85) → map mentions to chunks → persist `chunk_entities` edges |
+| `url-ingest.ts` | Classify URL → fetch via the right pipeline (YouTube, X/Twitter, PDF, HTML, direct media) → hand off to `content-items.ts` |
 
 ---
 
-## 8. Reminders System
+## 6. Ingest Pipeline
 
-**Implementation:** `src/services/reminders.ts`, `src/services/comments.ts`, `src/db/reminders.ts`, `src/db/reminder-comments.ts`, `src/notifications/format-reminders.ts`, `src/notifications/due-date-checker.ts`
+All ingest paths converge on `createContentItem()` in `src/services/content-items.ts`. Inputs are normalized into `{ type, title, content, project_ids, tags, source_url?, files? }` upstream of the service.
 
-### Hierarchy
+### Phases
 
 ```
-Project (string, implicit creation)
-  Section (string, implicit creation)
-    Task (with status, priority, due date)
-      Subtask (recursive via parent_id, up to 4 levels: depth 0-3)
-      Comment (timestamped progress log entry)
+1. Dedup
+   - source_url match (URL ingest) → return existing id, deduped: true
+   - file_hash match (uploaded binary) → reuse existing item, optionally relink to additional projects
+
+2. (For uploads) Upload files to Blob Storage
+   - mime resolved via inferMimeFromFilename when client sent application/octet-stream
+   - file_hash computed (SHA-256) before upload
+
+3. Metadata extraction (Haiku, OR Gemini for audio/video)
+   - Routing: filesForMeta.some(f => mime startsWith 'audio/'|'video/') → mediaMetadataLLM
+   - Returns: title, topics, tags, extracted_text (for binary inputs), published_at
+
+4. Chunking (src/capture/chunker.ts)
+   - 500-token target, 100-token overlap, sentence-boundary aligned
+   - Single-chunk for short content (<~600 chars); multi-chunk for PDFs / long notes
+
+5. Per-chunk embedding (Gemini Embedding 2)
+   - 3072-dim, currently sequential per chunk
+
+6. Entity extraction (src/services/entities.ts)
+   - Run Haiku on full extracted text (capped at 50K chars)
+   - Returns up to N named entities with type, mentions[], confidence
+   - For each entity:
+     - Resolve against `entities` table (exact canonical or alias match → embedding similarity ≥ 0.85)
+     - If unresolved, INSERT new entity row with embedded canonical name
+     - Map mentions to chunks (verbatim string search across chunk content)
+   - Surface-fallback sweep: for any chunk that contains the canonical name or any alias verbatim but doesn't already have an edge, add the edge (covers chunks Haiku didn't quote in its mention list)
+   - INSERT (chunk_id, entity_id, confidence) into chunk_entities (idempotent — skip duplicates)
+
+7. INSERT chunks (transaction)
 ```
 
-Projects and sections are lightweight string identifiers — no separate tables. Creating a project is implicit when a new project name is used.
+### Why audio/video routes through Gemini
 
-### Statuses
+Anthropic SDK doesn't accept audio input — it silently maps non-text content to `image/png` and produces garbage. We catch this at the service layer: when any file in `filesForMeta` has `audio/*` or `video/*` mime, the call routes to `mediaMetadataLLM` (Gemini 3 Flash Preview) instead. Everything else stays on Haiku for consistency + entity-extraction quality (~3% hallucination vs Gemini's higher rate on extraction tasks). Logged as commit `3178b24`.
 
-`not_started` | `in_progress` | `researching` | `paused` | `done` | `blocked` | `cancelled`
+### URL ingest (`src/services/url-ingest.ts`)
 
-### Priorities
+`classifyUrl()` (`src/capture/url-detect.ts`) inspects the URL and routes:
 
-`P1` | `P2` | `P3` | `null` (no priority)
+| Pattern | Type | Fetcher |
+|---------|------|---------|
+| `youtube.com/watch?v=` / `youtu.be/...` | youtube | `youtube-transcript` → Firecrawl → xAI Grok (live search) |
+| `x.com/...` / `twitter.com/...` | x | xAI Grok live-search → Firecrawl stealth fallback |
+| `*.pdf` (or content-type) | pdf | Direct download → `pdf-parse` v2 (PDFParse class) |
+| `image/*`, `audio/*` | media | Direct download → blob → metadata via Haiku/Gemini |
+| Anything else | html | Firecrawl markdown extraction |
 
-### Categories
+Failure modes (all hit in production at least once, all covered by tests in `tests/integration/url-ingest.test.ts`):
 
-Auto-determined from content: `work` | `personal` | `health` | `learning` | `finance` | `social`
-
-### Subtask Behavior
-
-- **Creating:** `parent_id` references parent. Validates depth < 4.
-- **Completing (cascade done):** Completing a parent auto-completes all descendant subtasks recursively. `completeReminder()` marks the parent as done, then walks the subtask tree and marks every non-done, non-cancelled child as done. Returns `{ completed: string[] }` with all affected IDs.
-- **Deleting (cascade delete):** `deleteReminder()` cascade-deletes all descendant subtasks and their comments. Collects all descendant IDs recursively, deletes comments for all, then deletes reminders deepest-first.
-- **Moving (reparent):** `reparentReminder()` moves a task under a new parent (or to root with `null`). Updates depth, project, and section to match the new parent. Recursively updates all children depths and project/section to stay consistent.
-- **resolveReminderId:** Accepts short ID prefixes (e.g., "4e0bd1b2") and resolves to full UUID via `LIKE` prefix match. Returns `null` if no match or ambiguous (multiple matches). Full UUIDs are passed through directly.
-
-### Due Date Notifications
-
-- **Due date checker** (`startDueDateChecker`): Polls every 60 seconds. Finds reminders where `due_date <= now()` and not yet notified. Sends individual Telegram notifications. Marks as notified via `metadata.notified = 'true'`.
-- **Daily report** (`startDailyReport`): Polls every 60 seconds. At the configured time (default `09:00` in `TIMEZONE`), sends a summary of overdue + due-today reminders. Sends at most once per day.
-
-### Profile Integration
-
-Completed reminders are treated as profile signal during consolidation. The runner reads recently completed reminders alongside pending captures, prefixing their content with `[Completed reminder]`. Cancelled and blocked reminders are also informative signal (per spec) but the current implementation only reads `done` status.
+- Firecrawl returning `Example Domain` / 404 placeholder pages → reject content shorter than 300 chars or matching error titles
+- xAI X-search returning miss responses (templated "I couldn't find...") → detect failure phrases and surface a clean `X_SEARCH_MISS:` error
+- YouTube snowflake IDs vs xAI date windows → decode the post snowflake to derive a ±6h search window so xAI can find the post
+- 240s Azure response timeout on chained fallbacks — server-side ingest still completes; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
 
 ---
 
-## 9. Telegram Bot
+## 7. Search
 
-**Implementation:** Split across multiple modules for testability:
-- `src/telegram/webhook.ts` — Bot setup, webhook route, shared state initialization
-- `src/telegram/command-handlers.ts` — All slash commands + callback_query handler (inline buttons + action menu)
-- `src/telegram/nl-router.ts` — Natural language intent classifier + NL handlers + media handlers
-- `src/telegram/handlers.ts` — Pure handler functions (testable without bot instance): text, photo, voice, document
-- `src/telegram/prompts.ts` — Intent classifier and reminder parser system prompts (date-aware, timezone-aware)
-- `src/telegram/llm-parse.ts` — `llmJsonParse<T>()` retry helper (3 attempts, returns null on failure)
-- `src/telegram/state.ts` — Shared state types (LastActionEntry, PendingSubtaskEntry, PendingActionEntry, StateRefs)
-- `src/telegram/mime-utils.ts` — Extension-to-MIME map (25 types), `resolveMimeType()`, `getSummarizationRoute()`
+Implementation: `src/services/search.ts`, exposed via `POST /api/v1/search` and the MCP `search` tool.
 
-**Framework:** grammY
+### Inputs
 
-### Webhook Architecture
+```typescript
+{
+  query: string;
+  project_id?: string;
+  entity_types?: ('document' | 'note' | 'todo')[];
+  tags?: string[];
+  limit?: number;        // default 10
+  threshold?: number;    // default 0.65 cosine similarity for vector path
+  graph?: boolean;       // default true; pass false to disable graph expansion
+  queryEntities?: Array<{name, type}>;   // pre-extracted; otherwise classifyQueryDepth() extracts on the fly
+}
+```
 
-1. Webhook POST arrives at `/telegram/webhook`.
-2. **Verify secret** — `X-Telegram-Bot-Api-Secret-Token` header must match `TELEGRAM_WEBHOOK_SECRET`.
-3. **Dedup guard** — Track `update_id` in a Set (max 1000 entries, FIFO eviction). Skip if already processed.
-4. **Respond 200 immediately** — Prevents Telegram retry loops (Telegram retries after ~60s timeout).
-5. **Process in background** — `bot.handleUpdate(body)` runs asynchronously. Bot handlers send replies directly via Telegram API.
+### Pipeline
 
-### Natural Language Intent Classifier
+```
+1. Embed query (Gemini Embedding 2)
+2. Vector seed: pgvector cosine scan against chunks + todos
+   - Filtered by project_id, tags, entity_types, threshold
+3. (If graph: true) Graph expansion:
+   - For each query entity, find entities matching by canonical name / alias / embedding similarity
+   - For each matched entity, fetch chunk_entities edges → expand to candidate chunks
+   - Apply the SAME filters (project_id, tags, parent_type) on the expansion path's SQL
+     (this was F2 — vector path filtered correctly, expansion didn't)
+4. Reciprocal Rank Fusion (RRF, k=60) merges the two ranked lists
+5. Annotate each hit with retrieval_path: [{step: 'vector', score}, {step: 'entity', entity, confidence}, ...]
+```
 
-Every plain text message (not a slash command) goes through Gemini Flash intent classification with retry (3 attempts via `llmJsonParse`). Before hitting the LLM, two fast-paths are checked:
+Each hit returns `{type: 'chunk'|'todo', similarity, chunk?: {...}, todo?: {...}, retrieval_path: [...]}`. The web UI and RAG synthesizer both surface `retrieval_path` so users can see whether a hit came from cosine similarity, the entity graph, or both.
 
-1. **Pending subtask** — if the chat has a `pendingSubtask` entry, the message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). Cleared after creation.
-2. **Pending action** — if the chat has a `pendingAction` entry (from the action menu), the message is treated as the argument for that action (edit text, comment text, or move target ID). Cleared after execution.
-3. **Undo** — if the message is literally "undo" (case-insensitive), it bypasses the LLM entirely.
+### `find_mentions` (graph-only)
 
-Otherwise, the classifier returns one of:
-
-| Intent | Action |
-|--------|--------|
-| `create_reminder` | Creates a new reminder with parsed project/section/priority/due date |
-| `list_reminders` | Shows active reminders, optionally filtered (today, overdue, this_week) |
-| `complete_reminder` | Finds and completes a task by description match |
-| `update_reminder` | Updates status/priority/project/content of a task |
-| `add_comment` | Adds a progress comment to a matched task |
-| `move_reminder` | Moves a task under another task or to root level by description match |
-| `undo` | Reverses the last action for this chat |
-| `capture_thought` | Default fallback — captures as a thought |
-
-Each classified action shows `"Interpreted as [type]"` prefix and an `"undo"` hint.
-
-### Slash Commands
-
-| Command | Action |
-|---------|--------|
-| `/remind <text>` | Create reminder (parsed via LLM for project/priority/due date) |
-| `/todos` | List active reminders with inline keyboard buttons |
-| `/done <id>` | Mark a reminder complete (supports short IDs, cascade-completes subtasks) |
-| `/delete <id>` | Delete a reminder and all subtasks/comments (supports short IDs) |
-| `/edit <id> <new text>` | Edit a reminder's content (re-embeds, stores previous state for undo) |
-| `/move <id> <parent-id\|root>` | Move a task under another task or to root level |
-| `/comment <id> <text>` | Add a progress comment |
-| `/subtask` | Select a reminder and add a subtask (inline keyboard flow) |
-| `/review` | Placeholder — not yet implemented |
-
-### Inline Keyboard Buttons
-
-`/todos` renders numbered tasks with three buttons per task:
-
-- `done:{id}` (checkmark + number) — marks task complete (cascade to subtasks), re-renders the full list
-- `cycle:{id}` (status icon + number) — cycles status: not_started -> in_progress -> paused -> blocked -> not_started (done excluded from cycle)
-- `actions:{id}` (gear + number) — opens the action menu for that task
-
-### Action Menu
-
-Triggered by the gear button on any task. Sends a new message with five action buttons:
-
-| Button | Callback Data | Behavior |
-|--------|---------------|----------|
-| Edit | `action-edit:{id}` | Sets `pendingAction` to `edit`, prompts for new text |
-| Comments | `action-comments:{id}` | Lists existing comments with edit/delete buttons per comment |
-| Move | `action-move:{id}` | Sets `pendingAction` to `move`, prompts for target ID or "root" |
-| Delete | `action-delete:{id}` | Immediately deletes the task + subtasks + comments |
-| Subtask | `action-subtask:{id}` | Enters subtask creation flow (same as `subtask:{id}`) |
-| Add Comment | `action-comment:{id}` | Sets `pendingAction` to `comment`, prompts for comment text |
-
-### Comment Management (Telegram)
-
-The Comments view (`action-comments:{id}`) shows each existing comment numbered, with a timestamp, and two buttons per comment: ✏ Edit (`action-edit-comment:{commentId}`) and 🗑 Delete (`action-delete-comment:{commentId}`).
-
-- **Edit comment:** `action-edit-comment:{commentId}` — sets `pendingAction` to `comment-edit` (storing both `reminderId` and `commentId`), prompts user for new text. Next plain text message calls `commentsSvc.updateComment()`.
-- **Delete comment:** `action-delete-comment:{commentId}` — immediately calls `commentsSvc.deleteComment()`, replies with confirmation.
-
-### Pending State Machines
-
-Two state machines maintain conversational context per chat (keyed by `chatId`):
-
-**`pendingSubtask`** — When a user clicks a subtask button, the chat enters a pending state. The next plain text message is treated as subtask content (parsed through the reminder LLM parser for priority/due date). The state stores: `parentId`, `parentContent`, `parentProject`, `parentSection`, `depth`. Cleared after creation.
-
-**`pendingAction`** — When a user clicks an action menu button (edit/comment/move/comment-edit), the chat enters a pending state. The next plain text message is treated as the argument for that action. For `move`, if the target is invalid, the pending state is re-set so the user can try again. Stores: `action` ('edit' | 'comment' | 'move' | 'comment-edit'), `reminderId`, and optionally `commentId` (for `comment-edit` flow).
-
-### Undo Support
-
-Per-chat state tracking (`lastActions` Map). Stores the last action type, reminder ID, and previous state. Supports undoing:
-
-| Action | Undo Behavior |
-|--------|---------------|
-| `create` | Deletes the created reminder |
-| `complete` | Restores previous status (default: not_started) |
-| `update` | Restores previous content, status, priority, project |
-| `comment` | Deletes the comment |
-
-### Media Handlers
-
-| Message Type | Content | File Handling |
-|-------------|---------|---------------|
-| Text | Message text | None — intent classified or captured |
-| Photo | Caption or "Photo capture" | Downloads largest resolution via Bot API |
-| Voice | AI transcription + summary (Gemini Flash) | Downloads .ogg via Bot API |
-| Document | AI summary (Gemini Flash) | Downloads via Bot API, MIME resolved from extension |
-
-**MIME type inference** (`src/telegram/mime-utils.ts`): When Telegram reports `application/octet-stream`, the extension-to-MIME map resolves the actual type. Covers 25 common extensions (pdf, png, jpg, gif, webp, mp4, mp3, wav, ogg, txt, csv, json, doc, docx, html, htm, xml, md, rtf, xls, xlsx, ppt, pptx, zip).
-
-**Summarization routing** (`getSummarizationRoute()`): Three paths based on MIME type:
-- `inline_data` — binary sent to Gemini (PDF, images, audio, video)
-- `text_extraction` — read as UTF-8 (max 30K chars), summarize as text (HTML, CSV, JSON, RTF, XML, Markdown, plain text)
-- `unsupported` — stored but not summarized, user warned with the unsupported MIME type
+`POST /api/v1/find-mentions` and MCP `find_mentions` — exact entity lookup. Resolves the input string against `entities` (canonical name OR any alias, case-insensitive), then returns every `chunk_entities` edge for that entity with the chunks attached. Used when you want "every doc that mentions pgvector" rather than "docs semantically related to pgvector."
 
 ---
 
-## 10. MCP Server
+## 8. RAG (`src/services/rag.ts`)
 
-**Implementation:** `src/mcp/server.ts`, `src/mcp/profiler-tools.ts`, `src/mcp/reminder-tools.ts`
+Question-answering over the corpus. Exposed via `POST /api/v1/rag` only (not in MCP — the MCP `search` tool is the building block; a client can synthesize on its own with the chunks).
 
-**Transport:** Streamable HTTP (`WebStandardStreamableHTTPServerTransport`, stateless).
+### Pipeline
 
-**Auth:** `x-brain-key` header or `?key=` query parameter on `/mcp` endpoint.
+```
+1. Resolve depth + query entities
+   - depth: 'fast' | 'thorough' | 'auto'
+   - 'auto' → run classifyQueryDepth (Haiku) → returns {depth, reason, entities}
+   - 'fast'|'thorough' → skip classifier (zero classify_ms), no entity extraction
+2. searchWithTimings (same path as REST /search) → top N chunks + retrieval_path per hit
+3. Build context: numbered passages, source URL inline if present
+4. Synthesize:
+   - depth === 'thorough' → ragDeepLLM (gpt-5-4-pro Responses API) with reasoning
+   - else → ragFastLLM (gpt-5-4 chat completions)
+5. Return answer + citations + meta.timings_ms (classify, embed, db_scan, graph, synthesize, total)
+```
 
-### AI Client Setup — Two Mechanisms
+### Default depth: `fast` (commit `a355ca6`)
 
-Open Brain uses two complementary mechanisms to teach AI clients how to use it:
+Why this matters: a baseline profile (`docs/profiles/2026-04-25-rag-effort-baseline.md`) showed the reasoning model paying **22-36× the latency for marginal-to-zero quality gain** on retrieval-grounded queries. The classifier was routing ~half the queries to thorough; defaulting to fast cuts p95 latency dramatically without measurable quality loss. `auto` and `thorough` remain available as opt-in via the `depth` body parameter. The classifier code stays — it's still useful for query-entity extraction.
 
-1. **Server instructions (automatic):** The `McpServer` is created with an `instructions` field in its options. MCP-compliant clients (Claude, etc.) receive this string on connection and apply it automatically — no user configuration needed. The instructions tell the AI to call `brain_help` at session start, call `get_user_profile` to bootstrap context, proactively capture via `capture_thought`, and suggest reminders when commitments are mentioned.
+### Reasoning effort
 
-2. **`get_user_prompt` tool (portable):** For non-MCP clients (ChatGPT, raw API usage, etc.), the `get_user_prompt` tool returns the same behavioral instructions as a copyable system prompt. Users paste it into their AI client's custom instructions or system prompt field once, and any AI client gains the same proactive behavior.
+`POST /api/v1/rag` accepts `reasoning_effort: 'low' | 'medium' | 'high'` — only meaningful when `depth === 'thorough'`. Plumbed through `LLMOptions` to `AzureFoundryResponsesProvider`. **`gpt-5-4-pro` rejects `'low'`** with HTTP 400 (`"param": "reasoning.effort"`) — only `medium` (default) and `high` work. Newer models may expose more effort levels; re-test on swaps.
 
-### Tools (24 total)
+---
 
-**Profiler tools (14):**
+## 9. Entity Graph Layer
 
-| # | Tool | Description |
+Migration `003_entities_graph.sql` introduced two tables: `entities` (canonical names + aliases + embedding) and `chunk_entities` (many-to-many edges with confidence). This is the layer that lets the system "expand" a vector hit along entity edges — recovering recall lost by not running HNSW.
+
+### Resolution algorithm (`src/services/entities.ts`)
+
+```
+For each entity returned by Haiku:
+  1. Try exact-name match against entities.canonical_name (case-insensitive)
+  2. Try alias match against entities.aliases (case-insensitive)
+  3. Embed the canonical name and search by cosine similarity ≥ 0.85
+  4. If still unresolved, INSERT new entity (with embedded canonical name)
+```
+
+### Edges (`chunk_entities`)
+
+After resolving each entity, the service maps Haiku's mention strings to chunks via verbatim string search (`chunk.content.includes(mention)`). One edge per matching chunk.
+
+A **surface-fallback sweep** runs after the primary mapping: for every chunk that verbatim-contains the canonical name or any alias but doesn't already have an edge to that entity, the service adds the edge with a slightly lower confidence. This catches chunks that Haiku didn't quote in its top-5 mentions per entity — a critical fix for multi-chunk docs where Haiku's mention list is necessarily sparse. Lowered the extraction threshold to 30 chars at the same time so image OCR (typically 79 chars) and audio transcription (typically 81 chars) don't get skipped silently.
+
+Backfill endpoint (`POST /api/v1/diagnostics/backfill-entities`) re-runs extraction across existing chunks. Used when the pipeline changes mid-corpus.
+
+### Diagnostics
+
+- `GET /api/v1/diagnostics/entities` — list registered entities + counts
+- `GET /api/v1/diagnostics/content/:id/edges` — show chunks + edge counts for a single content item
+- `POST /api/v1/diagnostics/backfill-entities` — sweep existing chunks
+
+These exist because Postgres is firewalled in production — direct `psql` from a laptop times out. The diagnostics endpoints are the way to introspect graph state.
+
+---
+
+## 10. MCP Server (`src/mcp/server.ts`)
+
+Stateless HTTP. The server constructs a fresh `McpServer` + `WebStandardStreamableHTTPServerTransport` per request — no session state between requests. Auth via `Authorization: Bearer ...` header or `?key=...` query parameter (same key as REST).
+
+The server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code). It tells the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
+
+### 8 tools
+
+| # | Tool | What it does |
 |---|------|-------------|
-| 1 | `brain_help` | Returns AI usage guide — when/how to capture, third-person format, 14-tag system |
-| 2 | `get_user_prompt` | Returns a portable system prompt to paste into any AI client (Claude, ChatGPT, etc.) |
-| 3 | `get_user_profile` | Session bootstrap — synthesized profile summary |
-| 4 | `search_thoughts` | Tiered semantic search: insights -> facts -> captures. Optional `tags` filter (AND semantics). |
-| 5 | `capture_thought` | Capture text + optional file URLs. Optional `tags` array; if omitted, auto-classified. |
-| 6 | `brain_stats` | Dashboard — counts by type, facts/insights by tag, captures by source |
-| 7 | `archive_thought` | Soft-delete (no cascade recalculation) |
-| 8 | `unarchive_thought` | Restore archived item |
-| 9 | `update_fact` | Direct user edit — sets origin to `user_edited`, confidence to 1.0 |
-| 10 | `review_pending` | List items with `pending_review` status |
-| 11 | `approve_reject` | Approve, reject, or edit pending review items (looks up by UUID across facts and insights) |
-| 12 | `run_consolidation` | Manually trigger consolidation pipeline |
-| 13 | `update_tags` | Replace tags on any tier item (capture, fact, insight) by UUID. Validates against allowlist. |
-| 14 | `daily_checkin` | Returns a reflective questionnaire with recent activity context for scheduled Claude check-in sessions |
+| 1 | `list_projects` | List all projects (filter by status optional) |
+| 2 | `create_project` | Create a project |
+| 3 | `list` | Browse with `entity_type` filter (`document` / `note` / `todo`) + project filter |
+| 4 | `get` | Fetch by UUID — auto-detects entity type (project / content / todo) |
+| 5 | `create` | Discriminated union over `document` / `note` / `quick_note` / `todo` |
+| 6 | `search` | Hybrid vector + graph semantic search; returns `retrieval_path` per hit |
+| 7 | `find_mentions` | Exact entity lookup (canonical name or alias) → list of chunks |
+| 8 | `save_from_url` | Ingest by URL (YouTube / X / PDF / HTML / direct media) |
 
-**Reminder tools (10):**
-
-| # | Tool | Description |
-|---|------|-------------|
-| 15 | `create_reminder` | Create a task or subtask (with project, section, priority, due date) |
-| 16 | `list_reminders` | List reminders with flexible filtering (project, status, priority, due range) |
-| 17 | `get_reminder_detail` | Single task with all comments and full subtask tree |
-| 18 | `update_reminder` | Change status, priority, content, due date, move project/section |
-| 19 | `complete_reminder` | Mark done (cascades to all subtasks) |
-| 20 | `delete_reminder` | Delete with cascade (all subtasks and comments) |
-| 21 | `add_reminder_comment` | Add a timestamped progress comment |
-| 22 | `list_projects` | All projects with task count stats by status |
-| 23 | `edit_comment` | Edit the text of an existing comment (re-embeds content) |
-| 24 | `delete_comment` | Delete a comment by ID; returns the deleted comment content |
-
-### brain_help
-
-The `brain_help` tool returns a detailed guide for AI clients on when to capture, what format to use (third person, one signal per capture, 14-tag system), when to provide tags vs let auto-classify, and how to use tag-filtered search. It encourages **proactive capture** — AI clients should capture observations without waiting for explicit user requests.
+**No `update_*` or `delete_*` MCP tools.** Edits and deletes go through the web UI (or REST). Rationale: AI clients should be additive about a user's knowledge base — let the human curate destructive ops.
 
 ---
 
 ## 11. REST API
 
-**Framework:** Hono (`src/app.ts`)
-
-**Port:** 3000 (configurable via `PORT`)
-
-The REST API provides comprehensive CRUD coverage for all resources. All adapters (MCP, Telegram) call the service layer directly — the REST API is a separate adapter, not a pass-through.
+Defined in `src/app.ts`. Auth: `Authorization: Bearer <api-key>` or `?key=<api-key>` (same key as MCP).
 
 ### Endpoints
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| GET | `/` | None | Health check — returns `{"status":"ok","service":"open-brain-v2"}` |
-| GET | `/api/v1/captures` | Bearer | List captures (`?limit=N`, `?status=`) |
-| POST | `/api/v1/captures` | Bearer | Capture a thought (canonical path) |
-| POST | `/api/v1/capture` | Bearer | Capture a thought (backward-compatible alias) |
-| GET | `/api/v1/captures/:id` | Bearer | Get a single capture |
-| PATCH | `/api/v1/captures/:id/tags` | Bearer | Replace tags on a capture |
-| POST | `/api/v1/captures/:id/archive` | Bearer | Archive a capture |
-| POST | `/api/v1/captures/:id/unarchive` | Bearer | Restore a capture |
-| GET | `/api/v1/facts` | Bearer | List facts (`?limit=N`, `?min_confidence=`) |
-| GET | `/api/v1/facts/:id` | Bearer | Get a single fact |
-| PUT | `/api/v1/facts/:id` | Bearer | Update fact content (re-embeds, sets `user_edited`) |
-| PATCH | `/api/v1/facts/:id/tags` | Bearer | Replace tags on a fact |
-| POST | `/api/v1/facts/:id/archive` | Bearer | Archive a fact |
-| POST | `/api/v1/facts/:id/unarchive` | Bearer | Restore a fact |
-| POST | `/api/v1/facts/:id/approve` | Bearer | Approve a pending-review fact |
-| POST | `/api/v1/facts/:id/reject` | Bearer | Reject a pending-review fact |
-| GET | `/api/v1/insights` | Bearer | List insights (`?limit=N`) |
-| GET | `/api/v1/insights/:id` | Bearer | Get a single insight |
-| PUT | `/api/v1/insights/:id` | Bearer | Update insight content |
-| PATCH | `/api/v1/insights/:id/tags` | Bearer | Replace tags on an insight |
-| POST | `/api/v1/insights/:id/archive` | Bearer | Archive an insight |
-| POST | `/api/v1/insights/:id/unarchive` | Bearer | Restore an insight |
-| POST | `/api/v1/insights/:id/approve` | Bearer | Approve a pending-review insight |
-| POST | `/api/v1/insights/:id/reject` | Bearer | Reject a pending-review insight |
-| GET | `/api/v1/reminders` | Bearer | List reminders (`?status=`, `?project=`, `?priority=`, `?include_done=`, `?top_level_only=`, `?limit=`) |
-| POST | `/api/v1/reminders` | Bearer | Create a reminder |
-| GET | `/api/v1/reminders/:id` | Bearer | Get reminder detail (includes comments + subtask tree) |
-| PATCH | `/api/v1/reminders/:id` | Bearer | Update reminder fields |
-| POST | `/api/v1/reminders/:id/complete` | Bearer | Mark done (cascades to subtasks) |
-| DELETE | `/api/v1/reminders/:id` | Bearer | Delete reminder (cascade) |
-| POST | `/api/v1/reminders/:id/reparent` | Bearer | Move to a different parent (or root) |
-| GET | `/api/v1/reminders/:id/comments` | Bearer | List comments for a reminder |
-| POST | `/api/v1/reminders/:id/comments` | Bearer | Add a comment to a reminder |
-| GET | `/api/v1/comments/:id` | Bearer | Get a single comment |
-| PUT | `/api/v1/comments/:id` | Bearer | Update a comment (re-embeds content) |
-| DELETE | `/api/v1/comments/:id` | Bearer | Delete a comment |
-| POST | `/api/v1/search` | Bearer | Semantic search across captures/facts/insights |
-| GET | `/api/v1/profile` | Bearer | LLM-synthesized profile summary |
-| GET | `/api/v1/stats` | Bearer | Brain statistics dashboard |
-| GET | `/api/v1/review/pending` | Bearer | Pending facts and/or insights (`?type=fact\|insight`) |
-| GET | `/api/v1/projects` | Bearer | List all projects with task count stats |
-| GET | `/api/v1/consolidation/logs` | Bearer | Consolidation run history |
-| POST | `/api/v1/consolidation/trigger` | Bearer | Manually trigger consolidation |
-| ALL | `/mcp` | x-brain-key | MCP streamable HTTP transport |
-| POST | `/telegram/webhook` | Telegram secret | Telegram webhook handler |
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | `{"ok":true,"service":"open-brain","version":"2.0.0"}` (no auth) |
+| GET / POST / PUT / DELETE | `/api/v1/projects[/:id]` | Project CRUD |
+| POST | `/api/v1/projects/:id/restore` | Unarchive |
+| GET / POST / PUT / DELETE | `/api/v1/content[/:id]` | Content item CRUD (POST accepts JSON or `multipart/form-data` with `file` field) |
+| POST | `/api/v1/content/from-url` | URL ingestion |
+| POST | `/api/v1/content/:id/restore` | Unarchive |
+| GET / POST / PUT / DELETE | `/api/v1/todos[/:id]` | Todo CRUD |
+| POST | `/api/v1/todos/:id/restore` | Unarchive |
+| GET / POST / PUT / DELETE | `/api/v1/todos/:id/comments[/:cid]` | Todo comments CRUD |
+| POST | `/api/v1/search` | Hybrid vector + graph search |
+| POST | `/api/v1/find-mentions` | Exact entity lookup |
+| POST | `/api/v1/rag` | RAG Q&A (`depth: 'auto' | 'fast' | 'thorough'`, `reasoning_effort: 'low' | 'medium' | 'high'`) |
+| GET | `/api/v1/diagnostics/entities` | List entities |
+| GET | `/api/v1/diagnostics/content/:id/edges` | Per-content graph introspection |
+| POST | `/api/v1/diagnostics/backfill-entities` | Re-run entity extraction |
+| ALL | `/mcp` | Stateless MCP — fresh server + transport per request |
 
-### Auth
+Soft delete by default (`archived = true`); `?hard=true` deletes permanently. The `restore` endpoints flip `archived` back.
 
-- **REST API (`/api/v1/*`):** Bearer token via `Authorization: Bearer <OPEN_BRAIN_API_KEY>`
-- **MCP (`/mcp`):** `x-brain-key` header or `?key=<OPEN_BRAIN_API_KEY>` query parameter
-- **Telegram (`/telegram/webhook`):** `X-Telegram-Bot-Api-Secret-Token` header must match `TELEGRAM_WEBHOOK_SECRET`
-
-### Rate Limiting
-
-100 requests per minute per Authorization header value. In-memory Map, resets after 60 seconds. Applied to `/api/*` routes only.
+`/api/v1/content` GET / list / update endpoints route their `blob_url` field through `stripAndSignContent()` before responding — produces a SAS-signed URL with default 60-min TTL via `BlobStorage.getReadSasUrl()`. URLs that are empty, external, or already signed pass through unchanged.
 
 ---
 
 ## 12. Provider Abstraction
 
-**Implementation:** `src/providers/types.ts`, `src/providers/gemini-embedding.ts`, `src/providers/gemini-llm.ts`, `src/providers/anthropic-llm.ts`
-
-### Interfaces
+`src/providers/types.ts` defines the two interfaces every model client implements:
 
 ```typescript
 interface EmbeddingProvider {
@@ -662,332 +473,278 @@ interface EmbeddingProvider {
 interface LLMProvider {
   complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse>;
 }
-
-// LLMMessage.content can be string OR LLMContentPart[] (multimodal)
-// LLMResponse includes tokensUsed: { input, output, total }
+// LLMOptions: maxTokens, temperature, systemPrompt, responseFormat, reasoningEffort
+// LLMResponse: content, tokensUsed: { input, output, reasoning?, total }
 ```
 
-### Current Implementations
+### Implementations
 
-| Provider | Class | Default Model | Used For |
-|----------|-------|---------------|----------|
-| Gemini Embedding 2 | `GeminiEmbeddingProvider` | `gemini-embedding-2-preview` | All embeddings (3072 dims, multimodal) |
-| Gemini 2.5 Flash | `GeminiLLMProvider` | `gemini-2.5-flash` | Metadata extraction, intent classification, retrieval synthesis, voice transcription, document summarization |
-| Claude Opus 4.6 | `AnthropicLLMProvider` | `claude-opus-4-6` | Consolidation (Phase 1 + Phase 2). Default max tokens: 8192 |
+| Class | File | Default model |
+|-------|------|---------------|
+| `GeminiEmbeddingProvider` | `gemini-embedding.ts` | `gemini-embedding-2-preview` (3072d, multimodal) |
+| `GeminiLLMProvider` | `gemini-llm.ts` | constructor takes default model — used for `gemini-3-flash-preview` audio/video metadata |
+| `AnthropicLLMProvider` | `anthropic-llm.ts` | `claude-haiku-4-5-20251001` |
+| `AzureFoundryLLMProvider` | `azure-foundry-llm.ts` | chat completions; `gpt-5-4` |
+| `AzureFoundryResponsesProvider` | `azure-foundry-responses.ts` | Responses API; `gpt-5-4-pro` (reasoning support) |
 
-### extractJson Workaround
+All four LLM providers were instrumented in commit `e5133dc` to log per-call latency + tokens (input / output / reasoning / visible) and `output_items` breakdown for the Responses API. Use these to triage RAG latency without redeploying.
 
-**Problem:** Gemini 2.5 Flash often wraps JSON responses in markdown code blocks (`` ```json ... ``` ``) even when `responseMimeType: 'application/json'` is set.
+### `extractJson()` (`src/providers/json-utils.ts`)
 
-**Solution:** `extractJson()` in `src/providers/gemini-llm.ts` strips markdown wrapping. It tries, in order:
-1. Is the trimmed text already valid JSON (starts with `{` or `[`)?
-2. Extract from `` ```json ... ``` `` code blocks.
-3. Find first `{` or `[` and extract to matching closing bracket.
-4. Give up and return original text.
+LLMs sometimes wrap JSON in markdown fences ` ```json ... ``` ` even with `responseFormat: 'json'`. `extractJson()` strips wrapping in three passes:
 
-### llmJsonParse Retry Helper
+1. Trim and check if already valid JSON (starts with `{` or `[`)
+2. Match a `` ```json ... ``` `` block
+3. Find first `{` / `[` and extract to matching close
 
-**Problem:** Gemini's JSON output is non-deterministic — the same prompt can produce valid JSON, markdown-wrapped JSON, or occasionally malformed output.
+Every LLM-JSON path in the service layer routes through this. When you add a new JSON-returning call, route it too.
 
-**Solution:** `llmJsonParse<T>()` in `src/telegram/llm-parse.ts` wraps LLM calls with 3 retry attempts. On each attempt it calls `llm.complete()` and `JSON.parse()`. Returns `null` after all retries fail.
+### PDF parsing (`src/providers/pdf-extract.ts`)
+
+`pdf-parse` v2 ships a `PDFParse` class — the v1 default-import function is gone. `sanitizeControlChars()` strips NUL/FF/VT bytes that `pdf-parse` occasionally leaks into extracted text (those would otherwise break strict JSON parsers like jq downstream).
 
 ---
 
 ## 13. Infrastructure
 
-**Implementation:** `infra/main.bicep` and `infra/modules/*.bicep`
+### Bicep modules (`infra/`)
 
-### Azure Resources
+| Module | Resource |
+|--------|----------|
+| `modules/container-app.bicep` | Hosts API + MCP + web UI. `minReplicas: 1` (always-on). Managed identity for ACR pull. |
+| `modules/postgresql.bicep` | PostgreSQL Flexible Server (B1ms, pgvector enabled) |
+| `modules/storage.bicep` | Blob Storage account + container; `Allow Blob Public Access = false` |
+| `modules/keyvault.bicep` | All secrets (db connection string, API keys) |
+| `modules/monitoring.bicep` | Log Analytics + Application Insights |
+| `modules/function-app.bicep` | **Legacy** — pre-pivot consolidation timer trigger; now deploys a no-op (see §16) |
 
-| Resource | Bicep Module | Details |
-|----------|-------------|---------|
-| Container App | `modules/container-app.bicep` | Hosts API + MCP + Telegram. **minReplicas: 1** (always-on, no cold starts). Managed identity for ACR pull. |
-| Function App | `modules/function-app.bicep` | Timer trigger for consolidation. Consumption plan. |
-| PostgreSQL Flexible Server | `modules/postgresql.bicep` | B1ms tier. pgvector extension. |
-| Blob Storage | `modules/storage.bicep` | File uploads (images, audio, video, PDFs). |
-| Key Vault | `modules/keyvault.bicep` | All secrets (API keys, connection strings, tokens). |
-| Log Analytics + App Insights | `modules/monitoring.bicep` | Telemetry and logging. |
+### Why ACR role assignment is CLI-only
 
-### IaC Notes
+The shared ACR lives in `shared-rg`; the Container App lives in `openbrain-rg`. Cross-resource-group role assignment can't be expressed in Bicep at resource-group scope, so SETUP.md does it via `az role assignment create` after Bicep deploys.
 
-- Bicep uses managed identities (no stored credentials at runtime).
-- Secrets are passed via CLI parameters at deploy time, not in `parameters.json`.
-- ACR role assignment (AcrPull) must be done via CLI because the ACR is in a different resource group (`shared-rg`) than the Container App (`openbrain-rg`). Cross-resource-group role assignments cannot be expressed in Bicep at resource group scope.
+### Auto-migration on startup
 
-### CI/CD
+`runMigrations()` in `src/server.ts` is the canonical migration path. It probes for table/column existence and applies any missing migrations. Idempotent — safe to restart the container any number of times. The Postgres pool is the raw `pg.Pool` (not the pgvector-typed client) so it works before the `vector` extension is registered.
 
-**CI** (`.github/workflows/ci.yml`): Runs on PR and push to main. Steps: `npm ci`, `tsc --noEmit`, `npm test` (unit tests with `GEMINI_API_KEY` secret), `npm run test:e2e` (E2E tests against PostgreSQL service container). The CI uses a `pgvector/pgvector:pg16` service container for E2E tests.
+### CI/CD (`.github/workflows/`)
 
-**CD** (`.github/workflows/deploy.yml`): Runs on push to main. OIDC auth to Azure. Steps: build Docker image with git SHA tag, push to ACR, update Container App revision, deploy Function App.
+- **`ci.yml`** (PR + push to main): `npm ci`, `tsc --noEmit`, `npm test`, `cd web && npm ci && npm run build`. `GEMINI_API_KEY` is exposed for any tests that hit real Gemini integration paths (most tests use mocks; very few hit the real API).
+- **`deploy.yml`** (push to main): OIDC auth → build Docker image with `${{ github.sha }}` tag → push to ACR → `az containerapp update --image ...`. Also runs `Azure/functions-action` to publish the legacy consolidation function (cleanup pending — see §16).
 
-### Auto-Migration
-
-On startup, `src/server.ts` checks if the `captures` table exists by querying `pg_tables`. If not, it reads `migrations/001_initial_schema.sql` and runs it. Uses `pool.query` (raw pool) instead of the pgvector-typed client to avoid a chicken-and-egg problem: pgvector type registration requires the `vector` extension to exist, but the extension is created by the migration itself.
-
-### Docker
-
-Multi-stage build (`Dockerfile`):
-1. **Builder stage:** `node:20-alpine`, `npm ci`, `npm run build` (TypeScript compilation).
-2. **Runner stage:** `node:20-alpine`, installs `ffmpeg` (for audio/video conversion), `npm ci --omit=dev`, copies compiled JS and migrations.
-
-### Container App Configuration
-
-- **minReplicas: 1** — Always-on. Eliminates cold start latency for Telegram webhooks.
-- **Image tags must be unique** (git SHA). Azure Container Apps only creates a new revision when the image reference changes. Pushing under the same `latest` tag does not trigger redeployment.
-- **Platform: linux/amd64** — Required when building on Apple Silicon.
-
-### HNSW Indexes
-
-Deferred. The B1ms PostgreSQL tier does not have enough memory to build HNSW indexes for 3072-dimension vectors. PostgreSQL requires the entire index to fit in `maintenance_work_mem` during build. Sequential scans (`ORDER BY embedding <=> $1`) work correctly at single-user scale. The index creation SQL is commented out in the migration file.
+CI and Deploy run independently. CI passing while Deploy fails (and vice versa) is possible. Always check both.
 
 ---
 
-## 14. Known Limitations & Gotchas
+## 14. Testing
 
-### Gemini 2.5 Flash
+Vitest. **88 tests across 16 files** (as of 2026-04-25). One vitest config (`vitest.config.ts`) for unit + integration; a separate `vitest.e2e.config.ts` exists but the `tests/e2e/` folder it points at is currently unused — the `tests/integration/` files already exercise the full app surface against mocked providers and an in-memory test pg, which is what's actually being run in CI.
 
-- **maxTokens must be >= 1024:** Gemini 2.5 Flash's thinking tokens consume the output token budget. If maxTokens is too low, the model may exhaust the budget on thinking before producing any output. All calls use at least `maxTokens: 1024`.
-- **`responseFormat: 'json'` is unreliable:** Setting `responseMimeType: 'application/json'` does not guarantee clean JSON. The `extractJson()` function strips markdown wrapping as a post-processing step.
-- **Non-deterministic JSON output:** The same prompt can produce different JSON structures across calls. The `llmJsonParse` retry helper (3 attempts) mitigates this for critical paths.
+| Layer | Path | What it tests |
+|-------|------|---------------|
+| Unit | `tests/unit/capture/` | Mime utilities, URL detection |
+| Unit | `tests/unit/db/` | Db client (pgvector type registration on first use) |
+| Unit | `tests/unit/mcp/` | MCP server tool wiring |
+| Unit | `tests/unit/providers/` | Anthropic, Gemini, embedding, PDF extraction, error paths |
+| Unit | `tests/unit/services/` | Search filter parity (F2 regression), entity mapping (F3) |
+| Unit | `tests/unit/storage/` | Blob client (incl. SAS signing for T3.5 fix) |
+| Integration | `tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
+| Integration | `tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
+| Integration | `tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
+| Integration | `tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
+
+Mocks live in `tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
+
+For full live-system validation, see `E2E_TEST_PLAN.md` — 52 reproducible tests across 10 phases that hit production. Not part of the automated suite (LLM nondeterminism + cost + needs the owner's API key).
+
+---
+
+## 15. Known Limitations & Gotchas
+
+### LLM/JSON
+
+- **Markdown-fenced JSON.** Anthropic and Gemini both ignore `responseFormat: 'json'` occasionally. Always run JSON output through `extractJson()`. Adding a new LLM-JSON path? Route it.
+- **Output token budget.** Haiku metadata calls use `maxTokens: 8192` for PDF-scale inputs (the default 2048 truncates real PDFs). Entity extraction caps input at 50K chars and uses 4096.
+- **Reasoning model effort levels.** `gpt-5-4-pro` rejects `reasoning_effort: 'low'` (HTTP 400). Only `medium` and `high` work. Newer models may expose more — re-test.
+
+### Embeddings
+
+- **Gemini Embedding 2 default dim is 768.** We explicitly request 3072. Verify in `src/providers/gemini-embedding.ts` if you ever change provider.
+- **Multimodal MIME whitelist** for embedding: `image/png`, `image/jpeg`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/quicktime`, `application/pdf`. Anything else needs to be converted upstream.
+- **Generative Language API must be enabled** on the GCP project tied to the API key. Otherwise: `API has not been used in project ... or it is disabled`.
 
 ### PostgreSQL
 
-- **HNSW indexes cannot be created on B1ms tier:** Not enough memory for 3072-dimension vectors. Sequential scans are used instead.
-- **pgvector chicken-and-egg:** Auto-migration uses `pool.query` (raw) instead of the pgvector-typed client because the `vector` extension does not exist until the migration creates it.
+- **`db.query()` calls `ensureVector()`** which lazily registers pgvector types on first use. Migrations creating the `vector` extension must use `pool.query()` directly (chicken-and-egg).
+- **No HNSW.** B1ms can't allocate `maintenance_work_mem` for HNSW init at 3072 dims. Sequential scan is the cost.
+- **Postgres firewall.** Production DB rejects connections from the open internet. Use `/api/v1/diagnostics/*` endpoints for graph introspection — `psql` from a laptop will time out.
 
 ### Azure
 
-- **ACR role assignment must be CLI:** Cross-resource-group scope (ACR in `shared-rg`, Container App in `openbrain-rg`) cannot be expressed in Bicep.
-- **Container App revisions require unique image tags:** Pushing a new image under the `latest` tag does not trigger a new revision. Always use git SHA tags.
-- **Docker image must be pushed before first Bicep deploy:** The Container App references an image at deploy time. If it does not exist, Bicep fails.
+- **240s response timeout on Container App.** URL ingestion can exceed this when fallbacks chain. Server completes the work; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
+- **Image tag uniqueness for revisions.** Container Apps only creates a new revision when the image *reference* changes. Push under git SHA tags, not just `:latest`.
+- **Cross-RG role assignment must be CLI.** ACR lives in `shared-rg`; Container App in `openbrain-rg`. Bicep at RG-scope can't express it.
+- **Apple Silicon platform flag.** `docker build --platform linux/amd64`. Default arm64 won't run on Azure x86-64.
 
-### Telegram
+### URL ingest
 
-- **Document handler needs try/catch:** All media handlers wrap processing in try/catch to guarantee a reply to the user even on error. Without this, the user sees no response and Telegram retries.
-- **Media groups not yet supported:** Telegram sends media groups as separate messages with the same `media_group_id`. Requires stateful message buffering with a short timeout. Deferred.
-- **Webhook timeout prevention:** The webhook responds 200 immediately and processes in the background. Without this, Telegram retries after ~60 seconds, causing duplicate processing.
+- **YouTube: tries direct → Firecrawl → xAI.** Only succeeds when one returns a real transcript.
+- **X/Twitter: xAI Grok primary, Firecrawl stealth fallback.** Detect xAI miss responses up front to surface a clean `X_SEARCH_MISS:` error.
+- **HTML: Firecrawl markdown.** Reject content shorter than 300 chars or matching error/placeholder titles.
+- **Dedup is by source_url first, then file_hash for binary downloads.**
 
-### Dedup
+### Search / RAG
 
-- **File hash = exact match** (SHA-256 of original bytes). Same image with different text is a different capture.
-- **Semantic dedup = content similarity** (cosine similarity > 0.95 on embedding). This is the actual dedup gate.
-- **Conversion happens after hash check:** Files are hashed in their original form, then converted for embedding. The original file is uploaded to blob storage.
-
-### Consolidation
-
-- **Completed reminders as signal:** Only `done` status is read. The spec mentions cancelled and blocked as signal, but the current implementation filters on `status = 'done'` only.
-- **Subtask project cascade on update:** `updateReminder()` only updates the specified reminder's project/section. However, `reparentReminder()` does cascade project/section to all children.
-
-### Testing
-
-- **OOM with default pool:** Integration tests that create many full app instances can exceed default Node heap. Fixed with `pool: 'forks'` and `--max-old-space-size=4096` in vitest config.
-- **Test file splitting:** Some test files were split (e.g., `reminders.test.ts` + `reminders-features.test.ts`) to avoid OOM within a single fork.
+- **Filter parity on graph expansion.** The vector-seed path filters via `findSimilarChunks`; the graph-expansion path's separate SQL must include the same project/tags/parent_type filters. Was F2 — leaked untagged chunks at sim=1.0 if you forgot. Tests in `tests/unit/services/search.test.ts` lock this in.
+- **Entity threshold is 30 chars.** Was 100 originally and silently skipped image OCR (~79 chars) and audio transcription (~81 chars). Was F3 — fixed in commit `c9acd89`.
 
 ---
 
-## 15. Testing
+## 16. Legacy Infrastructure (cleanup candidates)
 
-**Framework:** Vitest
+Things still deployed but **not used** by the V2 app. Slated for removal on a quiet day. Listed here so future-you doesn't trip over them.
 
-**345 tests across 44 files.** Test suite uses `pool: 'forks'` with `--max-old-space-size=4096` to avoid OOM when integration tests create many full app instances.
+| Item | Why it's still there | When to remove |
+|------|---------------------|----------------|
+| `infra/modules/function-app.bicep` | Pre-pivot consolidation timer trigger | After confirming nothing in production points at it |
+| `functions/consolidation-trigger/` | Pre-pivot Azure Function source | With the Bicep module |
+| `Azure/functions-action` step in `deploy.yml` | Publishes the no-op function on every deploy | With the Bicep module |
+| `psql ... migrations/001_initial_schema.sql` step in `scripts/deploy.sh` | References a migration filename that no longer exists | Anytime — auto-migration on startup is the real path |
+| `telegramBotToken` / `telegramWebhookSecret` / `telegramChatId` Bicep params | Pre-pivot Telegram bot | After updating Bicep schema (no V2 code reads these) |
+| `consolidationSchedule` Bicep param | CRON for the no-op function | With the function-app module |
 
-### Test Categories
-
-**Unit tests (36 files):**
-- DB modules: captures, facts, insights, reminders, reminders-features, reminder-comments, consolidation-log, client
-- Providers: gemini-embedding, gemini-llm, anthropic-llm, provider-errors
-- Capture pipeline: dedup, metadata, media-convert, pipeline, pipeline-regression
-- Consolidation: clustering, phase1, phase2, phase3
-- Retrieval: profile, search
-- Notifications: digest, due-date-checker, format-reminders, review
-- MCP: profiler-tools, reminder-tools
-- Telegram: handlers, intent-classification, mime-types
-- Other: app, config, server-migration, blob storage
-
-**Integration tests (7 files):**
-- `api.test.ts` — REST API endpoint tests
-- `mcp-auth.test.ts` — MCP authentication tests
-- `nl-reminder-parsing.test.ts` — Real Gemini Flash calls for NL parsing quality (20 tests, retry-tolerant)
-- `telegram-pipeline.test.ts` — Full webhook -> intent -> action -> reply with mocked bot, real handlers
-- `telegram-webhook.test.ts` — Webhook handler integration tests
-- `telegram-nl.test.ts` — NL router integration tests
-- `telegram-cascade-move.test.ts` — Cascade done and reparent/move integration tests
-
-**E2E tests (1 file):**
-- `api-e2e.test.ts` — Full cycle E2E tests against real PostgreSQL (requires docker compose)
-
-### Test Configuration
-
-| Config File | Scope | Pool | Notes |
-|-------------|-------|------|-------|
-| `vitest.config.ts` | Unit + integration tests | `forks` | `execArgv: ['--max-old-space-size=4096']` to avoid OOM |
-| `vitest.e2e.config.ts` | E2E tests | default | 30s timeout, requires `E2E_DATABASE_URL` |
-
-### Running Tests
-
-```bash
-npm test                    # Unit + integration tests (no external deps except GEMINI_API_KEY for LLM tests)
-npm run test:e2e            # E2E tests (requires docker compose PostgreSQL on port 5434)
-npm run test:integration    # Integration tests only
-```
-
-### CI
-
-`.github/workflows/ci.yml` runs on PR and push to main:
-1. `npm ci` + `tsc --noEmit` (type check)
-2. `npm test` (unit tests, passes `GEMINI_API_KEY` secret for LLM integration tests)
-3. `npm run test:e2e` (E2E tests against PostgreSQL service container on port 5432)
-
-The CI workflow uses a `pgvector/pgvector:pg16` service container for E2E tests.
-
-### Test Helpers
-
-`tests/helpers/mocks.ts` — Shared mock factories for DbClient, EmbeddingProvider, LLMProvider, BlobStorage, and Config.
+When you do the cleanup, also strip references from `SETUP.md`, this doc, and any handoff docs in `docs/`.
 
 ---
 
-## 16. File Map
+## 17. File Map
 
 ```
 open-brain-v2/
-  src/
-    server.ts                         Entry point. App Insights init, migrations, starts HTTP server + background checkers.
-    app.ts                            Hono app. Routes, middleware (CORS, auth, rate limiting), error handler.
-    config.ts                         Zod-validated environment config with defaults.
-
-    capture/
-      pipeline.ts                     Universal ingest pipeline (hash -> embed -> dedup -> upload+metadata -> insert).
-      dedup.ts                        File hash check (SHA-256) + semantic dedup (cosine > 0.95).
-      metadata.ts                     LLM metadata extraction (people, topics, action_items, dates, type).
-      media-convert.ts                Convert files to Gemini-supported MIME types (sharp for images, ffmpeg for audio/video).
-
-    consolidation/
-      runner.ts                       Orchestrator: guard rails, Phase 1/2/3 sequencing, token budget tracking, logging.
-      phase1.ts                       Capture -> Fact promotion. LLM prompt with noise criteria, per-cluster transactions.
-      phase2.ts                       Fact -> Insight generation. Cross-cutting patterns, min 2 source facts, atomic commit.
-      phase3.ts                       Re-embed facts/insights with NULL embeddings, dispatch review notifications.
-      clustering.ts                   DBSCAN on embedding vectors (cosine distance). Noise points -> individual clusters.
-
-    retrieval/
-      profile.ts                      get_user_profile: insights + uncovered facts + active reminders -> Gemini Flash synthesis.
-      search.ts                       search_thoughts: tiered search (insights -> facts -> captures) with conditional evidence.
-
-    services/
-      index.ts                        ServiceDeps interface — dependency injection contract for all service modules.
-      captures.ts                     captureThought (pipeline), searchThoughts, listCaptures, getCapture, archive/unarchive.
-      comments.ts                     addComment, listComments, getComment, updateComment, deleteComment (owns embedding).
-      consolidation.ts                runConsolidation (delegates to pipeline runner), getConsolidationLogs.
-      facts.ts                        getFact, listFacts, updateFact (re-embeds), archiveFact, reviewPendingFacts, approveRejectFact.
-      insights.ts                     getInsight, listInsights, updateInsight, archiveInsight, reviewPendingInsights, approveRejectInsight.
-      profile.ts                      getUserProfile (LLM synthesis), getBrainStats (dashboard counts).
-      reminders.ts                    Full CRUD + createReminder (validates depth, embeds), completeReminder (cascade), reparentReminder.
-      tags.ts                         updateTags (validates allowlist, routes to correct DB table), getAllowedTags.
-      checkin.ts                      getDailyCheckinContext — gathers 24h activity, reminder stats, and reflective questionnaire for check-in sessions.
-
-    db/
-      client.ts                       PostgreSQL pool + pgvector type registration + transaction helper.
-      captures.ts                     CRUD for captures table. Similarity search, hash lookup, status updates.
-      facts.ts                        CRUD for facts table. User edit, version tracking, similarity search, review status.
-      insights.ts                     CRUD for insights table. Similarity search, review status, archival.
-      reminders.ts                    CRUD for reminders. Hierarchy (subtasks), filtering, project stats, due date queries.
-      reminder-comments.ts            CRUD for reminder_comments. getCommentById, updateComment, deleteComment.
-      consolidation-log.ts            Insert + query consolidation run logs.
-
-    providers/
-      types.ts                        EmbeddingProvider and LLMProvider interfaces. LLMMessage, LLMOptions, LLMResponse types.
-      gemini-embedding.ts             Gemini Embedding 2 (gemini-embedding-2-preview, 3072 dims, multimodal).
-      gemini-llm.ts                   Gemini 2.5 Flash (gemini-2.5-flash). Includes extractJson() workaround.
-      anthropic-llm.ts                Claude Opus 4.6 (claude-opus-4-6, default max 8192 tokens).
-
-    mcp/
-      server.ts                       MCP server setup (McpServer + streamable HTTP transport + auth middleware).
-      profiler-tools.ts               14 profiler tools including brain_help, get_user_profile, capture, search, review, daily_checkin.
-      reminder-tools.ts               10 reminder tools: CRUD, comments (add/edit/delete), projects.
-
-    telegram/
-      webhook.ts                      Bot setup, webhook route, shared state initialization, dedup guard, registers handler modules.
-      command-handlers.ts             All /slash command handlers + callback_query handler (inline buttons, action menu, status cycle).
-      nl-router.ts                    NL intent classifier + NL action handlers + pending state machines + media handlers.
-      handlers.ts                     Pure handler functions (testable without bot instance): text, photo, voice, document.
-      prompts.ts                      Intent classifier and reminder parser system prompts (date-aware, timezone-aware).
-      llm-parse.ts                    llmJsonParse<T>() retry helper (3 attempts, returns null on failure).
-      state.ts                        Shared state types: LastActionEntry, PendingSubtaskEntry, PendingActionEntry, StateRefs.
-      mime-utils.ts                   Extension-to-MIME map (25 types), resolveMimeType(), getSummarizationRoute().
-
-    notifications/
-      format-reminders.ts             Reminder display formatting. Groups by project/section, subtask indentation, status icons.
-      review.ts                       getPendingReviewCount (facts + insights).
-      digest.ts                       Daily digest message formatter + Telegram sender.
-      due-date-checker.ts             Due date polling (60s), daily report with brain activity stats at configured time, timezone-aware date math.
-
-    storage/
-      blob.ts                         Azure Blob Storage wrapper (upload, exists, getUrl).
-
-  migrations/
-    001_initial_schema.sql            Full schema: 6 tables, pgvector extension, B-tree + GIN indexes (HNSW commented out).
-
-  infra/
-    main.bicep                        Top-level Bicep template. Orchestrates all modules.
-    parameters.json                   Non-secret parameters (environment, ACR name, schedule).
-    modules/
-      container-app.bicep             Container App (minReplicas: 1, managed identity).
-      function-app.bicep              Function App (consumption plan, timer trigger).
-      keyvault.bicep                  Key Vault with all secrets.
-      monitoring.bicep                Log Analytics + App Insights.
-      postgresql.bicep                PostgreSQL Flexible Server (B1ms, pgvector).
-      storage.bicep                   Blob Storage account + container.
-
-  functions/
-    consolidation-trigger/
-      function.json                   Timer trigger binding config.
-      index.ts                        Azure Function entry point for consolidation.
-
-  scripts/
-    deploy.sh                         Manual deploy script.
-    migrate-azure.sh                  Manual migration script for Azure PostgreSQL.
-
-  tests/
-    helpers/
-      mocks.ts                        Shared mock factories for all dependencies.
-    unit/                             36 test files covering all source modules.
-    integration/                      7 test files (API, MCP auth, NL parsing, Telegram pipeline/webhook/NL/cascade-move).
-    e2e/
-      api-e2e.test.ts                 Full cycle E2E tests against real PostgreSQL.
-
-  .github/workflows/
-    ci.yml                            CI: typecheck + unit tests on PR/push.
-    deploy.yml                        CD: build, push, deploy on push to main (OIDC).
-
-  docker-compose.yml                  Local PostgreSQL + pgvector for development.
-  Dockerfile                          Multi-stage build (node:20-alpine, ffmpeg).
-  package.json                        Dependencies and scripts.
-  tsconfig.json                       TypeScript config.
-  vitest.config.ts                    Vitest config (unit + integration, forks pool, 4GB heap).
-  vitest.e2e.config.ts                Vitest config (E2E tests, 30s timeout).
-  README.md                           Project overview and local dev setup.
-  SETUP.md                            First-time Azure deployment guide with gotchas.
+├── src/
+│   ├── server.ts                       Entry point: deps wiring + migrations + serve
+│   ├── app.ts                          Hono app: REST routes + MCP mount + static web
+│   ├── config.ts                       Zod-validated env config
+│   ├── capture/
+│   │   ├── chunker.ts                  500/100 sliding window with sentence-boundary alignment
+│   │   ├── ingest-trace.ts             Per-ingest trace IDs + fingerprints
+│   │   ├── metadata.ts                 Haiku metadata: title, topics, tags, extracted_text, published_at
+│   │   ├── mime-utils.ts               inferMimeFromFilename, resolveUploadMime
+│   │   └── url-detect.ts               Classify URL type (YouTube, X, PDF, image, audio, html)
+│   ├── db/                             Raw SQL, no ORM. One module per table.
+│   │   ├── client.ts                   pg.Pool wrapper that registers pgvector types on first use
+│   │   ├── projects.ts
+│   │   ├── content-items.ts
+│   │   ├── chunks.ts
+│   │   ├── todos.ts
+│   │   ├── todo-comments.ts
+│   │   └── entities.ts                 entities + chunk_entities edges
+│   ├── services/                       Business logic. Adapters call into here.
+│   │   ├── index.ts                    ServiceDeps interface (DI contract)
+│   │   ├── projects.ts
+│   │   ├── content-items.ts            Orchestrates dedup→upload→metadata→chunk→embed→graph
+│   │   ├── todos.ts
+│   │   ├── todo-comments.ts
+│   │   ├── search.ts                   Hybrid vector + graph search with RRF fusion + retrieval_path
+│   │   ├── rag.ts                      Q&A: depth classify → search → synthesize via fast or pro
+│   │   ├── query-depth.ts              Haiku classifier: fast vs thorough + entity extraction
+│   │   ├── entities.ts                 extract → resolve → map mentions to chunks → persist edges
+│   │   └── url-ingest.ts               YouTube / X / PDF / HTML ingestion → content-items pipeline
+│   ├── providers/
+│   │   ├── types.ts                    EmbeddingProvider, LLMProvider interfaces
+│   │   ├── gemini-embedding.ts
+│   │   ├── gemini-llm.ts
+│   │   ├── anthropic-llm.ts
+│   │   ├── azure-foundry-llm.ts        Chat completions (gpt-5-4)
+│   │   ├── azure-foundry-responses.ts  Responses API (gpt-5-4-pro) with reasoning support
+│   │   ├── pdf-extract.ts              pdf-parse v2 PDFParse class + control-char sanitizer
+│   │   ├── youtube-transcript.ts
+│   │   ├── firecrawl.ts                HTML extraction fallback
+│   │   ├── xai.ts                      X/Twitter live-search via Grok
+│   │   └── json-utils.ts               extractJson() — strips markdown fences from LLM output
+│   ├── mcp/
+│   │   └── server.ts                   8 MCP tools + INSTRUCTIONS string
+│   └── storage/
+│       └── blob.ts                     Azure Blob upload/download + getReadSasUrl
+├── migrations/
+│   ├── 001_schema.sql                  projects, content_items, chunks, todos, todo_comments
+│   ├── 002_source_url.sql              source_url column on content_items
+│   └── 003_entities_graph.sql          entities, chunk_entities, published_at
+├── infra/
+│   ├── main.bicep                      Top-level template
+│   ├── parameters.json                 Non-secret values
+│   └── modules/
+│       ├── container-app.bicep         Container App (minReplicas: 1, managed identity)
+│       ├── postgresql.bicep            Flexible Server (B1ms, pgvector)
+│       ├── storage.bicep               Blob storage (private)
+│       ├── keyvault.bicep              All secrets
+│       ├── monitoring.bicep            Log Analytics + App Insights
+│       └── function-app.bicep          [LEGACY — see §16]
+├── functions/
+│   └── consolidation-trigger/          [LEGACY — see §16]
+├── scripts/
+│   ├── deploy.sh                       Manual deploy (has stale migration step — see §16)
+│   ├── migrate-azure.sh                Manual psql against Azure (rarely needed; auto-migration is canonical)
+│   ├── backfill-entities.ts            Bulk re-run entity extraction
+│   ├── cleanup-stale-ingests.ts
+│   └── rag-profile.sh                  Reproducible RAG latency/quality profile
+├── web/                                Vite + React + Tailwind UI (built into web/dist, served by Hono)
+├── tests/
+│   ├── helpers/
+│   │   └── mocks.ts                    Shared mock factories
+│   ├── unit/
+│   │   ├── capture/                    mime-utils, url-detect
+│   │   ├── db/                         client
+│   │   ├── mcp/                        server
+│   │   ├── providers/                  anthropic-llm, gemini-embedding, gemini-llm, pdf-extract, provider-errors
+│   │   ├── services/                   entities, search
+│   │   └── storage/                    blob
+│   └── integration/
+│       ├── archive-delete.test.ts
+│       ├── mcp-integration.test.ts
+│       ├── rest-api.test.ts
+│       └── url-ingest.test.ts
+├── docs/
+│   ├── handoffs/                       Session handoff docs
+│   └── profiles/                       Reproducible benchmark baselines (e.g., RAG effort)
+├── .github/workflows/
+│   ├── ci.yml                          Typecheck + tests on PR/push
+│   └── deploy.yml                      Build, push, deploy on push to main (OIDC)
+├── docker-compose.yml                  Local Postgres on port 5434
+├── Dockerfile                          Multi-stage build
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── vitest.e2e.config.ts                (currently unused; tests/e2e/ folder is empty)
+├── README.md                           Project overview + local dev setup
+├── SETUP.md                            First-time Azure deployment walkthrough
+├── ARCHITECTURE.md                     This doc
+├── CLAUDE.md                           Instructions for AI sessions in this repo
+└── E2E_TEST_PLAN.md                    52-test reproducible live-system validation
 ```
 
 ---
 
-## Appendix: Environment Variables
+## 18. Environment Variables
+
+Validated by `loadConfig()` in `src/config.ts` on startup. All required values throw a clear Zod error if missing.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `OPEN_BRAIN_API_KEY` | Yes | — | API key for REST and MCP auth |
+| `OPEN_BRAIN_API_KEY` | Yes | — | API key for REST + MCP auth |
 | `AZURE_STORAGE_CONNECTION_STRING` | Yes | — | Blob Storage connection string |
 | `AZURE_STORAGE_CONTAINER` | Yes | — | Blob container name |
-| `GEMINI_API_KEY` | Yes | — | Google Gemini API key |
-| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
-| `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram Bot API token |
-| `TELEGRAM_WEBHOOK_SECRET` | Yes | — | Verifies Telegram webhook calls |
-| `TELEGRAM_CHAT_ID` | Yes | — | User's Telegram chat ID (for notifications) |
+| `GEMINI_API_KEY` | Yes | — | Google Gemini API key (embeddings + audio/video metadata) |
+| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key (Haiku for metadata, entity extraction, query depth) |
+| `XAI_API_KEY` | Yes | — | xAI API key (X/Twitter live search via Grok) |
+| `FIRECRAWL_API_KEY` | Yes | — | Firecrawl API key (HTML extraction fallback) |
+| `AZURE_OPENAI_ENDPOINT` | Yes | — | Azure Foundry / Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_KEY` | Yes | — | Azure Foundry / Azure OpenAI key |
+| `AZURE_RAG_DEPLOYMENT` | No | `gpt-5-4` | Deployment name for fast-path RAG (chat completions) |
+| `AZURE_DEEP_RAG_DEPLOYMENT` | No | `gpt-5-4-pro` | Deployment name for thorough-path RAG (Responses API) |
 | `PORT` | No | `3000` | HTTP server port |
 | `NODE_ENV` | No | `development` | `development` / `production` / `test` |
-| `REVIEW_MODE` | No | `hybrid` | `autonomous` / `hybrid` / `ask` |
-| `DAILY_DIGEST_ENABLED` | No | `true` | Enable daily digest Telegram message |
-| `TIMEZONE` | No | `America/Chicago` | IANA timezone for due date calculations and daily report |
-| `DAILY_REPORT_TIME` | No | `09:00` | Time (HH:MM) to send the daily report |
-| `CONSOLIDATION_SCHEDULE` | No | `0 */30 * * * *` | Azure Functions CRON (6 fields, seconds first) |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | — | App Insights (auto-set by Azure) |
+| `TIMEZONE` | No | `America/Chicago` | IANA timezone (date math) |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | — | Set automatically by Azure when App Insights is wired |
+
+No `TELEGRAM_*` env vars are read by V2 code. Bicep parameters of those names are vestigial — see §16.

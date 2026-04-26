@@ -845,13 +845,13 @@ curl -s -X POST -H "$AUTH" -H "$CT" "$API/api/v1/search" -d '{"query":"attention
 
 [ ] PASS / [ ] FAIL — Notes: ____
 
-### T9.4 — Project hard-delete does NOT cascade content_items (expected)
+### T9.4 — Project hard-delete does NOT cascade content_items (but scrubs UUID from arrays)
 ```bash
 curl -s -H "$AUTH" "$API/api/v1/content?project_id=$PROJECT_ID" | jq '.items | length'
 curl -s -X DELETE -H "$AUTH" "$API/api/v1/projects/$PROJECT_ID?hard=true" | jq .
 curl -s -H "$AUTH" "$API/api/v1/content/$DOC_ID" | jq .item.project_ids
 ```
-**Pass:** Content items remain; their `project_ids` arrays still contain the now-deleted project's UUID. **By design** — `project_ids` is `uuid[]`, not an FK.
+**Pass:** Content items still exist (no cascade — `project_ids` is `uuid[]`, not an FK), AND the deleted project's UUID has been scrubbed from `project_ids` (`src/db/projects.ts` does `array_remove(project_ids, $1::uuid)` in the same transaction as the delete). For a doc that only belonged to `$PROJECT_ID`, expect `project_ids: []`.
 
 [ ] PASS / [ ] FAIL — Notes: ____
 
@@ -946,7 +946,7 @@ These are the deterministic outputs anyone running the plan should see. Any dive
 - **T7.9** `depth_used: "thorough"`, total_ms typically 20-60s.
 - **T7.10** `depth_used: "fast"` for "What is pgvector?" (single-fact lookup).
 - **T9.1** All three todos return 404 after parent hard-delete.
-- **T9.4** Content items remain after project hard-delete with stale project_ids in array.
+- **T9.4** Content items remain after project hard-delete; the deleted project's UUID is scrubbed from each `project_ids` array (a doc that only belonged to `$PROJECT_ID` ends up with `project_ids: []`).
 - **T9.5** Todo's `project_id` becomes `null` after project hard-delete.
 
 ### Total
