@@ -6,7 +6,9 @@ import {
   archiveContentItem, unarchiveContentItem,
   deleteContentItemHard,
   findByFileHash,
+  updateProcessingStatus,
   type ContentItemRow, type ContentType, type ListContentItemsFilters,
+  type ProcessingStatus,
 } from '../db/content-items.js';
 import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkType } from '../db/chunks.js';
 import { extractMetadata } from '../capture/metadata.js';
@@ -42,30 +44,53 @@ export interface CreateContentResult {
   title: string;
   chunkCount: number;
   warnings?: string[];
+  status: ProcessingStatus;
+  error?: string;
 }
 
 /**
- * Create a content item (document or note) and chunk it for search.
+ * Returned by `createContentItem`. The id and processing status are available
+ * synchronously after the cheap prelude (dedup + blob upload + early row
+ * insert). The rest of the pipeline (metadata, chunking, embedding, graph)
+ * runs on `completion`. REST adapters return `id` immediately and let
+ * `completion` finish in the background. MCP adapters await `completion`
+ * to preserve their existing sync contract.
+ */
+export interface StartContentResult {
+  id: string;
+  status: ProcessingStatus;
+  completion: Promise<CreateContentResult>;
+}
+
+/**
+ * Start ingest for a content item (document or note). Returns immediately
+ * after the cheap sync prelude (dedup + blob upload + PDF text extract +
+ * early row insert) with a `completion` promise that resolves when the
+ * heavy pipeline (metadata, chunking, embedding, graph edges) finishes.
  *
- * Pipeline:
- *   1. File hash dedup (if file provided)
- *   2. Upload file to blob storage (if file)
- *   3. Extract metadata via Gemini Flash (title, tags, topics, extracted_text)
- *   4. Determine final content text (user content + extracted_text)
- *   5. Chunk text (500/100 with sentence-boundary alignment)
- *   6. Embed each chunk
- *   7. Insert content_item with whole-item embedding for docs with media
- *   8. Insert chunks
+ * Sync prelude steps:
+ *   1. File hash dedup (early-out if hit)
+ *   2. Upload file to blob storage
+ *   3. PDF text extraction (deterministic, fast)
+ *   4. Insert content_item with placeholder title and processing_status='pending'
+ *
+ * Async tail (runIngestTail):
+ *   5. Metadata extraction (parallel with chunk embedding when fullText is known)
+ *   6. Chunk + embed (bounded Promise.all)
+ *   7. Whole-item embedding (parallel where safe)
+ *   8. UPDATE content_item with real title/content/embedding/metadata/published_at
+ *   9. Insert chunks
+ *  10. Build graph edges
+ *  11. Flip processing_status to 'ready' (or 'failed' on error)
  */
 export async function createContentItem(
   deps: ServiceDeps,
   input: CreateContentInput,
-): Promise<CreateContentResult> {
-  const warnings: string[] = [];
+): Promise<StartContentResult> {
   const trace = input.trace ?? newTrace({ source_url: input.sourceUrl });
   recordStage(trace, 'input.content', input.content);
 
-  // Step 1: dedup by file hash
+  // Prelude step 1: dedup by file hash
   let fileHash: string | null = null;
   let blobUrl: string | null = null;
   if (input.file) {
@@ -75,22 +100,31 @@ export async function createContentItem(
     const existing = await findByFileHash(deps.db, fileHash);
     if (existing) {
       console.log(`[content] Duplicate file detected, returning existing: ${existing.id}`);
-      return { id: existing.id, title: existing.title, chunkCount: 0, warnings: ['Duplicate file — returning existing item.'] };
+      return {
+        id: existing.id,
+        status: existing.processing_status,
+        completion: Promise.resolve({
+          id: existing.id,
+          title: existing.title,
+          chunkCount: 0,
+          warnings: ['Duplicate file — returning existing item.'],
+          status: existing.processing_status,
+        }),
+      };
     }
   }
 
-  // Step 2: upload blob (if file)
+  // Prelude step 2: upload blob
   if (input.file) {
     const blobName = `${Date.now()}-${input.file.filename}`;
     blobUrl = await deps.blobStorage.upload(blobName, input.file.data, input.file.mimeType);
     console.log(`[content] Uploaded to blob: ${blobUrl}`);
   }
 
-  // Step 2.5: for PDFs, extract text locally via pdf-parse BEFORE sending to Gemini.
-  // Flash's multimodal PDF handling was unreliable — arXiv papers were coming back
-  // with "Untitled" and 1 chunk of near-empty content. pdf-parse handles the bulk
-  // of text-heavy PDFs deterministically; Flash then produces metadata/title from
-  // the real content rather than from whatever partial view it parsed.
+  // Prelude step 3: PDF text extraction (local pdf-parse, deterministic & fast).
+  // Done in the prelude so the async tail has it ready and can route metadata
+  // to the right LLM up front. Flash's multimodal PDF handling is unreliable —
+  // pdf-parse handles text-heavy PDFs deterministically.
   let pdfText: string | null = null;
   if (input.file?.mimeType === 'application/pdf') {
     try {
@@ -104,178 +138,218 @@ export async function createContentItem(
     }
   }
 
-  // Step 3: metadata extraction (title, tags, topics).
-  // For PDFs where we have extracted text, feed that to the metadata LLM as
-  // text only — don't resend the large PDF binary.
-  const filesForMeta = pdfText === null && input.file
-    ? [{ data: input.file.data, mimeType: input.file.mimeType }]
-    : undefined;
-  const contentForMeta = pdfText
-    ? `${input.content ?? ''}\n\n${pdfText}`.trim().slice(0, 50000) // cap prompt size
-    : input.content ?? '';
-  // Provider routing: Anthropic Haiku doesn't accept audio/video content
-  // blocks, so for those mime types we route to Gemini Flash (which does).
-  // Everything else — text, images, pdf-extracted text — stays on Haiku
-  // for consistency and entity-extraction quality.
-  const needsMediaLLM = filesForMeta?.some(
-    (f) => f.mimeType.startsWith('audio/') || f.mimeType.startsWith('video/'),
-  );
-  const llmForMeta = needsMediaLLM ? deps.mediaMetadataLLM : deps.metadataLLM;
-  if (needsMediaLLM) {
-    console.log(`[content] Routing metadata to mediaMetadataLLM for ${filesForMeta!.map((f) => f.mimeType).join(', ')}`);
-  }
-
-  // Pipeline parallelism (A): when fullText is computable without metadata,
-  // kick off chunk + whole-item embeddings in parallel with metadata extraction.
-  // Safe when: we have preliminary text AND either no file, or the file is a
-  // PDF whose text we already extracted. Audio/video/image-only files need
-  // metadata.extracted_text to populate fullText, so they stay sequential.
-  const preliminaryParts: string[] = [];
-  if (input.content) preliminaryParts.push(input.content);
-  if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
-    preliminaryParts.push(pdfText);
-  }
-  const preliminaryFullText = preliminaryParts.join('\n\n').trim();
-  const fullTextKnownEarly = preliminaryFullText.length > 0 && (!input.file || pdfText !== null);
-
-  const shouldWholeEmbed = input.type === 'document' && Boolean(input.file);
-
-  const metadataPromise = extractMetadata(llmForMeta, contentForMeta, filesForMeta);
-
-  // Pre-chunk + embed in parallel with metadata when safe.
-  let earlyTextChunks: string[] | null = null;
-  let earlyChunkEmbedsPromise: Promise<number[][]> | null = null;
-  if (fullTextKnownEarly) {
-    earlyTextChunks = chunkText(preliminaryFullText);
-    console.log(`[content] Early-pipeline: ${earlyTextChunks.length} chunk(s) embedding in parallel with metadata`);
-    earlyChunkEmbedsPromise = mapConcurrent(
-      earlyTextChunks,
-      EMBED_CONCURRENCY,
-      (text) => deps.embeddingProvider.embed(text),
-    );
-  }
-
-  let earlyWholeEmbedPromise: Promise<number[] | null> | null = null;
-  if (fullTextKnownEarly && shouldWholeEmbed && input.file) {
-    const fileForEmbed = { data: input.file.data, mimeType: input.file.mimeType };
-    earlyWholeEmbedPromise = deps.embeddingProvider
-      .embed(preliminaryFullText, [fileForEmbed])
-      .catch((err) => {
-        console.warn(`[content] Whole-item multimodal embedding failed:`, err);
-        warnings.push('Whole-item embedding failed; relying on chunks only.');
-        return null;
-      });
-  }
-
-  const metadata = await metadataPromise;
-  recordStage(trace, 'metadata.title', metadata.title);
-  recordStage(trace, 'metadata.extracted_text', metadata.extracted_text);
-  if (isEchoOf(trace.stages['metadata.extracted_text'] ?? null, trace.stages['input.content'] ?? null)) {
-    addNote(trace, 'flash_echoed_input_content_into_extracted_text');
-  }
-
-  // Step 4: final text (what gets chunked and embedded).
-  // Priority:
-  //   1. If pdf-parse got text from a PDF, that's the authoritative source.
-  //   2. Else, input.content (user-provided or URL-fetched text).
-  //   3. Else, Flash's extracted_text from non-PDF media (images with OCR, etc.).
-  // Guards against duplication when Flash echoes the input content.
-  const parts: string[] = [];
-  if (input.content) parts.push(input.content);
-  if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
-    parts.push(pdfText);
-  }
-  if (input.file && !pdfText && metadata.extracted_text && metadata.extracted_text !== input.content) {
-    parts.push(metadata.extracted_text);
-  }
-  const fullText = parts.join('\n\n').trim();
-  recordStage(trace, 'fulltext', fullText);
-  // Detect self-repetition inside fullText (same prefix appearing twice).
-  if (fullText.length > 400) {
-    const half = fullText.slice(0, Math.floor(fullText.length / 2));
-    if (half.length > 200 && fullText.indexOf(half.slice(0, 200), 200) >= 0) {
-      addNote(trace, 'fulltext_contains_repeated_prefix');
-    }
-  }
-
-  // Step 5: resolve title and tags
-  const title = input.title?.trim() || metadata.title || 'Untitled';
+  // Prelude step 4: early row insert with placeholder title + status='pending'.
+  // The id returned to REST callers is the id of this row; the async tail
+  // updates the row in place with real metadata when it finishes.
+  const placeholderTitle =
+    input.title?.trim() ||
+    input.file?.filename ||
+    (input.sourceUrl ? `Processing… ${input.sourceUrl.slice(0, 80)}` : 'Processing…');
   const titleSource = input.title?.trim() ? 'user' : (input.file ? 'filename' : 'ai_generated');
-  const finalTags = input.tags && input.tags.length > 0
-    ? input.tags
-    : metadata.tags;
 
-  // Step 6: whole-item embedding — use the early result if we started one,
-  // else compute now (audio/video/image case where we needed metadata.extracted_text).
-  let wholeItemEmbedding: number[] | null = null;
-  if (earlyWholeEmbedPromise) {
-    wholeItemEmbedding = await earlyWholeEmbedPromise;
-  } else if (shouldWholeEmbed && input.file) {
-    try {
-      wholeItemEmbedding = await deps.embeddingProvider.embed(
-        fullText || metadata.title,
-        [{ data: input.file.data, mimeType: input.file.mimeType }],
-      );
-    } catch (err) {
-      console.warn(`[content] Whole-item multimodal embedding failed, skipping:`, err);
-      warnings.push('Whole-item embedding failed; relying on chunks only.');
-    }
-  }
-
-  // Step 7: insert content_item
   const inserted = await insertContentItem(deps.db, {
     type: input.type,
-    title,
+    title: placeholderTitle,
     titleSource: titleSource as 'user' | 'ai_generated' | 'filename',
-    content: fullText || null,
+    content: null,
     blobUrl,
     mimeType: input.file?.mimeType ?? null,
     fileHash,
     projectIds: input.projectIds ?? [],
-    tags: finalTags,
-    embedding: wholeItemEmbedding,
-    metadata: {
-      topics: metadata.topics,
-      filename: input.file?.filename,
-      ingest_trace: trace,
-    },
+    tags: input.tags ?? [],
+    embedding: null,
+    metadata: { ingest_trace: trace },
     sourceUrl: input.sourceUrl ?? null,
-    publishedAt: metadata.published_at,
+    publishedAt: null,
+    processingStatus: 'pending',
   });
 
-  // Step 8: chunk the text and embed each chunk. Use early embeddings if we
-  // ran them in parallel with metadata (safe path); otherwise embed now.
-  let chunkCount = 0;
-  if (fullText) {
-    let textChunks: string[];
-    let embeddings: number[][];
-    if (earlyChunkEmbedsPromise && earlyTextChunks) {
-      textChunks = earlyTextChunks;
-      embeddings = await earlyChunkEmbedsPromise;
-    } else {
-      textChunks = chunkText(fullText);
-      console.log(`[content] Split into ${textChunks.length} text chunk(s) — total tokens ~${approximateTokens(fullText)}`);
-      embeddings = await mapConcurrent(
-        textChunks,
+  console.log(`[content] Early-insert ${input.type} ${inserted.id} — placeholder title: "${placeholderTitle}", status=pending`);
+
+  // Async tail. Errors inside the tail mark the row as 'failed' and are
+  // re-thrown so MCP callers (which await `completion`) see them. REST
+  // callers attach a default .catch so unawaited rejections don't crash
+  // the process.
+  const completion = runIngestTail(deps, inserted.id, input, pdfText, trace)
+    .catch((err) => {
+      // Convert to a resolved CreateContentResult for callers that just want
+      // the final state. The row in the DB has the canonical truth; this
+      // shape is just for MCP/test consumers.
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return {
+        id: inserted.id,
+        title: placeholderTitle,
+        chunkCount: 0,
+        warnings: undefined,
+        status: 'failed' as ProcessingStatus,
+        error: errMsg,
+      };
+    });
+
+  return {
+    id: inserted.id,
+    status: 'pending',
+    completion,
+  };
+}
+
+/**
+ * The async tail of the ingest pipeline. Runs metadata, chunking, embedding,
+ * and graph edges, then UPDATEs the row with the final state and flips
+ * processing_status. On any error: marks the row 'failed' with the error
+ * message and re-throws.
+ */
+async function runIngestTail(
+  deps: ServiceDeps,
+  contentItemId: string,
+  input: CreateContentInput,
+  pdfText: string | null,
+  trace: IngestTrace,
+): Promise<CreateContentResult> {
+  const warnings: string[] = [];
+
+  try {
+    // Metadata extraction setup — same routing as before.
+    const filesForMeta = pdfText === null && input.file
+      ? [{ data: input.file.data, mimeType: input.file.mimeType }]
+      : undefined;
+    const contentForMeta = pdfText
+      ? `${input.content ?? ''}\n\n${pdfText}`.trim().slice(0, 50000)
+      : input.content ?? '';
+    const needsMediaLLM = filesForMeta?.some(
+      (f) => f.mimeType.startsWith('audio/') || f.mimeType.startsWith('video/'),
+    );
+    const llmForMeta = needsMediaLLM ? deps.mediaMetadataLLM : deps.metadataLLM;
+    if (needsMediaLLM) {
+      console.log(`[content] Routing metadata to mediaMetadataLLM for ${filesForMeta!.map((f) => f.mimeType).join(', ')}`);
+    }
+
+    // Pipeline parallelism (A): kick off chunk + whole-item embeddings in
+    // parallel with metadata when fullText is known without metadata.extracted_text.
+    const preliminaryParts: string[] = [];
+    if (input.content) preliminaryParts.push(input.content);
+    if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
+      preliminaryParts.push(pdfText);
+    }
+    const preliminaryFullText = preliminaryParts.join('\n\n').trim();
+    const fullTextKnownEarly = preliminaryFullText.length > 0 && (!input.file || pdfText !== null);
+    const shouldWholeEmbed = input.type === 'document' && Boolean(input.file);
+
+    const metadataPromise = extractMetadata(llmForMeta, contentForMeta, filesForMeta);
+
+    let earlyTextChunks: string[] | null = null;
+    let earlyChunkEmbedsPromise: Promise<number[][]> | null = null;
+    if (fullTextKnownEarly) {
+      earlyTextChunks = chunkText(preliminaryFullText);
+      console.log(`[content] Early-pipeline: ${earlyTextChunks.length} chunk(s) embedding in parallel with metadata`);
+      earlyChunkEmbedsPromise = mapConcurrent(
+        earlyTextChunks,
         EMBED_CONCURRENCY,
         (text) => deps.embeddingProvider.embed(text),
       );
     }
-    const chunksToInsert: ChunkInsert[] = textChunks.map((text, i) => ({
-      contentItemId: inserted.id,
-      chunkIndex: i,
-      chunkType: 'text' as ChunkType,
-      content: text,
-      embedding: embeddings[i],
-      metadata: { token_estimate: approximateTokens(text) },
-    }));
-    await insertChunks(deps.db, chunksToInsert);
-    chunkCount = chunksToInsert.length;
-  } else if (input.file && input.type === 'document') {
-    // Pure image/media document with no extracted text — store one "image" chunk using the whole-item embedding
-    if (wholeItemEmbedding) {
+
+    let earlyWholeEmbedPromise: Promise<number[] | null> | null = null;
+    if (fullTextKnownEarly && shouldWholeEmbed && input.file) {
+      const fileForEmbed = { data: input.file.data, mimeType: input.file.mimeType };
+      earlyWholeEmbedPromise = deps.embeddingProvider
+        .embed(preliminaryFullText, [fileForEmbed])
+        .catch((err) => {
+          console.warn(`[content] Whole-item multimodal embedding failed:`, err);
+          warnings.push('Whole-item embedding failed; relying on chunks only.');
+          return null;
+        });
+    }
+
+    const metadata = await metadataPromise;
+    recordStage(trace, 'metadata.title', metadata.title);
+    recordStage(trace, 'metadata.extracted_text', metadata.extracted_text);
+    if (isEchoOf(trace.stages['metadata.extracted_text'] ?? null, trace.stages['input.content'] ?? null)) {
+      addNote(trace, 'flash_echoed_input_content_into_extracted_text');
+    }
+
+    // Final fullText
+    const parts: string[] = [];
+    if (input.content) parts.push(input.content);
+    if (pdfText && !input.content?.includes(pdfText.slice(0, 200))) {
+      parts.push(pdfText);
+    }
+    if (input.file && !pdfText && metadata.extracted_text && metadata.extracted_text !== input.content) {
+      parts.push(metadata.extracted_text);
+    }
+    const fullText = parts.join('\n\n').trim();
+    recordStage(trace, 'fulltext', fullText);
+    if (fullText.length > 400) {
+      const half = fullText.slice(0, Math.floor(fullText.length / 2));
+      if (half.length > 200 && fullText.indexOf(half.slice(0, 200), 200) >= 0) {
+        addNote(trace, 'fulltext_contains_repeated_prefix');
+      }
+    }
+
+    // Title + tags
+    const finalTitle = input.title?.trim() || metadata.title || 'Untitled';
+    const finalTags = input.tags && input.tags.length > 0 ? input.tags : metadata.tags;
+
+    // Whole-item embedding
+    let wholeItemEmbedding: number[] | null = null;
+    if (earlyWholeEmbedPromise) {
+      wholeItemEmbedding = await earlyWholeEmbedPromise;
+    } else if (shouldWholeEmbed && input.file) {
+      try {
+        wholeItemEmbedding = await deps.embeddingProvider.embed(
+          fullText || metadata.title,
+          [{ data: input.file.data, mimeType: input.file.mimeType }],
+        );
+      } catch (err) {
+        console.warn(`[content] Whole-item multimodal embedding failed, skipping:`, err);
+        warnings.push('Whole-item embedding failed; relying on chunks only.');
+      }
+    }
+
+    // UPDATE the early row with everything we now know
+    await dbUpdate(deps.db, contentItemId, {
+      title: finalTitle,
+      content: fullText || null,
+      embedding: wholeItemEmbedding,
+      tags: finalTags,
+      publishedAt: metadata.published_at,
+      metadata: {
+        topics: metadata.topics,
+        filename: input.file?.filename,
+        ingest_trace: trace,
+      },
+    });
+
+    // Chunks
+    let chunkCount = 0;
+    if (fullText) {
+      let textChunks: string[];
+      let embeddings: number[][];
+      if (earlyChunkEmbedsPromise && earlyTextChunks) {
+        textChunks = earlyTextChunks;
+        embeddings = await earlyChunkEmbedsPromise;
+      } else {
+        textChunks = chunkText(fullText);
+        console.log(`[content] Split into ${textChunks.length} text chunk(s) — total tokens ~${approximateTokens(fullText)}`);
+        embeddings = await mapConcurrent(
+          textChunks,
+          EMBED_CONCURRENCY,
+          (text) => deps.embeddingProvider.embed(text),
+        );
+      }
+      const chunksToInsert: ChunkInsert[] = textChunks.map((text, i) => ({
+        contentItemId,
+        chunkIndex: i,
+        chunkType: 'text' as ChunkType,
+        content: text,
+        embedding: embeddings[i],
+        metadata: { token_estimate: approximateTokens(text) },
+      }));
+      await insertChunks(deps.db, chunksToInsert);
+      chunkCount = chunksToInsert.length;
+    } else if (input.file && input.type === 'document' && wholeItemEmbedding) {
       await insertChunks(deps.db, [{
-        contentItemId: inserted.id,
+        contentItemId,
         chunkIndex: 0,
         chunkType: 'image' as ChunkType,
         content: null,
@@ -284,46 +358,55 @@ export async function createContentItem(
       }]);
       chunkCount = 1;
     }
-  }
 
-  // Step 9: graph edges — extract entities from the doc, resolve against the
-  // existing entity registry, map mentions to chunks, persist chunk→entity
-  // edges. Wrapped in try/catch so a graph failure doesn't fail the whole
-  // save — chunks are already persisted and searchable without edges.
-  if (fullText && chunkCount > 0) {
-    try {
-      const chunks = await getChunksByContentItem(deps.db, inserted.id);
-      const { entityCount, edgeCount } = await buildGraphEdges(deps, fullText, chunks);
-      addNote(trace, `graph: ${entityCount} entities, ${edgeCount} edges`);
-    } catch (err) {
-      console.warn(`[content] Graph edge construction failed (continuing):`, err instanceof Error ? err.message : err);
-      addNote(trace, `graph_failed: ${err instanceof Error ? err.message : String(err)}`);
-      warnings.push('Entity graph construction failed; item is searchable but not graph-linked.');
+    // Graph edges (best-effort)
+    if (fullText && chunkCount > 0) {
+      try {
+        const chunks = await getChunksByContentItem(deps.db, contentItemId);
+        const { entityCount, edgeCount } = await buildGraphEdges(deps, fullText, chunks);
+        addNote(trace, `graph: ${entityCount} entities, ${edgeCount} edges`);
+      } catch (err) {
+        console.warn(`[content] Graph edge construction failed (continuing):`, err instanceof Error ? err.message : err);
+        addNote(trace, `graph_failed: ${err instanceof Error ? err.message : String(err)}`);
+        warnings.push('Entity graph construction failed; item is searchable but not graph-linked.');
+      }
+      // Persist the updated trace with any notes added during graph construction.
+      try {
+        await dbUpdate(deps.db, contentItemId, {
+          metadata: {
+            topics: metadata.topics,
+            filename: input.file?.filename,
+            ingest_trace: trace,
+          },
+        });
+      } catch (err) {
+        console.warn(`[content] Trace persist failed (non-fatal):`, err instanceof Error ? err.message : err);
+      }
     }
-    // Persist the updated trace. The original insertContentItem call serialized
-    // the trace before Step 9 ran, so notes added during graph construction
-    // were in-memory only. Update now so `get(id).metadata.ingest_trace` shows
-    // the real end-state.
-    try {
-      await dbUpdate(deps.db, inserted.id, {
-        metadata: {
-          topics: metadata.topics,
-          filename: input.file?.filename,
-          ingest_trace: trace,
-        },
-      });
-    } catch (err) {
-      console.warn(`[content] Trace persist failed (non-fatal):`, err instanceof Error ? err.message : err);
-    }
-  }
 
-  console.log(`[content] Created ${input.type} ${inserted.id} — title: "${title}", chunks: ${chunkCount}`);
-  return {
-    id: inserted.id,
-    title,
-    chunkCount,
-    warnings: warnings.length > 0 ? warnings : undefined,
-  };
+    // Flip status to 'ready'
+    await updateProcessingStatus(deps.db, contentItemId, 'ready', null);
+
+    console.log(`[content] Ingest complete ${input.type} ${contentItemId} — title: "${finalTitle}", chunks: ${chunkCount}`);
+    return {
+      id: contentItemId,
+      title: finalTitle,
+      chunkCount,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      status: 'ready',
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[content] Ingest tail failed for ${contentItemId}:`, errMsg);
+    addNote(trace, `tail_failed: ${errMsg}`);
+    try {
+      await updateProcessingStatus(deps.db, contentItemId, 'failed', errMsg.slice(0, 1000));
+      await dbUpdate(deps.db, contentItemId, { metadata: { ingest_trace: trace } });
+    } catch (updateErr) {
+      console.error(`[content] Failed to mark row as failed:`, updateErr);
+    }
+    throw err;
+  }
 }
 
 export async function listContentItems(

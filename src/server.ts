@@ -96,6 +96,18 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 003 complete.');
     }
 
+    // Migration 004: processing_status + processing_error columns on content_items
+    const m004Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'content_items' AND column_name = 'processing_status'`,
+    );
+    if (parseInt(m004Check.rows[0].count) === 0) {
+      console.log('Running migration 004...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '004_processing_status.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 004 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

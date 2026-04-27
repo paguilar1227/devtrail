@@ -162,6 +162,7 @@ export async function searchWithTimings(
         const conditions: string[] = [
           'c.id = ANY($1::uuid[])',
           'ci.archived = false',
+          "ci.processing_status = 'ready'",
         ];
         const paramsList: unknown[] = [expandedChunkIds];
         if (projectId) {

@@ -180,12 +180,15 @@ describe('POST /api/v1/content/from-url', () => {
       body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }),
     }));
 
-    expect(res.status).toBe(201);
+    // Async ingest contract: 202 + {id, status:'pending', ...}. The actual
+    // chunkCount/title materialize after the background tail completes.
+    expect(res.status).toBe(202);
     const body = await res.json();
     expect(body.id).toBe('new-ci');
     expect(body.source_url).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     expect(body.url_type).toBe('youtube');
     expect(body.deduped).toBe(false);
+    expect(body.status).toBe('pending');
 
     // Single Supadata call — no fallback ladder behind it
     expect(supadataFetch).toHaveBeenCalledTimes(1);
@@ -222,10 +225,11 @@ describe('POST /api/v1/content/from-url', () => {
       body: JSON.stringify({ url: 'https://x.com/user/status/1234567890' }),
     }));
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(202);
     const body = await res.json();
     expect(body.url_type).toBe('x');
     expect(body.source_url).toBe('https://x.com/user/status/1234567890');
+    expect(body.status).toBe('pending');
     expect(fetchXThread).toHaveBeenCalledWith('https://x.com/user/status/1234567890');
   });
 
@@ -251,9 +255,10 @@ describe('POST /api/v1/content/from-url', () => {
       body: JSON.stringify({ url: 'https://example.com/article' }),
     }));
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(202);
     const body = await res.json();
     expect(body.url_type).toBe('html');
+    expect(body.status).toBe('pending');
     expect(firecrawlScrape).toHaveBeenCalledWith('https://example.com/article');
 
     globalFetch.mockRestore();

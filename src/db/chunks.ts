@@ -96,7 +96,11 @@ export async function findSimilarChunks(
   limit: number = 10,
   opts: { projectId?: string; parentType?: 'document' | 'note'; tags?: string[] } = {},
 ): Promise<ChunkSearchResult[]> {
-  const conditions = ['ci.archived = false', '1 - (c.embedding <=> $1::vector) > $2'];
+  const conditions = [
+    'ci.archived = false',
+    "ci.processing_status = 'ready'",
+    '1 - (c.embedding <=> $1::vector) > $2',
+  ];
   const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
   let i = 4;
 

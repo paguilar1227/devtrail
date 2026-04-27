@@ -16,7 +16,8 @@
 
 import type { ServiceDeps } from './index.js';
 import { findByUrl, updateContentItem as dbUpdate } from '../db/content-items.js';
-import { createContentItem } from './content-items.js';
+import type { ProcessingStatus } from '../db/content-items.js';
+import { createContentItem, type CreateContentResult } from './content-items.js';
 import { FirecrawlClient } from '../providers/firecrawl.js';
 import { XaiClient } from '../providers/xai.js';
 import { SupadataClient } from '../providers/supadata.js';
@@ -34,14 +35,20 @@ export interface IngestFromUrlInput {
   title?: string;
 }
 
+/**
+ * Returned by `ingestFromUrl`. Mirrors `StartContentResult` from content-items
+ * with URL-specific fields. REST adapters return id+status immediately; MCP
+ * adapters await `completion` to preserve the existing sync contract.
+ */
 export interface IngestFromUrlResult {
   id: string;
   title: string;
   type: 'document' | 'note';
   source_url: string;
   deduped: boolean;
-  chunkCount?: number;
   url_type: UrlType;
+  status: ProcessingStatus;
+  completion: Promise<CreateContentResult>;
 }
 
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024; // 100 MB guardrail for binary URLs
@@ -118,6 +125,13 @@ export async function ingestFromUrl(
       source_url: normalized,
       deduped: true,
       url_type: urlTypeByPattern,
+      status: existing.processing_status,
+      completion: Promise.resolve({
+        id: existing.id,
+        title: existing.title,
+        chunkCount: 0,
+        status: existing.processing_status,
+      }),
     };
   }
 
@@ -167,7 +181,7 @@ async function handleYoutube(
     addNote(trace, `requested-lang=en, supadata-served=${res.lang}`);
   }
 
-  const result = await createContentItem(deps, {
+  const started = await createContentItem(deps, {
     type: 'document',
     content: transcript,
     title: opts.title, // auto-generated via metadata LLM if omitted
@@ -178,13 +192,14 @@ async function handleYoutube(
   });
 
   return {
-    id: result.id,
-    title: result.title,
+    id: started.id,
+    title: opts.title?.trim() || `Processing… ${url.slice(0, 80)}`,
     type: 'document',
     source_url: url,
     deduped: false,
-    chunkCount: result.chunkCount,
     url_type: 'youtube',
+    status: started.status,
+    completion: started.completion,
   };
 }
 
@@ -222,7 +237,7 @@ async function handleXThread(
     throw err instanceof Error ? err : new Error(String(err));
   }
 
-  const result = await createContentItem(deps, {
+  const started = await createContentItem(deps, {
     type: 'document',
     content,
     title: opts.title ?? fetchedTitle,
@@ -233,13 +248,14 @@ async function handleXThread(
   });
 
   return {
-    id: result.id,
-    title: result.title,
+    id: started.id,
+    title: opts.title?.trim() || fetchedTitle || `Processing… ${url.slice(0, 80)}`,
     type: 'document',
     source_url: url,
     deduped: false,
-    chunkCount: result.chunkCount,
     url_type: 'x',
+    status: started.status,
+    completion: started.completion,
   };
 }
 
@@ -281,7 +297,7 @@ async function handleHtml(
     );
   }
 
-  const result = await createContentItem(deps, {
+  const started = await createContentItem(deps, {
     type: 'document',
     content: markdown,
     title: opts.title ?? title,
@@ -292,13 +308,14 @@ async function handleHtml(
   });
 
   return {
-    id: result.id,
-    title: result.title,
+    id: started.id,
+    title: opts.title?.trim() || title || `Processing… ${url.slice(0, 80)}`,
     type: 'document',
     source_url: url,
     deduped: false,
-    chunkCount: result.chunkCount,
     url_type: 'html',
+    status: started.status,
+    completion: started.completion,
   };
 }
 
@@ -345,7 +362,7 @@ async function handleBinary(
 
   console.log(`[url-ingest][binary] downloaded ${(buf.length / 1024).toFixed(1)} KB, mime: ${mimeType}`);
 
-  const result = await createContentItem(deps, {
+  const started = await createContentItem(deps, {
     type: 'document',
     title: opts.title,
     projectIds: opts.projectIds,
@@ -355,15 +372,15 @@ async function handleBinary(
     trace,
   });
 
-  // url_type already determined by caller; we don't re-derive here. Caller sets it via detection.
   return {
-    id: result.id,
-    title: result.title,
+    id: started.id,
+    title: opts.title?.trim() || filename || `Processing… ${url.slice(0, 80)}`,
     type: 'document',
     source_url: url,
     deduped: false,
-    chunkCount: result.chunkCount,
     url_type: inferUrlTypeFromMime(mimeType),
+    status: started.status,
+    completion: started.completion,
   };
 }
 

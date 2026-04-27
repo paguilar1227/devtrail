@@ -261,14 +261,35 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
       // document, note, quick_note all flow through content-items
       // quick_note → 'note' under the hood
       const mappedType = type === 'quick_note' ? 'note' : type;
-      const result = await contentSvc.createContentItem(deps, {
+      const started = await contentSvc.createContentItem(deps, {
         type: mappedType,
         content: input.content,
         title: input.title,
         projectIds: input.project_ids,
         tags: input.tags,
       });
-      return { content: [{ type: 'text', text: JSON.stringify({ ...result, type: mappedType }, null, 2) }] };
+      // MCP contract is sync: await the pipeline so callers get the final
+      // chunk count and real title, not the placeholder.
+      const finished = await started.completion;
+      if (finished.status === 'failed') {
+        const msg = finished.error || 'Unknown ingest failure';
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            id: started.id,
+            title: finished.title,
+            chunkCount: finished.chunkCount,
+            warnings: finished.warnings,
+            type: mappedType,
+          }, null, 2),
+        }],
+      };
     },
   );
 
@@ -367,12 +388,35 @@ Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
     },
     async ({ url, project_ids, tags, title }) => {
       try {
-        const result = await urlIngestSvc.ingestFromUrl(deps, url, {
+        const started = await urlIngestSvc.ingestFromUrl(deps, url, {
           projectIds: project_ids,
           tags,
           title,
         });
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        // MCP contract is sync: await the background pipeline so the caller
+        // receives a fully-ingested item (chunks, graph, ready status).
+        const finished = await started.completion;
+        if (finished.status === 'failed') {
+          const msg = finished.error || 'Unknown ingest failure';
+          return {
+            content: [{ type: 'text', text: `Error: ${msg}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              id: started.id,
+              title: finished.title,
+              type: started.type,
+              source_url: started.source_url,
+              deduped: started.deduped,
+              chunkCount: finished.chunkCount,
+              url_type: started.url_type,
+            }, null, 2),
+          }],
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return {

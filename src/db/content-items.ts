@@ -2,6 +2,7 @@ import type { DbClient } from './client.js';
 
 export type ContentType = 'document' | 'note';
 export type TitleSource = 'user' | 'ai_generated' | 'filename';
+export type ProcessingStatus = 'pending' | 'ready' | 'failed';
 
 export interface ContentItemInsert {
   type: ContentType;
@@ -17,6 +18,7 @@ export interface ContentItemInsert {
   metadata: Record<string, unknown>;
   sourceUrl: string | null;
   publishedAt: string | null;         // ISO-8601 content publication date, or null
+  processingStatus?: ProcessingStatus; // defaults to 'ready' for legacy callers
 }
 
 export interface ContentItemRow {
@@ -35,6 +37,8 @@ export interface ContentItemRow {
   source_url: string | null;
   published_at: Date | null;
   archived: boolean;
+  processing_status: ProcessingStatus;
+  processing_error: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -54,8 +58,9 @@ export async function insertContentItem(
   const result = await db.query(
     `INSERT INTO content_items
        (type, title, title_source, content, blob_url, mime_type, file_hash,
-        project_ids, tags, embedding, metadata, source_url, published_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        project_ids, tags, embedding, metadata, source_url, published_at,
+        processing_status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING id`,
     [
       item.type, item.title, item.titleSource, item.content, item.blobUrl,
@@ -64,9 +69,31 @@ export async function insertContentItem(
       JSON.stringify(item.metadata),
       item.sourceUrl,
       item.publishedAt,
+      item.processingStatus ?? 'ready',
     ],
   );
   return result.rows[0];
+}
+
+/**
+ * Flip a row's processing_status (and optionally store an error string).
+ * Called from the async tail of createContentItem when chunking/embedding/
+ * graph work completes (or fails).
+ */
+export async function updateProcessingStatus(
+  db: DbClient,
+  id: string,
+  status: ProcessingStatus,
+  error: string | null = null,
+): Promise<void> {
+  await db.query(
+    `UPDATE content_items
+        SET processing_status = $1,
+            processing_error  = $2,
+            updated_at        = now()
+      WHERE id = $3`,
+    [status, error, id],
+  );
 }
 
 export async function listContentItems(
@@ -98,6 +125,9 @@ export async function getContentItemById(db: DbClient, id: string): Promise<Cont
 }
 
 export async function findByFileHash(db: DbClient, hash: string): Promise<ContentItemRow | null> {
+  // Note: dedup intentionally finds rows in any processing_status — a 'pending'
+  // row from an in-flight ingest should still match so the second caller polls
+  // the same id rather than starting a duplicate pipeline.
   const result = await db.query(
     `SELECT * FROM content_items WHERE file_hash = $1 AND archived = false LIMIT 1`,
     [hash],
@@ -105,7 +135,7 @@ export async function findByFileHash(db: DbClient, hash: string): Promise<Conten
   return result.rows[0] ?? null;
 }
 
-/** Dedup lookup for URL-sourced content. */
+/** Dedup lookup for URL-sourced content. Matches rows in any processing_status. */
 export async function findByUrl(db: DbClient, url: string): Promise<ContentItemRow | null> {
   const result = await db.query(
     `SELECT * FROM content_items WHERE source_url = $1 AND archived = false LIMIT 1`,
@@ -127,6 +157,7 @@ export async function updateContentItem(
     title: 'title', titleSource: 'title_source', content: 'content',
     blobUrl: 'blob_url', mimeType: 'mime_type', fileHash: 'file_hash',
     projectIds: 'project_ids', tags: 'tags', sourceUrl: 'source_url',
+    publishedAt: 'published_at',
   };
 
   for (const [key, col] of Object.entries(map)) {
@@ -189,7 +220,11 @@ export async function findSimilarContentItems(
   limit: number = 10,
   projectId?: string,
 ): Promise<ContentItemSearchResult[]> {
-  const conditions = ['archived = false', 'embedding IS NOT NULL'];
+  const conditions = [
+    'archived = false',
+    "processing_status = 'ready'",   // hide pending/failed from search results
+    'embedding IS NOT NULL',
+  ];
   const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
   if (projectId) {
     conditions.push(`project_ids @> ARRAY[$4]::uuid[]`);
@@ -198,7 +233,8 @@ export async function findSimilarContentItems(
   // Explicit column list — must NOT include the embedding vector.
   const result = await db.query(
     `SELECT id, type, title, title_source, content, blob_url, mime_type,
-            file_hash, project_ids, tags, metadata, source_url, archived, created_at, updated_at,
+            file_hash, project_ids, tags, metadata, source_url, archived,
+            processing_status, processing_error, created_at, updated_at,
             1 - (embedding <=> $1::vector) AS similarity
      FROM content_items
      WHERE ${conditions.join(' AND ')}

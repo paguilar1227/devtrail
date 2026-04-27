@@ -156,10 +156,75 @@ describe('Content items API', () => {
       }),
     }));
 
-    expect(res.status).toBe(201);
+    // Async ingest contract: 202 + {id, status}. Title surfaces later via
+    // GET /content/:id once processing_status flips to 'ready'.
+    expect(res.status).toBe(202);
     const body = await res.json();
     expect(body.id).toBe('c1');
-    expect(body.title).toBe('Auto-generated');
+    expect(body.status).toBe('pending');
+  });
+
+  it('background tail flips processing_status to ready after POST returns', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (sql.includes('INSERT INTO content_items')) return { rows: [{ id: 'c-async-1' }] } as any;
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'note', content: 'Background tail test' }),
+    }));
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.status).toBe('pending');
+
+    // Let the background completion microtasks settle.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    // The tail must have fired UPDATE … SET processing_status = 'ready'.
+    const readyUpdate = queries.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status\s*=\s*\$1/.test(q.sql)
+        && q.params[0] === 'ready',
+    );
+    expect(readyUpdate).toBeDefined();
+  });
+
+  it('background tail flips processing_status to failed when the pipeline throws', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (sql.includes('INSERT INTO content_items')) return { rows: [{ id: 'c-fail-1' }] } as any;
+      return { rows: [] } as any;
+    });
+    // Force chunk embedding to blow up. extractMetadata swallows LLM errors
+    // (returns FALLBACK), but the embedding provider's failure does propagate
+    // up through runIngestTail's catch.
+    vi.mocked(deps.embeddingProvider.embed).mockRejectedValue(new Error('embedding service down'));
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'note', content: 'Failure path test' }),
+    }));
+    expect(res.status).toBe(202);
+
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const failedUpdate = queries.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status\s*=\s*\$1/.test(q.sql)
+        && q.params[0] === 'failed',
+    );
+    expect(failedUpdate).toBeDefined();
+    expect(failedUpdate!.params[1]).toContain('embedding service down');
   });
 
   it('rejects content creation without content or file', async () => {

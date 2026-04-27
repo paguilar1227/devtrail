@@ -140,10 +140,18 @@ export function createApp(deps: ServiceDeps) {
       return c.json({ error: 'Must provide content or file' }, 400);
     }
 
-    const result = await contentSvc.createContentItem(deps, {
+    const started = await contentSvc.createContentItem(deps, {
       type, content, title, projectIds, tags, file,
     });
-    return c.json(result, 201);
+    // Async contract: return id + status immediately. Background pipeline
+    // updates the row (and flips processing_status to 'ready' or 'failed')
+    // when it lands. Text-only notes typically reach 'ready' before the
+    // client even receives the response, so we re-fetch and report the
+    // current status to keep dedup hits and trivial cases honest.
+    return c.json({
+      id: started.id,
+      status: started.status,
+    }, started.status === 'ready' ? 200 : 202);
   });
 
   // Ingest from URL — fetches & chunks a URL (YouTube, X, PDF, HTML, media)
@@ -162,7 +170,20 @@ export function createApp(deps: ServiceDeps) {
         tags: body.tags,
         title: body.title,
       });
-      return c.json(result, result.deduped ? 200 : 201);
+      // Async contract: return id immediately. The completion promise runs
+      // in the background. Status code:
+      //   200 — dedup hit OR row already 'ready' (text-only that finished fast)
+      //   202 — accepted, processing in background
+      const httpStatus = result.deduped || result.status === 'ready' ? 200 : 202;
+      return c.json({
+        id: result.id,
+        title: result.title,
+        type: result.type,
+        source_url: result.source_url,
+        deduped: result.deduped,
+        url_type: result.url_type,
+        status: result.status,
+      }, httpStatus);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
