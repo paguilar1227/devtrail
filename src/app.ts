@@ -103,7 +103,10 @@ export function createApp(deps: ServiceDeps) {
 
     if (contentType.includes('multipart/form-data')) {
       const body = await c.req.parseBody();
-      type = (body.type as string) === 'document' ? 'document' : 'note';
+      // Read type as-is and let the shared validator below catch missing/invalid.
+      // Older code silently defaulted to 'note', which masked client mistakes
+      // (a UI that forgot to send the form field would save documents as notes).
+      type = body.type as 'document' | 'note';
       content = typeof body.content === 'string' ? body.content : undefined;
       title = typeof body.title === 'string' ? body.title : undefined;
       const pids = typeof body.project_ids === 'string' ? body.project_ids : undefined;

@@ -244,6 +244,32 @@ describe('Content items API', () => {
     }));
     expect(res.status).toBe(400);
   });
+
+  it('multipart upload rejects missing type instead of silently defaulting (E2E #2)', async () => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], { type: 'application/pdf' }), 'sample.pdf');
+    // intentionally omit `type` — old behavior silently defaulted to 'note'
+    const res = await app.fetch(new Request('http://localhost/api/v1/content', {
+      method: 'POST',
+      headers: AUTH,
+      body: form,
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/type/i);
+  });
+
+  it('multipart upload rejects garbage type with 400 (E2E #2)', async () => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], { type: 'application/pdf' }), 'sample.pdf');
+    form.append('type', 'definitely-not-a-real-type');
+    const res = await app.fetch(new Request('http://localhost/api/v1/content', {
+      method: 'POST',
+      headers: AUTH,
+      body: form,
+    }));
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('Todos API', () => {
