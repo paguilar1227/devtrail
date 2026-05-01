@@ -104,7 +104,7 @@ describe('migration 004 — processing_status retrieval invariants', () => {
     const sql = query.mock.calls[0][0] as string;
     const params = query.mock.calls[0][1] as unknown[];
     expect(sql).toMatch(/UPDATE\s+content_items/i);
-    expect(sql).toMatch(/SET\s+processing_status\s*=\s*\$1/);
+    expect(sql).toMatch(/processing_status\s*=\s*\$1/);
     expect(sql).toMatch(/processing_error\s*=\s*\$2/);
     expect(sql).toMatch(/updated_at\s*=\s*now\(\)/);
     expect(params).toEqual(['failed', 'embedding service down', 'ci-1']);
@@ -115,5 +115,20 @@ describe('migration 004 — processing_status retrieval invariants', () => {
     await updateProcessingStatus(db, 'ci-1', 'ready');
     const params = query.mock.calls[0][1] as unknown[];
     expect(params).toEqual(['ready', null, 'ci-1']);
+  });
+
+  it('updateProcessingStatus stamps ingest_completed_at on terminal states (and clears it on pending)', async () => {
+    const { db, query } = mockDb();
+    await updateProcessingStatus(db, 'ci-1', 'ready');
+
+    const sql = query.mock.calls[0][0] as string;
+    // CASE WHEN $1 IN ('ready','failed') THEN now() ELSE NULL END — assert
+    // both branches are present in the SQL so a future regression that only
+    // sets it on 'ready' (forgetting 'failed') or never clears it on
+    // 'pending' will trip here.
+    expect(sql).toMatch(/ingest_completed_at\s*=\s*CASE\s+WHEN/i);
+    expect(sql).toMatch(/\$1\s+IN\s*\(\s*'ready'\s*,\s*'failed'\s*\)/i);
+    expect(sql).toMatch(/THEN\s+now\(\)/i);
+    expect(sql).toMatch(/ELSE\s+NULL/i);
   });
 });

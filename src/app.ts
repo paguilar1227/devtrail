@@ -192,6 +192,19 @@ export function createApp(deps: ServiceDeps) {
     }
   });
 
+  // Slim polling endpoint for async ingest. Returns just the status fields
+  // and a chunk count — no content body, metadata, or embeddings — so a UI
+  // polling every second on a multi-MB PDF doesn't burn bandwidth refetching
+  // the full row each tick. Mounted before /content/:id so :id doesn't
+  // capture "status" as the literal id "status".
+  app.get('/api/v1/content/:id/status', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const status = await contentSvc.getContentItemStatus(deps, id);
+    if (!status) return c.json({ error: 'Not found' }, 404);
+    return c.json(status);
+  });
+
   app.get('/api/v1/content/:id', async (c) => {
     const id = c.req.param('id');
     if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);

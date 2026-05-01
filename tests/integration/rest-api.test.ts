@@ -227,6 +227,68 @@ describe('Content items API', () => {
     expect(failedUpdate!.params[1]).toContain('embedding service down');
   });
 
+  it('GET /content/:id/status returns the slim polling shape for a known id', async () => {
+    const fakeId = '11111111-1111-1111-1111-111111111111';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      // The status query joins chunks for chunk_count. Match by SELECT shape
+      // so a future addition of more columns doesn't silently break the test.
+      if (/FROM\s+content_items\s+ci/i.test(sql) && /chunk_count/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId,
+            type: 'document',
+            title: 'Polling fixture',
+            processing_status: 'ready',
+            processing_error: null,
+            ingest_started_at: new Date('2026-04-30T12:00:00Z'),
+            ingest_completed_at: new Date('2026-04-30T12:00:08Z'),
+            chunk_count: 3,
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/status`, {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      id: fakeId,
+      type: 'document',
+      title: 'Polling fixture',
+      processing_status: 'ready',
+      processing_error: null,
+      ingest_started_at: '2026-04-30T12:00:00.000Z',
+      ingest_completed_at: '2026-04-30T12:00:08.000Z',
+      chunk_count: 3,
+    });
+    // Slim contract: explicitly NO content body / metadata / blob_url /
+    // embedding. Adding any of those silently would defeat the bandwidth
+    // win that motivates this endpoint.
+    expect(body).not.toHaveProperty('content');
+    expect(body).not.toHaveProperty('metadata');
+    expect(body).not.toHaveProperty('embedding');
+    expect(body).not.toHaveProperty('blob_url');
+  });
+
+  it('GET /content/:id/status returns 404 for an unknown id', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content/22222222-2222-2222-2222-222222222222/status',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /content/:id/status returns 400 for a non-UUID id', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/not-a-uuid/status', {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(400);
+  });
+
   it('rejects content creation without content or file', async () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/content', {
       method: 'POST',

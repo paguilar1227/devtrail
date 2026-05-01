@@ -39,8 +39,24 @@ export interface ContentItemRow {
   archived: boolean;
   processing_status: ProcessingStatus;
   processing_error: string | null;
+  ingest_completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
+}
+
+/**
+ * Slim shape returned by the polling endpoint. Avoids dragging the full
+ * row (with content body and metadata) over the wire on every poll tick.
+ */
+export interface ContentItemStatus {
+  id: string;
+  type: ContentType;
+  title: string;
+  processing_status: ProcessingStatus;
+  processing_error: string | null;
+  ingest_started_at: Date;
+  ingest_completed_at: Date | null;
+  chunk_count: number;
 }
 
 export interface ListContentItemsFilters {
@@ -79,6 +95,9 @@ export async function insertContentItem(
  * Flip a row's processing_status (and optionally store an error string).
  * Called from the async tail of createContentItem when chunking/embedding/
  * graph work completes (or fails).
+ *
+ * Also stamps ingest_completed_at: now() on terminal states (ready/failed)
+ * and back to NULL on 'pending' so retry paths reset the clock cleanly.
  */
 export async function updateProcessingStatus(
   db: DbClient,
@@ -88,12 +107,35 @@ export async function updateProcessingStatus(
 ): Promise<void> {
   await db.query(
     `UPDATE content_items
-        SET processing_status = $1,
-            processing_error  = $2,
-            updated_at        = now()
+        SET processing_status   = $1,
+            processing_error    = $2,
+            ingest_completed_at = CASE WHEN $1 IN ('ready', 'failed') THEN now() ELSE NULL END,
+            updated_at          = now()
       WHERE id = $3`,
     [status, error, id],
   );
+}
+
+/**
+ * Slim status query for the polling endpoint. One row + a chunk count,
+ * no content body / metadata / embeddings — keeps poll bandwidth low even
+ * for multi-MB PDF rows.
+ */
+export async function getContentItemStatus(
+  db: DbClient,
+  id: string,
+): Promise<ContentItemStatus | null> {
+  const result = await db.query(
+    `SELECT ci.id, ci.type, ci.title,
+            ci.processing_status, ci.processing_error,
+            ci.created_at AS ingest_started_at,
+            ci.ingest_completed_at,
+            (SELECT count(*)::int FROM chunks c WHERE c.content_item_id = ci.id) AS chunk_count
+       FROM content_items ci
+      WHERE ci.id = $1`,
+    [id],
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function listContentItems(
@@ -234,7 +276,8 @@ export async function findSimilarContentItems(
   const result = await db.query(
     `SELECT id, type, title, title_source, content, blob_url, mime_type,
             file_hash, project_ids, tags, metadata, source_url, archived,
-            processing_status, processing_error, created_at, updated_at,
+            processing_status, processing_error, ingest_completed_at,
+            created_at, updated_at,
             1 - (embedding <=> $1::vector) AS similarity
      FROM content_items
      WHERE ${conditions.join(' AND ')}

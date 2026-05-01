@@ -123,6 +123,18 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 005 complete.');
     }
 
+    // Migration 006: ingest_completed_at column for the polling endpoint
+    const m006Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'content_items' AND column_name = 'ingest_completed_at'`,
+    );
+    if (parseInt(m006Check.rows[0].count) === 0) {
+      console.log('Running migration 006...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '006_ingest_completed_at.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 006 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

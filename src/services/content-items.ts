@@ -7,8 +7,9 @@ import {
   deleteContentItemHard,
   findByFileHash,
   updateProcessingStatus,
-  type ContentItemRow, type ContentType, type ListContentItemsFilters,
-  type ProcessingStatus,
+  getContentItemStatus as dbGetStatus,
+  type ContentItemRow, type ContentItemStatus, type ContentType,
+  type ListContentItemsFilters, type ProcessingStatus,
 } from '../db/content-items.js';
 import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkType } from '../db/chunks.js';
 import { extractMetadata } from '../capture/metadata.js';
@@ -418,6 +419,17 @@ export async function listContentItems(
 
 export async function getContentItem(deps: ServiceDeps, id: string): Promise<ContentItemRow | null> {
   return getContentItemById(deps.db, id);
+}
+
+/**
+ * Slim status read for the polling endpoint. Avoids hauling content body /
+ * metadata / embeddings on every poll tick.
+ */
+export async function getContentItemStatus(
+  deps: ServiceDeps,
+  id: string,
+): Promise<ContentItemStatus | null> {
+  return dbGetStatus(deps.db, id);
 }
 
 export async function updateContentItem(
