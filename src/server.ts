@@ -108,6 +108,21 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 004 complete.');
     }
 
+    // Migration 005: backfill control-char sanitization on existing content rows.
+    // Idempotent — only runs when there are still rows containing C0/DEL bytes.
+    const m005Check = await deps.db.pool.query(
+      `SELECT count(*) AS count FROM content_items
+        WHERE content IS NOT NULL
+          AND content ~ E'[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]'`,
+    );
+    const m005Count = parseInt(m005Check.rows[0].count);
+    if (m005Count > 0) {
+      console.log(`Running migration 005 — control-char backfill (${m005Count} affected rows)...`);
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '005_backfill_control_chars.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 005 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);
