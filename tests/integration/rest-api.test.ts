@@ -424,6 +424,72 @@ describe('Content items API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('GET /content?processing_status=failed forwards a single status filter to the DB', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?processing_status=failed',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/processing_status\s*=\s*ANY/i);
+    expect(listQ!.params).toContainEqual(['failed']);
+  });
+
+  it('GET /content?processing_status=pending,failed forwards both statuses', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?processing_status=pending,failed',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ!.params).toContainEqual(['pending', 'failed']);
+  });
+
+  it('GET /content?processing_status=junk returns 400 with a helpful error', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?processing_status=junk',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/junk/);
+    expect(body.error).toMatch(/pending,\s*ready,\s*failed/);
+  });
+
+  it('GET /content with no processing_status param does NOT add the filter', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content', {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    // Default = browse everything (so a "currently processing" view is opt-in).
+    // Regression here would mean we silently started filtering and breaking
+    // the browse-all default the UI relies on.
+    expect(listQ!.sql).not.toMatch(/processing_status\s*=\s*ANY/i);
+  });
+
   it('rejects content creation without content or file', async () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/content', {
       method: 'POST',

@@ -87,7 +87,26 @@ export function createApp(deps: ServiceDeps) {
     const tags = c.req.query('tags')?.split(',').filter(Boolean);
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
     const include_archived = c.req.query('include_archived') === 'true';
-    const items = await contentSvc.listContentItems(deps, { type, project_id, tags, limit, include_archived });
+
+    // ?processing_status=pending,failed → ['pending','failed']. Validates
+    // against the enum so a typo returns 400 instead of an SQL error.
+    let processing_status: Array<'pending' | 'ready' | 'failed'> | undefined;
+    const psRaw = c.req.query('processing_status');
+    if (psRaw) {
+      const values = psRaw.split(',').map((s) => s.trim()).filter(Boolean);
+      const allowed = new Set(['pending', 'ready', 'failed']);
+      const bad = values.filter((v) => !allowed.has(v));
+      if (bad.length > 0) {
+        return c.json({
+          error: `Invalid processing_status value(s): ${bad.join(', ')}. Allowed: pending, ready, failed.`,
+        }, 400);
+      }
+      processing_status = values as Array<'pending' | 'ready' | 'failed'>;
+    }
+
+    const items = await contentSvc.listContentItems(deps, {
+      type, project_id, tags, processing_status, limit, include_archived,
+    });
     return c.json({ items: items.map((it) => stripAndSignContent(deps.blobStorage, it)) });
   });
 

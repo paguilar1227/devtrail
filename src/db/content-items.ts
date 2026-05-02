@@ -63,6 +63,7 @@ export interface ListContentItemsFilters {
   type?: ContentType;
   project_id?: string;              // matches if project_id is in project_ids[]
   tags?: string[];                   // AND semantics: all tags must be present
+  processing_status?: ProcessingStatus[]; // OR semantics: row must match any
   include_archived?: boolean;
   limit?: number;
 }
@@ -150,6 +151,10 @@ export async function listContentItems(
   if (filters.type) { conditions.push(`type = $${i++}`); params.push(filters.type); }
   if (filters.project_id) { conditions.push(`project_ids @> ARRAY[$${i++}]::uuid[]`); params.push(filters.project_id); }
   if (filters.tags && filters.tags.length > 0) { conditions.push(`tags @> $${i++}`); params.push(filters.tags); }
+  if (filters.processing_status && filters.processing_status.length > 0) {
+    conditions.push(`processing_status = ANY($${i++}::text[])`);
+    params.push(filters.processing_status);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filters.limit ? `LIMIT ${filters.limit}` : '';
