@@ -7,6 +7,9 @@ import * as todosSvc from '../services/todos.js';
 import * as searchSvc from '../services/search.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
 
+const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
+const PROJECT_STATUSES = ['active', 'archived', 'completed'] as const;
+
 const INSTRUCTIONS = `# Open Brain — Personal Knowledge Base + Productivity Tool
 
 Open Brain is a single-user personal knowledge system. Think NotebookLM crossed with a task manager. The user organizes knowledge into **projects**, each containing documents, notes, and todos. Semantic search spans everything.
@@ -104,8 +107,10 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 ## Known limitations
 
-- **No update or delete via MCP.** You cannot mark a todo done, edit a note, archive a document, or rename a project through these tools. The web UI handles those. If the user asks to edit, say so and point them to the app.
-- **Documents are immutable after creation.** Chunks are generated at create time and not re-chunked on update.
+- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`retry\` to re-run a failed ingest.
+- **Body edits are not yet supported.** You can rename and re-tag a note or document through \`update\`, but you cannot rewrite its body text — the existing chunks would go stale. A \`reprocess\` tool that re-chunks and re-embeds is coming.
+- **No hard delete via MCP.** Hard deletion is UI-only by design. Soft delete (archive) will be exposed shortly.
+- **Documents are body-immutable.** Once a document's text is extracted, the body itself is never re-derived. Title, project membership, and tags can change; the body cannot.
 - **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
 - **URL ingestion — not yet supported:** Notion docs, Google Docs, Medium paywalls, Vimeo/Twitch — these need per-site auth or dedicated handlers.`;
 
@@ -290,6 +295,138 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
           }, null, 2),
         }],
       };
+    },
+  );
+
+  // ---------- 5b. update ----------
+  server.tool(
+    'update',
+    `Update an existing entity. Pick a kind and supply only the fields you want to change — omitted fields stay as-is.
+
+REQUIRED:
+- kind: 'todo' | 'content' | 'project'
+- id: UUID from a prior get/list/search
+
+FIELDS PER KIND:
+- todo: status (not_started | in_progress | paused | done), priority (P1 | P2 | P3 | null to clear), due_date (ISO 8601 or null), content (rename the task), parent_id (UUID or null to detach), section (string or null), tags, project_id (single UUID or null)
+- content: title, project_ids (array of UUIDs — replaces existing membership), tags
+- project: name, description, status (active | archived | completed)
+
+NOT SUPPORTED via this tool:
+- Body edits on notes/documents — coming via the \`reprocess\` tool (re-chunks + re-embeds). Title and metadata are fine here; the body itself is not.
+- Hard delete — UI only. Use \`archive\` for soft delete.
+- Changing a content item's type (document ↔ note) — create a new one if you really want this.
+
+Returns the updated record.`,
+    {
+      kind: z.enum(['todo', 'content', 'project'])
+        .describe('Which kind of entity. Determines which fields are valid.'),
+      id: z.string().describe('UUID of the entity. Must match the kind.'),
+
+      // todo fields
+      content: z.string().optional()
+        .describe('TODO ONLY. New task description.'),
+      status: z.enum([...TODO_STATUSES, ...PROJECT_STATUSES]).optional()
+        .describe('TODO uses not_started/in_progress/paused/done. PROJECT uses active/archived/completed. Mismatched values return an error.'),
+      priority: z.enum(['P1', 'P2', 'P3']).nullable().optional()
+        .describe('TODO ONLY. P1 = urgent, P2 = normal, P3 = low. null clears the priority.'),
+      due_date: z.string().nullable().optional()
+        .describe('TODO ONLY. ISO 8601 timestamp. null clears the due date.'),
+      parent_id: z.string().nullable().optional()
+        .describe('TODO ONLY. UUID of parent todo, or null to detach into a top-level todo.'),
+      section: z.string().nullable().optional()
+        .describe('TODO ONLY. Free-text section label, or null to clear.'),
+      project_id: z.string().nullable().optional()
+        .describe('TODO ONLY (single UUID). Move to a different project, or null for personal Inbox.'),
+      tags: z.array(z.string()).optional()
+        .describe('TODO and CONTENT. Replaces the existing tag list (does not merge).'),
+
+      // content fields
+      title: z.string().optional()
+        .describe('CONTENT ONLY. Rename the document/note. (Use `name` for projects.)'),
+      project_ids: z.array(z.string()).optional()
+        .describe('CONTENT ONLY (array of UUIDs). Replaces the existing project membership.'),
+
+      // project fields
+      name: z.string().optional()
+        .describe('PROJECT ONLY. Rename the project.'),
+      description: z.string().nullable().optional()
+        .describe('PROJECT ONLY. New description, or null to clear.'),
+    },
+    async (input) => {
+      if (!isValidUuid(input.id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${input.id}".` }],
+          isError: true,
+        };
+      }
+
+      // Per-kind status enum validation. The unified zod enum accepts both
+      // todo and project status values; here we reject the cross-kind ones.
+      if (input.status) {
+        if (input.kind === 'todo' && !TODO_STATUSES.includes(input.status as typeof TODO_STATUSES[number])) {
+          return {
+            content: [{ type: 'text', text: `Invalid todo status "${input.status}". Use one of: ${TODO_STATUSES.join(', ')}.` }],
+            isError: true,
+          };
+        }
+        if (input.kind === 'project' && !PROJECT_STATUSES.includes(input.status as typeof PROJECT_STATUSES[number])) {
+          return {
+            content: [{ type: 'text', text: `Invalid project status "${input.status}". Use one of: ${PROJECT_STATUSES.join(', ')}.` }],
+            isError: true,
+          };
+        }
+        if (input.kind === 'content') {
+          return {
+            content: [{ type: 'text', text: `\`status\` is not a content field. Use kind='todo' or kind='project'.` }],
+            isError: true,
+          };
+        }
+      }
+
+      if (input.kind === 'todo') {
+        const updated = await todosSvc.updateTodo(deps, input.id, {
+          content: input.content,
+          projectId: input.project_id,
+          section: input.section,
+          parentId: input.parent_id,
+          status: input.status,
+          priority: input.priority,
+          dueDate: input.due_date === null ? null : (input.due_date ? new Date(input.due_date) : undefined),
+          tags: input.tags,
+        });
+        if (!updated) {
+          return { content: [{ type: 'text', text: `No todo found with id ${input.id}` }], isError: true };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
+      }
+
+      if (input.kind === 'content') {
+        // Body edits intentionally not supported here — see #74 reprocess for
+        // the re-chunk path. We accept title/project_ids/tags only.
+        const updated = await contentSvc.updateContentItem(deps, input.id, {
+          title: input.title,
+          projectIds: input.project_ids,
+          tags: input.tags,
+        });
+        if (!updated) {
+          return { content: [{ type: 'text', text: `No content item found with id ${input.id}` }], isError: true };
+        }
+        // Strip the embedding for protocol size — clients don't need 3072 floats.
+        const { embedding: _embedding, ...rest } = updated;
+        return { content: [{ type: 'text', text: JSON.stringify(rest, null, 2) }] };
+      }
+
+      // project
+      const updated = await projectsSvc.updateProject(deps, input.id, {
+        name: input.name,
+        description: input.description,
+        status: input.status,
+      });
+      if (!updated) {
+        return { content: [{ type: 'text', text: `No project found with id ${input.id}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
     },
   );
 

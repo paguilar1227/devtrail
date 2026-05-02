@@ -167,12 +167,13 @@ describe('MCP server', () => {
       'list',
       'get',
       'create',
+      'update',
       'search',
       'find_mentions',
       'retry',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(9);
+    expect(toolNames).toHaveLength(10);
   });
 
   it('calls create_project and returns the created project', async () => {
@@ -226,5 +227,213 @@ describe('MCP server', () => {
     const parsed = JSON.parse(text);
     expect(parsed.id).toBe('proj-1');
     expect(parsed.name).toBe('Test');
+  });
+
+  // ---------- update tool ----------
+
+  /**
+   * Init + call helper for update tests. Avoids 60 lines of session setup
+   * per test. Returns the parsed response body so each test can assert on
+   * either the success payload or the JSON-RPC error.
+   */
+  async function callUpdate(
+    deps: ServiceDeps,
+    args: Record<string, unknown>,
+  ): Promise<{ status: number; body: any; sqlCalls: Array<{ sql: string; params: unknown[] }> }> {
+    const sqlCalls: Array<{ sql: string; params: unknown[] }> = [];
+    // Capture the existing mock implementation once, then wrap it. Reading
+    // it back from the wrapped mock would recurse — careful not to do that.
+    const origImpl = vi.mocked(deps.db.query).getMockImplementation();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      sqlCalls.push({ sql, params: params ?? [] });
+      return origImpl ? await origImpl(sql, params) : ({ rows: [] } as any);
+    });
+
+    const server = createMcpServer(deps);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => 'test-session',
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+
+    const initReq = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } },
+      }),
+    });
+    const initRes = await transport.handleRequest(initReq);
+    const sessionId = initRes.headers.get('mcp-session-id')!;
+
+    const callReq = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream',
+        'mcp-session-id': sessionId,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: { name: 'update', arguments: args },
+      }),
+    });
+    const callRes = await transport.handleRequest(callReq);
+    return {
+      status: callRes.status,
+      body: JSON.parse(await callRes.text()),
+      sqlCalls,
+    };
+  }
+
+  it('update kind=todo flips status and forwards the right SET clauses', async () => {
+    const todoId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/UPDATE\s+todos/i.test(sql)) {
+        return { rows: [{ id: todoId, content: 'task', status: 'done', priority: 'P1' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'todo',
+      id: todoId,
+      status: 'done',
+      priority: 'P1',
+    });
+
+    expect(body.result?.isError).not.toBe(true);
+    const updateSql = sqlCalls.find((q) => /UPDATE\s+todos/i.test(q.sql));
+    expect(updateSql).toBeDefined();
+    expect(updateSql!.sql).toMatch(/status\s*=/i);
+    expect(updateSql!.sql).toMatch(/priority\s*=/i);
+  });
+
+  it('update kind=content updates metadata only (not the body)', async () => {
+    const ciId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/UPDATE\s+content_items/i.test(sql)) {
+        return { rows: [{
+          id: ciId, type: 'note', title: 'Renamed',
+          content: null, blob_url: null, mime_type: null, file_hash: null,
+          project_ids: ['p1'], tags: ['retagged'],
+          embedding: null, metadata: {},
+          source_url: null, published_at: null, archived: false,
+          processing_status: 'ready', processing_error: null,
+          ingest_completed_at: new Date(),
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'content',
+      id: ciId,
+      title: 'Renamed',
+      project_ids: ['p1'],
+      tags: ['retagged'],
+    });
+
+    expect(body.result?.isError).not.toBe(true);
+    const updateSql = sqlCalls.find((q) => /UPDATE\s+content_items/i.test(q.sql));
+    expect(updateSql).toBeDefined();
+    expect(updateSql!.sql).toMatch(/title\s*=/i);
+    expect(updateSql!.sql).toMatch(/project_ids\s*=/i);
+    expect(updateSql!.sql).toMatch(/tags\s*=/i);
+    // CRITICAL: body content must NOT appear in the UPDATE. If a future
+    // change accidentally exposes `content` on the update tool, chunks
+    // would silently go stale. Catch that here.
+    expect(updateSql!.sql).not.toMatch(/\bcontent\s*=/i);
+
+    // Embedding stripped from response payload.
+    const text = body.result.content[0].text;
+    const parsed = JSON.parse(text);
+    expect(parsed).not.toHaveProperty('embedding');
+  });
+
+  it('update kind=project changes name + status', async () => {
+    const projId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/UPDATE\s+projects/i.test(sql)) {
+        return { rows: [{
+          id: projId, name: 'Renamed', description: null, status: 'completed',
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'project',
+      id: projId,
+      name: 'Renamed',
+      status: 'completed',
+    });
+
+    expect(body.result?.isError).not.toBe(true);
+    const updateSql = sqlCalls.find((q) => /UPDATE\s+projects/i.test(q.sql));
+    expect(updateSql).toBeDefined();
+    expect(updateSql!.sql).toMatch(/name\s*=/i);
+    expect(updateSql!.sql).toMatch(/status\s*=/i);
+  });
+
+  it('update rejects todo status that is actually a project status (cross-kind)', async () => {
+    const deps = mockDeps();
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'todo',
+      id: '11111111-1111-1111-1111-111111111111',
+      status: 'completed',  // valid for project, NOT for todo
+    });
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/Invalid todo status/i);
+    // Must short-circuit before hitting the DB.
+    expect(sqlCalls.find((q) => /UPDATE\s+todos/i.test(q.sql))).toBeUndefined();
+  });
+
+  it('update rejects status field on kind=content with a clear error', async () => {
+    const deps = mockDeps();
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'content',
+      id: '22222222-2222-2222-2222-222222222222',
+      status: 'done',  // valid enum value, but `status` isn't a content field
+    });
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/not a content field/i);
+    expect(sqlCalls.find((q) => /UPDATE\s+content_items/i.test(q.sql))).toBeUndefined();
+  });
+
+  it('update rejects a non-UUID id', async () => {
+    const deps = mockDeps();
+    const { body, sqlCalls } = await callUpdate(deps, {
+      kind: 'todo',
+      id: 'not-a-uuid',
+      status: 'done',
+    });
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/Invalid UUID/i);
+    expect(sqlCalls.length).toBe(0);
+  });
+
+  it('update returns error when the row does not exist', async () => {
+    const deps = mockDeps();
+    // The DB UPDATE returns no rows → service returns null → tool returns error
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const { body } = await callUpdate(deps, {
+      kind: 'project',
+      id: '33333333-3333-3333-3333-333333333333',
+      name: 'X',
+    });
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/No project found/i);
   });
 });
