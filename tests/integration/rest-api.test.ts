@@ -54,6 +54,7 @@ function mockDeps(): ServiceDeps {
       upload: vi.fn().mockResolvedValue('https://blob/file'),
       exists: vi.fn().mockResolvedValue(false),
       getUrl: vi.fn().mockReturnValue('https://blob/file'),
+      download: vi.fn().mockResolvedValue(Buffer.from('mock-bytes')),
       getReadSasUrl: vi.fn((u: string) => u),
     },
     config: { apiKey: 'test-key' } as any,
@@ -284,6 +285,140 @@ describe('Content items API', () => {
 
   it('GET /content/:id/status returns 400 for a non-UUID id', async () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/content/not-a-uuid/status', {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /content/:id/retry resets a failed row and returns 202 + pending', async () => {
+    const fakeId = '33333333-3333-3333-3333-333333333333';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      // The row lookup. Mark as failed so retry is allowed.
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId,
+            type: 'note',
+            title: 'Previously failed',
+            content: 'Original text body that survived prelude.',
+            blob_url: null,
+            mime_type: null,
+            file_hash: null,
+            project_ids: [],
+            tags: [],
+            embedding: null,
+            metadata: { ingest_trace: {} },
+            source_url: null,
+            published_at: null,
+            archived: false,
+            processing_status: 'failed',
+            processing_error: 'embedding service down',
+            ingest_completed_at: new Date(),
+            created_at: new Date(),
+            updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/retry`, {
+      method: 'POST',
+      headers: { ...AUTH },
+    }));
+
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toEqual({ id: fakeId, status: 'pending' });
+
+    // Side effects we care about: chunks deleted + status reset to 'pending'
+    // BEFORE the tail re-runs. (The tail then UPDATEs to 'ready' or 'failed',
+    // but that's racey w.r.t. the response — we only assert the synchronous
+    // pre-tail work here.)
+    const chunksDeleted = queries.find(
+      (q) => /DELETE\s+FROM\s+chunks/i.test(q.sql) && q.params[0] === fakeId,
+    );
+    expect(chunksDeleted).toBeDefined();
+
+    const statusReset = queries.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status\s*=\s*\$1/.test(q.sql)
+        && q.params[0] === 'pending'
+        && q.params[2] === fakeId,
+    );
+    expect(statusReset).toBeDefined();
+  });
+
+  it('POST /content/:id/retry returns 409 when the row is already ready', async () => {
+    const fakeId = '44444444-4444-4444-4444-444444444444';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'Healthy', content: 'fine',
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/retry`, {
+      method: 'POST',
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('ALREADY_READY');
+  });
+
+  it('POST /content/:id/retry returns 409 when the row is still pending (in-flight)', async () => {
+    const fakeId = '55555555-5555-5555-5555-555555555555';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'Processing…', content: null,
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'pending', processing_error: null,
+            ingest_completed_at: null,
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/retry`, {
+      method: 'POST',
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('IN_FLIGHT');
+  });
+
+  it('POST /content/:id/retry returns 404 for an unknown id', async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content/66666666-6666-6666-6666-666666666666/retry',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /content/:id/retry returns 400 for a non-UUID id', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/not-a-uuid/retry', {
+      method: 'POST',
       headers: { ...AUTH },
     }));
     expect(res.status).toBe(400);

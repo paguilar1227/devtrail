@@ -11,6 +11,15 @@ export interface BlobStorage {
   exists(blobName: string): Promise<boolean>;
   getUrl(blobName: string): string;
   /**
+   * Download a same-account blob's bytes. Accepts either a bare blob name or a
+   * full blob URL (with or without a SAS query). Throws if the URL belongs to
+   * a different storage account/container.
+   *
+   * Used by the retry path on failed ingests to re-feed the original bytes
+   * through the pipeline without requiring the caller to re-upload.
+   */
+  download(blobUrlOrName: string): Promise<Buffer>;
+  /**
    * Append a read-only SAS query string to a blob URL so it can be fetched
    * without account credentials. Default TTL: 60 minutes.
    *
@@ -75,6 +84,25 @@ export function createBlobStorage(connectionString: string, containerName: strin
 
     getUrl(blobName) {
       return containerClient.getBlockBlobClient(blobName).url;
+    },
+
+    async download(blobUrlOrName) {
+      // Accept either a full URL (https://acct.blob.core.windows.net/container/<name>?<sas>)
+      // or a bare blob name. For full URLs, strip the prefix + any query
+      // string and refuse cross-account paths so we can't be tricked into
+      // fetching arbitrary same-host blobs.
+      let blobName = blobUrlOrName;
+      if (blobUrlOrName.startsWith('http://') || blobUrlOrName.startsWith('https://')) {
+        if (!blobUrlOrName.startsWith(accountHostPrefix)) {
+          throw new Error(`download: refusing to fetch blob URL outside of ${accountHostPrefix}`);
+        }
+        const queryIdx = blobUrlOrName.indexOf('?');
+        const noQuery = queryIdx === -1 ? blobUrlOrName : blobUrlOrName.slice(0, queryIdx);
+        blobName = decodeURIComponent(noQuery.slice(accountHostPrefix.length));
+      }
+      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+      const buffer = await blockBlobClient.downloadToBuffer();
+      return buffer;
     },
 
     getReadSasUrl(blobUrl, ttlMinutes = 60) {

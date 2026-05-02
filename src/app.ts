@@ -205,6 +205,25 @@ export function createApp(deps: ServiceDeps) {
     return c.json(status);
   });
 
+  // Retry a failed ingest in place. 202 + {id, status:'pending'}. The
+  // background pipeline flips status to 'ready' or 'failed' the same way
+  // create does. State conflicts (ready/pending) → 409 so the client knows
+  // the row is healthy or already running, not just "ok done."
+  app.post('/api/v1/content/:id/retry', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    try {
+      const result = await contentSvc.retryContentIngest(deps, id);
+      return c.json({ id: result.id, status: result.status }, 202);
+    } catch (err) {
+      if (err instanceof contentSvc.RetryStateError) {
+        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+        return c.json({ error: err.message, code: err.code }, 409);
+      }
+      throw err;
+    }
+  });
+
   app.get('/api/v1/content/:id', async (c) => {
     const id = c.req.param('id');
     if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);

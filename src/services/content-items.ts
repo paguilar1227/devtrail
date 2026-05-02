@@ -199,8 +199,11 @@ export async function createContentItem(
  * and graph edges, then UPDATEs the row with the final state and flips
  * processing_status. On any error: marks the row 'failed' with the error
  * message and re-throws.
+ *
+ * Exported so retryContentIngest() can re-run it on an existing row without
+ * duplicating the orchestration logic.
  */
-async function runIngestTail(
+export async function runIngestTail(
   deps: ServiceDeps,
   contentItemId: string,
   input: CreateContentInput,
@@ -430,6 +433,117 @@ export async function getContentItemStatus(
   id: string,
 ): Promise<ContentItemStatus | null> {
   return dbGetStatus(deps.db, id);
+}
+
+/** Errors retryContentIngest signals to the adapter so REST/MCP can map cleanly. */
+export class RetryStateError extends Error {
+  constructor(public readonly code: 'NOT_FOUND' | 'ALREADY_READY' | 'IN_FLIGHT', message: string) {
+    super(message);
+    this.name = 'RetryStateError';
+  }
+}
+
+/**
+ * Re-run the async tail on an existing row whose previous ingest failed.
+ *
+ * Intended use: a transient pipeline error (embedding service down, LLM 5xx)
+ * left the row in `processing_status='failed'`. Retry resets the row to
+ * `pending`, reconstructs the original `CreateContentInput` from the row +
+ * blob, and feeds it back through `runIngestTail` — same pipeline, no new
+ * id, dedup hash and source_url preserved.
+ *
+ * State rules:
+ *   - 'failed'  → ok, retryable
+ *   - 'ready'   → throw ALREADY_READY (caller should not "retry" a healthy row)
+ *   - 'pending' → throw IN_FLIGHT (a tail is still running; running a second
+ *                 one would race chunk inserts)
+ *
+ * Side effects on the row before re-running the tail:
+ *   - chunks are deleted (chunk_entities cascade-delete via FK)
+ *   - processing_status is reset to 'pending', clearing ingest_completed_at
+ *
+ * Binary content (PDF, audio, video) is re-fetched from blob storage. If
+ * the blob download itself fails, retry continues in text-only mode using
+ * the row's existing `content` field; if that's also null, the tail will
+ * almost certainly fail again, but at least the failure surface is the
+ * same as the original ingest's, with a fresh trace.
+ */
+export async function retryContentIngest(
+  deps: ServiceDeps,
+  id: string,
+): Promise<StartContentResult> {
+  const row = await getContentItemById(deps.db, id);
+  if (!row) throw new RetryStateError('NOT_FOUND', `Content item ${id} not found`);
+  if (row.processing_status === 'ready') {
+    throw new RetryStateError('ALREADY_READY', `Content item ${id} is already ready; nothing to retry`);
+  }
+  if (row.processing_status === 'pending') {
+    throw new RetryStateError('IN_FLIGHT', `Content item ${id} is still pending; cannot retry an in-flight ingest`);
+  }
+
+  // Clear tail-produced state so retry runs cleanly. chunk_entities cascade
+  // off chunks via FK; entities themselves are global by design (shared
+  // canonical names across the corpus) so we leave them alone.
+  await deleteChunksByContentItem(deps.db, id);
+
+  // Reconstruct the input shape runIngestTail expects. Binary inputs need
+  // the original bytes; the blob is the canonical store for those.
+  let file: { data: Buffer; mimeType: string; filename: string } | undefined;
+  let pdfText: string | null = null;
+  if (row.blob_url && row.mime_type) {
+    try {
+      const bytes = await deps.blobStorage.download(row.blob_url);
+      const filename = (row.metadata as Record<string, unknown>)?.filename as string | undefined
+        ?? `retry-${id}`;
+      file = { data: bytes, mimeType: row.mime_type, filename };
+      if (row.mime_type === 'application/pdf') {
+        try {
+          const pdf = await extractPdfText(bytes);
+          pdfText = pdf.text;
+        } catch (err) {
+          console.warn(`[retry] PDF re-extract failed for ${id}, falling back to text-only retry:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn(`[retry] Blob download failed for ${id}, falling back to text-only retry:`, err);
+    }
+  }
+
+  // Drop the "Processing… <url>" placeholder if it's still on the row, so
+  // metadata extraction picks the new title without "Processing…" winning.
+  const userTitle = row.title.startsWith('Processing…') ? undefined : row.title;
+
+  const trace = newTrace({ source_url: row.source_url ?? undefined });
+  const input: CreateContentInput = {
+    type: row.type,
+    content: row.content ?? undefined,
+    title: userTitle,
+    file,
+    projectIds: row.project_ids,
+    tags: row.tags,
+    sourceUrl: row.source_url ?? undefined,
+    trace,
+  };
+
+  // Reset to pending. updateProcessingStatus also clears ingest_completed_at
+  // via its CASE expression, so the polling endpoint reports a fresh start.
+  await updateProcessingStatus(deps.db, id, 'pending', null);
+
+  console.log(`[retry] Re-running ingest tail for ${row.type} ${id}`);
+
+  const completion = runIngestTail(deps, id, input, pdfText, trace).catch((err) => {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      id,
+      title: userTitle ?? row.title,
+      chunkCount: 0,
+      warnings: undefined,
+      status: 'failed' as ProcessingStatus,
+      error: errMsg,
+    };
+  });
+
+  return { id, status: 'pending', completion };
 }
 
 export async function updateContentItem(

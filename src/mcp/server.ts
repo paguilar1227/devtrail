@@ -361,6 +361,65 @@ If no entity matches the input name (as canonical or alias), returns { entity: n
     },
   );
 
+  // ---------- 6c. retry ----------
+  server.tool(
+    'retry',
+    `Re-run ingest on a content item whose previous ingest failed (processing_status = 'failed'). Same id, same source_url, same blob — preserves dedup and any inbound references. Use this whenever you see a failed item and the user wants to recover it without re-uploading.
+
+State rules:
+- failed → ok, retry runs the full pipeline again
+- ready → returns an error (the row is healthy; nothing to retry)
+- pending → returns an error (the row is still processing; wait it out)
+
+Returns the same shape as create on success: { id, title, chunkCount, type }.`,
+    {
+      id: z.string().describe('UUID of the content item to retry. Must be a previously failed ingest.'),
+    },
+    async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}".` }],
+          isError: true,
+        };
+      }
+      try {
+        const started = await contentSvc.retryContentIngest(deps, id);
+        // Sync MCP contract: await the tail.
+        const finished = await started.completion;
+        if (finished.status === 'failed') {
+          return {
+            content: [{ type: 'text', text: `Retry failed: ${finished.error || 'Unknown error'}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              id: started.id,
+              title: finished.title,
+              chunkCount: finished.chunkCount,
+              warnings: finished.warnings,
+              status: finished.status,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        if (err instanceof contentSvc.RetryStateError) {
+          return {
+            content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+            isError: true,
+          };
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
   // ---------- 7. save_from_url ----------
   server.tool(
     'save_from_url',
