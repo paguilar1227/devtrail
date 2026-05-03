@@ -6,6 +6,7 @@ import * as contentSvc from '../services/content-items.js';
 import * as todosSvc from '../services/todos.js';
 import * as commentsSvc from '../services/todo-comments.js';
 import * as searchSvc from '../services/search.js';
+import * as ragSvc from '../services/rag.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
 
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
@@ -677,6 +678,63 @@ If no entity matches the input name (as canonical or alias), returns { entity: n
         limit,
       });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  // ---------- 6d. ask (RAG synthesis) ----------
+  server.tool(
+    'ask',
+    `Answer a question using the user's personal knowledge base. Returns a synthesized answer with inline citations [1], [2], etc., plus the underlying chunks that backed the synthesis.
+
+When to prefer \`ask\` over \`search\`:
+- The user wants a thorough cited summary, not raw chunks. \`ask\` runs the full RAG pipeline (vector + graph retrieval → reranked context → GPT synthesis) so you don't have to summarize search hits yourself.
+- The question is multi-hop or comparative ("compare X and Y across my notes", "what have I concluded about Z over time"). The thorough path uses gpt-5-4-pro reasoning, which beats on-the-fly synthesis for these.
+
+When to prefer \`search\`:
+- You only need the underlying chunks to quote or feed into your own analysis.
+- You want to keep the round-trip cheap (search is single-call vector + graph; ask adds an LLM synthesis).
+
+Depth control:
+- 'fast' (default) — single GPT-5-4 call, 2-5s. Good for direct lookups.
+- 'thorough' — gpt-5-4-pro Responses API, 15-60s. Multi-hop / inferential.
+- 'auto' — Haiku classifier picks between fast/thorough based on the question.
+
+Returns: { answer, citations[], used_chunks, meta { depth_used, timings_ms } }`,
+    {
+      question: z.string().describe('The natural-language question to answer.'),
+      project_id: z.string().optional()
+        .describe('Optional. Scope retrieval to a single project. Omit for global search across all content.'),
+      depth: z.enum(['auto', 'fast', 'thorough']).optional()
+        .describe('Synthesis depth. Default fast. Use thorough for multi-hop / comparison queries; auto lets the classifier decide.'),
+      max_chunks: z.number().int().positive().optional()
+        .describe('Max retrieved chunks to feed the synthesis LLM. Default 6. Higher = more context, slower + more tokens.'),
+      tags: z.array(z.string()).optional()
+        .describe('Optional. AND-filter retrieval to chunks whose parent has all listed tags.'),
+      entity_types: z.array(z.enum(['document', 'note', 'todo'])).optional()
+        .describe('Optional. Restrict retrieval to specific entity types.'),
+      reasoning_effort: z.enum(['low', 'medium', 'high']).optional()
+        .describe('Optional. Override gpt-5-4-pro reasoning effort on the thorough path. Ignored on fast.'),
+    },
+    async ({ question, project_id, depth, max_chunks, tags, entity_types, reasoning_effort }) => {
+      try {
+        const result = await ragSvc.ragQuery(deps, question, {
+          projectId: project_id,
+          tags,
+          entityTypes: entity_types,
+          maxChunks: max_chunks,
+          depth: depth ?? 'fast',
+          reasoningEffort: reasoning_effort,
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
     },
   );
 

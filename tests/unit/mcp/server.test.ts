@@ -175,10 +175,11 @@ describe('MCP server', () => {
       'restore',
       'search',
       'find_mentions',
+      'ask',
       'retry',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(15);
+    expect(toolNames).toHaveLength(16);
   });
 
   it('calls create_project and returns the created project', async () => {
@@ -674,6 +675,110 @@ describe('MCP server', () => {
   });
 
   // ---------- create todo: subtasks + sections ----------
+
+  // ---------- ask (RAG) ----------
+
+  it('ask returns the synthesized answer + citations from ragQuery', async () => {
+    const deps = mockDeps();
+    // ragQuery does its own search + LLM call — exercise the integration end-to-end
+    // by stubbing the DB to return a realistic chunk and mocking the fast-path LLM.
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // chunk vector search (the search service's main query)
+      if (/chunks\s+c/i.test(sql) && /similarity/i.test(sql)) {
+        return {
+          rows: [{
+            id: 'chunk-1',
+            content_item_id: 'ci-1',
+            chunk_index: 0,
+            content: 'Open Brain is a single-user knowledge base.',
+            similarity: 0.92,
+            ci_title: 'Open Brain Overview',
+            ci_type: 'note',
+            ci_source_url: null,
+            ci_tags: [],
+            ci_project_ids: [],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+    vi.mocked(deps.ragFastLLM.complete).mockResolvedValue({
+      content: 'Open Brain is a personal KB [1].',
+      tokensUsed: { input: 0, output: 0, total: 0 },
+    });
+
+    const { body } = await callTool(deps, {
+      question: 'What is Open Brain?',
+      depth: 'fast',
+    }, 'ask');
+
+    expect(body.result?.isError).not.toBe(true);
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed.answer).toBe('Open Brain is a personal KB [1].');
+    expect(parsed.citations).toBeDefined();
+    expect(parsed.meta.depth_used).toBe('fast');
+    // Forced fast must skip the classifier (timing == 0).
+    expect(parsed.meta.timings_ms.classify).toBe(0);
+  });
+
+  it('ask forwards depth=thorough to the deep RAG path', async () => {
+    const deps = mockDeps();
+    // Provide a chunk so ragQuery doesn't short-circuit (no chunks = no LLM call).
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/chunks\s+c/i.test(sql) && /similarity/i.test(sql)) {
+        return {
+          rows: [{
+            id: 'chunk-1', content_item_id: 'ci-1', chunk_index: 0,
+            content: 'X is faster than Y.', similarity: 0.91,
+            ci_title: 'X vs Y', ci_type: 'note',
+            ci_source_url: null, ci_tags: [], ci_project_ids: [],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+    vi.mocked(deps.ragDeepLLM.complete).mockResolvedValue({
+      content: 'Thorough comparison [1].',
+      tokensUsed: { input: 0, output: 0, total: 0 },
+    });
+
+    await callTool(deps, {
+      question: 'Compare X and Y across my notes',
+      depth: 'thorough',
+    }, 'ask');
+
+    expect(deps.ragDeepLLM.complete).toHaveBeenCalled();
+    // And the fast LLM must NOT have been called when depth is forced thorough.
+    expect(deps.ragFastLLM.complete).not.toHaveBeenCalled();
+  });
+
+  it('ask reports an LLM failure as an error response (not a silent empty answer)', async () => {
+    const deps = mockDeps();
+    // Provide a chunk so the synthesis LLM is actually called (otherwise
+    // ragQuery short-circuits on 0 chunks and never throws).
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/chunks\s+c/i.test(sql) && /similarity/i.test(sql)) {
+        return {
+          rows: [{
+            id: 'chunk-1', content_item_id: 'ci-1', chunk_index: 0,
+            content: 'something', similarity: 0.9,
+            ci_title: 't', ci_type: 'note',
+            ci_source_url: null, ci_tags: [], ci_project_ids: [],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+    vi.mocked(deps.ragFastLLM.complete).mockRejectedValue(new Error('LLM 500'));
+
+    const { body } = await callTool(deps, {
+      question: 'anything',
+      depth: 'fast',
+    }, 'ask');
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/LLM 500/);
+  });
 
   it('create type=todo with parent_id + section forwards both to insertTodo', async () => {
     const parentId = 'aaaa1111-1111-1111-1111-111111111111';
