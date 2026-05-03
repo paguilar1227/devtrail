@@ -287,6 +287,63 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ ok: true });
   });
 
+  // Bulk ops on content_items. Single SQL per request, returns
+  // { requested, affected, missing_ids } so the UI can flag rows that
+  // didn't apply (typically already-deleted ids in a stale selection).
+  app.post('/api/v1/content/bulk', async (c) => {
+    const body = await c.req.json<{
+      ids?: string[];
+      action?: contentSvc.BulkContentAction;
+      tags?: string[];
+      project_ids?: string[];
+    }>();
+
+    if (!Array.isArray(body.ids) || body.ids.length === 0) {
+      return c.json({ error: 'ids must be a non-empty array of UUIDs' }, 400);
+    }
+    if (body.ids.length > 100) {
+      return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
+    }
+    const badId = body.ids.find((id) => !isValidUuid(id));
+    if (badId) return c.json({ error: `Invalid UUID in ids: "${badId}"` }, 400);
+
+    const allowedActions = new Set([
+      'archive', 'restore', 'delete', 'add_tags', 'remove_tags', 'set_project_ids',
+    ]);
+    if (!body.action || !allowedActions.has(body.action)) {
+      return c.json({
+        error: `Invalid action: "${body.action}". Allowed: ${[...allowedActions].join(', ')}.`,
+      }, 400);
+    }
+
+    if (body.project_ids !== undefined) {
+      if (!Array.isArray(body.project_ids)) {
+        return c.json({ error: 'project_ids must be an array of UUIDs' }, 400);
+      }
+      const badPid = body.project_ids.find((p) => !isValidUuid(p));
+      if (badPid) return c.json({ error: `Invalid UUID in project_ids: "${badPid}"` }, 400);
+    }
+
+    if (body.tags !== undefined && !Array.isArray(body.tags)) {
+      return c.json({ error: 'tags must be an array of strings' }, 400);
+    }
+
+    try {
+      const result = await contentSvc.bulkContent(deps, {
+        ids: body.ids,
+        action: body.action,
+        tags: body.tags,
+        project_ids: body.project_ids,
+      });
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof contentSvc.BulkContentValidationError) {
+        return c.json({ error: err.message }, 400);
+      }
+      throw err;
+    }
+  });
+
   // ==========================================================================
   // TODOS
   // ==========================================================================

@@ -8,8 +8,15 @@ import {
   findByFileHash,
   updateProcessingStatus,
   getContentItemStatus as dbGetStatus,
+  bulkArchiveContentItems,
+  bulkRestoreContentItems,
+  bulkDeleteContentItemsHard,
+  bulkAddTagsContentItems,
+  bulkRemoveTagsContentItems,
+  bulkSetProjectIdsContentItems,
   type ContentItemRow, type ContentItemStatus, type ContentType,
   type ListContentItemsFilters, type ProcessingStatus,
+  type BulkContentResult,
 } from '../db/content-items.js';
 import { insertChunks, deleteChunksByContentItem, type ChunkInsert, type ChunkType } from '../db/chunks.js';
 import { extractMetadata } from '../capture/metadata.js';
@@ -597,4 +604,57 @@ export async function unarchiveContentItemById(deps: ServiceDeps, id: string): P
 /** Hard delete a content item. Chunks cascade via FK. Does NOT remove blob storage files. */
 export async function deleteContentItemHardById(deps: ServiceDeps, id: string): Promise<void> {
   await deleteContentItemHard(deps.db, id);
+}
+
+export type BulkContentAction =
+  | 'archive'
+  | 'restore'
+  | 'delete'
+  | 'add_tags'
+  | 'remove_tags'
+  | 'set_project_ids';
+
+export interface BulkContentRequest {
+  ids: string[];
+  action: BulkContentAction;
+  tags?: string[];
+  project_ids?: string[];
+}
+
+export class BulkContentValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BulkContentValidationError';
+  }
+}
+
+export async function bulkContent(
+  deps: ServiceDeps,
+  req: BulkContentRequest,
+): Promise<BulkContentResult> {
+  switch (req.action) {
+    case 'archive':
+      return bulkArchiveContentItems(deps.db, req.ids);
+    case 'restore':
+      return bulkRestoreContentItems(deps.db, req.ids);
+    case 'delete':
+      return bulkDeleteContentItemsHard(deps.db, req.ids);
+    case 'add_tags':
+      if (!req.tags || req.tags.length === 0) {
+        throw new BulkContentValidationError('action="add_tags" requires non-empty tags array');
+      }
+      return bulkAddTagsContentItems(deps.db, req.ids, req.tags);
+    case 'remove_tags':
+      if (!req.tags || req.tags.length === 0) {
+        throw new BulkContentValidationError('action="remove_tags" requires non-empty tags array');
+      }
+      return bulkRemoveTagsContentItems(deps.db, req.ids, req.tags);
+    case 'set_project_ids':
+      if (!req.project_ids) {
+        throw new BulkContentValidationError(
+          'action="set_project_ids" requires a project_ids array (use [] to detach from all projects)',
+        );
+      }
+      return bulkSetProjectIdsContentItems(deps.db, req.ids, req.project_ids);
+  }
 }

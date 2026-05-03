@@ -771,6 +771,155 @@ describe('Content items API', () => {
     expect(body.top_tags).toEqual([]);
   });
 
+  it('POST /content/bulk archive: single SQL, returns counts and missing_ids', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111' }] } as any;
+    });
+
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ];
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, action: 'archive' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      requested: 2,
+      affected: 1,
+      missing_ids: ['22222222-2222-4222-8222-222222222222'],
+    });
+
+    // One round-trip — bulk ops MUST NOT loop per-id (the whole point of the endpoint).
+    expect(queries).toHaveLength(1);
+    expect(/UPDATE content_items/i.test(queries[0].sql)).toBe(true);
+    expect(/archived = true/.test(queries[0].sql)).toBe(true);
+    expect(/id = ANY\(\$1::uuid\[\]\)/.test(queries[0].sql)).toBe(true);
+    expect(/RETURNING id/.test(queries[0].sql)).toBe(true);
+  });
+
+  it('POST /content/bulk add_tags uses set semantics (DISTINCT on UNION)', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'add_tags',
+        tags: ['urgent', 'reading'],
+      }),
+    }));
+    expect(res.status).toBe(200);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].params[1]).toEqual(['urgent', 'reading']);
+    // DISTINCT prevents accumulating duplicates if the tag is already present.
+    expect(/SELECT DISTINCT/i.test(queries[0].sql)).toBe(true);
+    expect(/UNNEST\(tags \|\| \$2::text\[\]\)/.test(queries[0].sql)).toBe(true);
+  });
+
+  it('POST /content/bulk remove_tags filters via WHERE NOT IN', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'remove_tags',
+        tags: ['stale'],
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(/<>\s*ALL\(\$2::text\[\]\)/.test(queries[0].sql)).toBe(true);
+  });
+
+  it('POST /content/bulk set_project_ids accepts empty array (detach)', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    // Detaching content from all projects is a legitimate UI action — the user
+    // wants the items in the global Inbox. Empty array must be allowed.
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_project_ids',
+        project_ids: [],
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(queries[0].params[1]).toEqual([]);
+  });
+
+  it('POST /content/bulk rejects unknown action with the allowed set listed', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'evaporate',
+      }),
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/evaporate/);
+    expect(body.error).toMatch(/archive/);
+    expect(body.error).toMatch(/set_project_ids/);
+  });
+
+  it('POST /content/bulk rejects empty ids, oversize batch, and bad UUIDs', async () => {
+    const empty = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [], action: 'archive' }),
+    }));
+    expect(empty.status).toBe(400);
+
+    const tooMany = Array.from({ length: 101 }, () => '11111111-1111-4111-8111-111111111111');
+    const big = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: tooMany, action: 'archive' }),
+    }));
+    expect(big.status).toBe(400);
+
+    const bad = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['not-a-uuid'], action: 'archive' }),
+    }));
+    expect(bad.status).toBe(400);
+  });
+
+  it('POST /content/bulk add_tags without tags returns 400', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'add_tags',
+      }),
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/non-empty tags/);
+  });
+
   it('GET /tags?project_id=not-a-uuid returns 400', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/tags?project_id=not-a-uuid',

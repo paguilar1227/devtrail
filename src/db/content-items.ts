@@ -252,6 +252,110 @@ export async function deleteContentItemHard(db: DbClient, id: string): Promise<v
   await db.query(`DELETE FROM content_items WHERE id = $1`, [id]);
 }
 
+export interface BulkContentResult {
+  requested: number;
+  affected: number;
+  missing_ids: string[];
+}
+
+/**
+ * Bulk operations on content_items. Each variant is a single SQL UPDATE
+ * (or DELETE) keyed by `id = ANY($ids)` so the whole batch is one round-trip.
+ *
+ * `missing_ids` is computed from the difference between requested ids and
+ * the ids actually returned by RETURNING — this catches both genuinely
+ * non-existent rows and (for archive/restore) rows already in the target
+ * state are still considered "affected" because RETURNING fires on every
+ * matched row regardless of whether the column actually changed.
+ *
+ * Tag add/remove use set semantics (DISTINCT, EXCEPT) so the column never
+ * accumulates duplicates. set_project_ids replaces wholesale — partial
+ * project-membership edits should be done one row at a time via the
+ * single-item update path.
+ */
+export async function bulkArchiveContentItems(
+  db: DbClient,
+  ids: string[],
+): Promise<BulkContentResult> {
+  return runBulk(db, ids,
+    `UPDATE content_items SET archived = true,  updated_at = now() WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkRestoreContentItems(
+  db: DbClient,
+  ids: string[],
+): Promise<BulkContentResult> {
+  return runBulk(db, ids,
+    `UPDATE content_items SET archived = false, updated_at = now() WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkDeleteContentItemsHard(
+  db: DbClient,
+  ids: string[],
+): Promise<BulkContentResult> {
+  return runBulk(db, ids,
+    `DELETE FROM content_items WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkAddTagsContentItems(
+  db: DbClient,
+  ids: string[],
+  tags: string[],
+): Promise<BulkContentResult> {
+  // ARRAY(SELECT DISTINCT ... ORDER BY) keeps tags as a stable set; no dupes.
+  const sql = `
+    UPDATE content_items
+       SET tags = ARRAY(SELECT DISTINCT t FROM UNNEST(tags || $2::text[]) AS t ORDER BY t),
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runBulk(db, ids, sql, [tags]);
+}
+
+export async function bulkRemoveTagsContentItems(
+  db: DbClient,
+  ids: string[],
+  tags: string[],
+): Promise<BulkContentResult> {
+  const sql = `
+    UPDATE content_items
+       SET tags = ARRAY(
+             SELECT t FROM UNNEST(tags) AS t
+             WHERE t <> ALL($2::text[])
+             ORDER BY t),
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runBulk(db, ids, sql, [tags]);
+}
+
+export async function bulkSetProjectIdsContentItems(
+  db: DbClient,
+  ids: string[],
+  projectIds: string[],
+): Promise<BulkContentResult> {
+  const sql = `
+    UPDATE content_items
+       SET project_ids = $2::uuid[],
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runBulk(db, ids, sql, [projectIds]);
+}
+
+async function runBulk(
+  db: DbClient,
+  ids: string[],
+  sql: string,
+  extraParams: unknown[] = [],
+): Promise<BulkContentResult> {
+  if (ids.length === 0) return { requested: 0, affected: 0, missing_ids: [] };
+  const result = await db.query(sql, [ids, ...extraParams]);
+  const affectedIds = new Set(result.rows.map((r: { id: string }) => r.id));
+  const missing = ids.filter((id) => !affectedIds.has(id));
+  return { requested: ids.length, affected: affectedIds.size, missing_ids: missing };
+}
+
 /**
  * Semantic search against content_items.embedding (whole-item level).
  * For chunk-level search, use chunks module.
