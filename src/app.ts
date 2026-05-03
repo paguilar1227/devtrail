@@ -13,6 +13,8 @@ import * as commentsSvc from './services/todo-comments.js';
 import * as searchSvc from './services/search.js';
 import * as ragSvc from './services/rag.js';
 import * as tagsSvc from './services/tags.js';
+import * as activitySvc from './services/activity.js';
+import type { ActivityKind } from './services/activity.js';
 import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
 
@@ -464,6 +466,55 @@ export function createApp(deps: ServiceDeps) {
     const name = c.req.param('name');
     const result = await tagsSvc.deleteTag(deps, name);
     return c.json({ name, updated: result.updated });
+  });
+
+  // ==========================================================================
+  // ACTIVITY — recent-changes feed across content_items + todos + comments
+  // ==========================================================================
+
+  app.get('/api/v1/activity', async (c) => {
+    const sinceRaw = c.req.query('since');
+    const untilRaw = c.req.query('until');
+    const project_id = c.req.query('project_id') ?? undefined;
+    const limitRaw = c.req.query('limit');
+    const kindsRaw = c.req.query('kinds');
+
+    if (project_id !== undefined && !isValidUuid(project_id)) {
+      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
+    }
+
+    let since: Date | undefined;
+    let until: Date | undefined;
+    if (sinceRaw) {
+      const d = new Date(sinceRaw);
+      if (isNaN(d.getTime())) return c.json({ error: `Invalid since: "${sinceRaw}". Expected ISO 8601.` }, 400);
+      since = d;
+    }
+    if (untilRaw) {
+      const d = new Date(untilRaw);
+      if (isNaN(d.getTime())) return c.json({ error: `Invalid until: "${untilRaw}". Expected ISO 8601.` }, 400);
+      until = d;
+    }
+
+    let kinds: ActivityKind[] | undefined;
+    if (kindsRaw) {
+      const allowed = new Set<ActivityKind>(['ingest', 'edit', 'comment']);
+      const values = kindsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+      const bad = values.filter((v) => !allowed.has(v as ActivityKind));
+      if (bad.length > 0) {
+        return c.json({
+          error: `Invalid kinds value(s): ${bad.join(', ')}. Allowed: ingest, edit, comment.`,
+        }, 400);
+      }
+      kinds = values as ActivityKind[];
+    }
+
+    const limit = limitRaw ? Math.min(parseInt(limitRaw, 10) || 100, 500) : undefined;
+
+    const rows = await activitySvc.listActivity(deps, {
+      since, until, project_id, kinds, limit,
+    });
+    return c.json({ activity: rows });
   });
 
   app.post('/api/v1/find-mentions', async (c) => {

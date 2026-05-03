@@ -590,6 +590,93 @@ describe('Content items API', () => {
     expect(txQueries.every((q) => /DELETE\s+FROM/i.test(q.sql))).toBe(false);
   });
 
+  it('GET /activity returns chronologically-ordered events with all three kinds', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/WITH\s+activity/i.test(sql)) {
+        return {
+          rows: [
+            { at: new Date('2026-05-03T10:00:00Z'), kind: 'comment', entity_type: 'todo_comment', entity_id: 'c1', title: 'Email John', project_ids: [] },
+            { at: new Date('2026-05-03T09:30:00Z'), kind: 'edit',    entity_type: 'note',         entity_id: 'n1', title: 'Renamed note', project_ids: ['p1'] },
+            { at: new Date('2026-05-03T09:00:00Z'), kind: 'ingest',  entity_type: 'document',     entity_id: 'd1', title: 'New doc',      project_ids: ['p1'] },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/activity', {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.activity).toHaveLength(3);
+    expect(body.activity[0].kind).toBe('comment');
+    expect(body.activity[2].kind).toBe('ingest');
+  });
+
+  it('GET /activity?since=&until= forwards bounds as timestamptz params', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/activity?since=2026-05-01T00:00:00Z&until=2026-05-04T00:00:00Z',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const aQ = queries.find((q) => /WITH\s+activity/i.test(q.sql));
+    expect(aQ).toBeDefined();
+    expect(aQ!.params[0]).toBeInstanceOf(Date);
+    expect(aQ!.params[1]).toBeInstanceOf(Date);
+    expect((aQ!.params[0] as Date).toISOString()).toBe('2026-05-01T00:00:00.000Z');
+    expect((aQ!.params[1] as Date).toISOString()).toBe('2026-05-04T00:00:00.000Z');
+  });
+
+  it('GET /activity?kinds=ingest,edit narrows the SQL to those branches only', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/activity?kinds=ingest,edit',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const aQ = queries.find((q) => /WITH\s+activity/i.test(q.sql));
+    expect(aQ).toBeDefined();
+    // Both branches should be present, comment branch should NOT.
+    // Filtering matters because each UNION ALL branch is a full table scan;
+    // emitting unwanted ones inflates cost.
+    expect(/'ingest'::text AS kind/.test(aQ!.sql)).toBe(true);
+    expect(/'edit'::text AS kind/.test(aQ!.sql)).toBe(true);
+    expect(/'comment'::text AS kind/.test(aQ!.sql)).toBe(false);
+  });
+
+  it('GET /activity rejects invalid kind values with a 400 listing the allowed set', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/activity?kinds=ingest,whatever',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/whatever/);
+    expect(body.error).toMatch(/ingest,\s*edit,\s*comment/);
+  });
+
+  it('GET /activity rejects malformed since/until with 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/activity?since=not-a-date',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+  });
+
   it('GET /tags?project_id=not-a-uuid returns 400', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/tags?project_id=not-a-uuid',

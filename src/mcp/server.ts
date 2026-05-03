@@ -8,6 +8,7 @@ import * as commentsSvc from '../services/todo-comments.js';
 import * as searchSvc from '../services/search.js';
 import * as ragSvc from '../services/rag.js';
 import * as tagsSvc from '../services/tags.js';
+import * as activitySvc from '../services/activity.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
 
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
@@ -703,6 +704,63 @@ Returns: [{ name, total, by_type: { document, note, todo } }]. Optional project_
       }
       const tags = await tagsSvc.listTags(deps, { project_id });
       return { content: [{ type: 'text', text: JSON.stringify(tags, null, 2) }] };
+    },
+  );
+
+  // ---------- 6g. list_activity ----------
+  server.tool(
+    'list_activity',
+    `Recent-changes feed across documents, notes, todos, and comments. Sorted by time descending (most recent first). Powers "what did I do today/this week" recaps.
+
+V1 emits three kinds:
+- 'ingest'  — a document/note/todo was created in the window
+- 'edit'    — an existing item was modified (any post-create change)
+- 'comment' — a comment was posted on a todo
+
+Not yet emitted: 'complete' (status transitions to done) and 'archive' — both need a real event log to do well.
+
+Params: since (ISO 8601), until (ISO 8601), kinds (comma-separated), project_id, limit (default 100, capped at 500).
+
+Returns: [{ at, kind, entity_type, entity_id, title, project_ids[] }]`,
+    {
+      since: z.string().optional()
+        .describe('ISO 8601 lower bound (inclusive). Omit for unbounded history.'),
+      until: z.string().optional()
+        .describe('ISO 8601 upper bound (exclusive). Omit for "up to now".'),
+      kinds: z.array(z.enum(['ingest', 'edit', 'comment'])).optional()
+        .describe('Restrict to specific event kinds. Omit for all three.'),
+      project_id: z.string().optional()
+        .describe('Optional. Restrict to events on items in a single project.'),
+      limit: z.number().int().positive().optional()
+        .describe('Max events to return. Default 100, capped at 500.'),
+    },
+    async ({ since, until, kinds, project_id, limit }) => {
+      if (project_id !== undefined && !isValidUuid(project_id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${project_id}".` }],
+          isError: true,
+        };
+      }
+      let sinceDate: Date | undefined;
+      let untilDate: Date | undefined;
+      if (since) {
+        const d = new Date(since);
+        if (isNaN(d.getTime())) {
+          return { content: [{ type: 'text', text: `Invalid since: "${since}". Expected ISO 8601.` }], isError: true };
+        }
+        sinceDate = d;
+      }
+      if (until) {
+        const d = new Date(until);
+        if (isNaN(d.getTime())) {
+          return { content: [{ type: 'text', text: `Invalid until: "${until}". Expected ISO 8601.` }], isError: true };
+        }
+        untilDate = d;
+      }
+      const rows = await activitySvc.listActivity(deps, {
+        since: sinceDate, until: untilDate, kinds, project_id, limit,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(rows, null, 2) }] };
     },
   );
 
