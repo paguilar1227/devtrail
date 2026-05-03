@@ -171,12 +171,14 @@ describe('MCP server', () => {
       'add_comment',
       'list_comments',
       'update_comment',
+      'archive',
+      'restore',
       'search',
       'find_mentions',
       'retry',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(13);
+    expect(toolNames).toHaveLength(15);
   });
 
   it('calls create_project and returns the created project', async () => {
@@ -546,5 +548,128 @@ describe('MCP server', () => {
 
     const r3 = await callTool(deps, { comment_id: 'bad', content: 'x' }, 'update_comment');
     expect(r3.body.result?.isError).toBe(true);
+  });
+
+  // ---------- archive / restore ----------
+
+  it('archive auto-detects content kind and issues UPDATE archived=true', async () => {
+    const ciId = '77777777-7777-7777-7777-777777777777';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // First the kind probe (getContentItem) returns the row with archived=false.
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: ciId, type: 'note', title: 'temp', content: 'x',
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, { id: ciId }, 'archive');
+    expect(body.result?.isError).not.toBe(true);
+
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed).toEqual({ id: ciId, kind: 'content', archived: true, already: false });
+
+    const archiveSql = sqlCalls.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /archived\s*=\s*true/i.test(q.sql),
+    );
+    expect(archiveSql).toBeDefined();
+  });
+
+  it('archive on an already-archived row is a no-op (already=true) and skips the UPDATE', async () => {
+    const ciId = '88888888-8888-8888-8888-888888888888';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: ciId, type: 'note', title: 'temp', content: null,
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: true,  // already archived
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, { id: ciId }, 'archive');
+    expect(body.result?.isError).not.toBe(true);
+
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed.already).toBe(true);
+    // The UPDATE must NOT fire — the row is already archived.
+    expect(sqlCalls.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql) && /archived\s*=\s*true/i.test(q.sql),
+    )).toBeUndefined();
+  });
+
+  it('restore auto-detects content kind and flips archived back to false', async () => {
+    const ciId = '99999999-9999-9999-9999-999999999999';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: ciId, type: 'document', title: 'archived-doc', content: 'x',
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: true,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, { id: ciId }, 'restore');
+    expect(body.result?.isError).not.toBe(true);
+
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed).toEqual({ id: ciId, kind: 'content', archived: false, already: false });
+
+    expect(sqlCalls.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql) && /archived\s*=\s*false/i.test(q.sql),
+    )).toBeDefined();
+  });
+
+  it('archive returns error on unknown id (probes all three kinds)', async () => {
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const { body, sqlCalls } = await callTool(deps, {
+      id: '00000000-0000-0000-0000-000000000000',
+    }, 'archive');
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/No entity found/i);
+    // Should have probed all three kinds before giving up.
+    expect(sqlCalls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('archive + restore reject non-UUID ids', async () => {
+    const deps = mockDeps();
+    const r1 = await callTool(deps, { id: 'bad' }, 'archive');
+    expect(r1.body.result?.isError).toBe(true);
+    expect(r1.sqlCalls.length).toBe(0);
+
+    const r2 = await callTool(deps, { id: 'bad' }, 'restore');
+    expect(r2.body.result?.isError).toBe(true);
+    expect(r2.sqlCalls.length).toBe(0);
   });
 });

@@ -108,9 +108,9 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 ## Known limitations
 
-- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`retry\` to re-run a failed ingest.
+- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`archive\` / \`restore\` for soft delete + undo. Use \`retry\` to re-run a failed ingest. Use \`add_comment\` / \`list_comments\` / \`update_comment\` for todo discussion threads.
 - **Body edits are not yet supported.** You can rename and re-tag a note or document through \`update\`, but you cannot rewrite its body text — the existing chunks would go stale. A \`reprocess\` tool that re-chunks and re-embeds is coming.
-- **No hard delete via MCP.** Hard deletion is UI-only by design. Soft delete (archive) will be exposed shortly.
+- **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (it's reversible via \`restore\`).
 - **Documents are body-immutable.** Once a document's text is extracted, the body itself is never re-derived. Title, project membership, and tags can change; the body cannot.
 - **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
 - **URL ingestion — not yet supported:** Notion docs, Google Docs, Medium paywalls, Vimeo/Twitch — these need per-site auth or dedicated handlers.`;
@@ -506,6 +506,102 @@ No delete via MCP — comment removal is UI-only by design.`,
       await commentsSvc.updateComment(deps, comment_id, content);
       return {
         content: [{ type: 'text', text: JSON.stringify({ id: comment_id, ok: true }, null, 2) }],
+      };
+    },
+  );
+
+  // ---------- 5f. archive ----------
+  server.tool(
+    'archive',
+    `Soft-delete a content item, todo, or project by id. Auto-detects the entity kind via the same lookup probe as \`get\` (content → todo → project). The row is kept (so \`restore\` can undo it); list/search filter it out by default.
+
+Use when the user says "scrap that note", "drop that todo", "archive the X project". For permanent removal, point them at the web UI — hard delete is intentionally not exposed via MCP.
+
+Returns { id, kind, archived: true, already: boolean } where \`already\` is true if the row was already archived (the call was a no-op).`,
+    {
+      id: z.string().describe('UUID of the entity to archive. Must come from a prior list/search/get result.'),
+    },
+    async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}".` }],
+          isError: true,
+        };
+      }
+      const ci = await contentSvc.getContentItem(deps, id);
+      if (ci) {
+        const already = ci.archived === true;
+        if (!already) await contentSvc.archiveContentItemById(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'content', archived: true, already }, null, 2) }],
+        };
+      }
+      const td = await todosSvc.getTodo(deps, id);
+      if (td) {
+        const already = (td as { archived?: boolean }).archived === true;
+        if (!already) await todosSvc.archiveTodoById(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'todo', archived: true, already }, null, 2) }],
+        };
+      }
+      const pr = await projectsSvc.getProject(deps, id);
+      if (pr) {
+        const already = (pr as { status?: string }).status === 'archived';
+        if (!already) await projectsSvc.archiveProject(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'project', archived: true, already }, null, 2) }],
+        };
+      }
+      return {
+        content: [{ type: 'text', text: `No entity found with id ${id}` }],
+        isError: true,
+      };
+    },
+  );
+
+  // ---------- 5g. restore ----------
+  server.tool(
+    'restore',
+    `Undo a previous \`archive\` — un-archive a content item, todo, or project by id. Auto-detects kind. Idempotent: restoring an already-active row is a no-op.
+
+Returns { id, kind, archived: false, already: boolean } where \`already\` is true if the row was already active (no change made).`,
+    {
+      id: z.string().describe('UUID of the entity to restore. Must come from a prior list/search/get result (including archived items).'),
+    },
+    async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}".` }],
+          isError: true,
+        };
+      }
+      const ci = await contentSvc.getContentItem(deps, id);
+      if (ci) {
+        const already = ci.archived === false;
+        if (!already) await contentSvc.unarchiveContentItemById(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'content', archived: false, already }, null, 2) }],
+        };
+      }
+      const td = await todosSvc.getTodo(deps, id);
+      if (td) {
+        const already = (td as { archived?: boolean }).archived === false;
+        if (!already) await todosSvc.unarchiveTodoById(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'todo', archived: false, already }, null, 2) }],
+        };
+      }
+      const pr = await projectsSvc.getProject(deps, id);
+      if (pr) {
+        const already = (pr as { status?: string }).status !== 'archived';
+        if (!already) await projectsSvc.unarchiveProject(deps, id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ id, kind: 'project', archived: false, already }, null, 2) }],
+        };
+      }
+      return {
+        content: [{ type: 'text', text: `No entity found with id ${id}` }],
+        isError: true,
       };
     },
   );
