@@ -111,7 +111,7 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 ## Known limitations
 
-- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`archive\` / \`restore\` for soft delete + undo. Use \`retry\` to re-run a failed ingest. Use \`add_comment\` / \`list_comments\` / \`update_comment\` for todo discussion threads.
+- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`archive\` / \`restore\` for soft delete + undo. Use \`retry\` to re-run a failed ingest, or \`reprocess\` to regenerate chunks/embeddings/metadata on a healthy row. Use \`add_comment\` / \`list_comments\` / \`update_comment\` for todo discussion threads.
 - **Body edits are not yet supported.** You can rename and re-tag a note or document through \`update\`, but you cannot rewrite its body text — the existing chunks would go stale. A \`reprocess\` tool that re-chunks and re-embeds is coming.
 - **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (it's reversible via \`restore\`).
 - **Documents are body-immutable.** Once a document's text is extracted, the body itself is never re-derived. Title, project membership, and tags can change; the body cannot.
@@ -891,6 +891,65 @@ Returns the same shape as create on success: { id, title, chunkCount, type }.`,
         };
       } catch (err) {
         if (err instanceof contentSvc.RetryStateError) {
+          return {
+            content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+            isError: true,
+          };
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // ---------- 6d. reprocess ----------
+  server.tool(
+    'reprocess',
+    `Re-run the ingest pipeline on an existing content item to regenerate chunks, embeddings, metadata, and entity edges from its current text/blob. Use this when:
+- the user changed extraction settings (chunk size, model)
+- a metadata model upgraded and you want fresh titles/topics/tags
+- the entity graph looks stale or incomplete
+- you suspect the original ingest produced low-quality chunks
+
+Differs from retry: reprocess works on healthy items (processing_status = 'ready') AND on previously failed ones. The only forbidden state is 'pending' (the tail is still in flight).
+
+Same return shape as retry/create. Use carefully — reprocessing a large PDF or audio file consumes embeddings + LLM calls.`,
+    {
+      id: z.string().describe('UUID of the content item to reprocess. Any state except pending is allowed.'),
+    },
+    async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}".` }],
+          isError: true,
+        };
+      }
+      try {
+        const started = await contentSvc.reprocessContent(deps, id);
+        const finished = await started.completion;
+        if (finished.status === 'failed') {
+          return {
+            content: [{ type: 'text', text: `Reprocess failed: ${finished.error || 'Unknown error'}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              id: started.id,
+              title: finished.title,
+              chunkCount: finished.chunkCount,
+              warnings: finished.warnings,
+              status: finished.status,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        if (err instanceof contentSvc.ReprocessStateError) {
           return {
             content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
             isError: true,

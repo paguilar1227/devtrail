@@ -450,6 +450,14 @@ export class RetryStateError extends Error {
   }
 }
 
+/** Errors reprocessContent signals to the adapter. Reprocess is OK on ready or failed. */
+export class ReprocessStateError extends Error {
+  constructor(public readonly code: 'NOT_FOUND' | 'IN_FLIGHT', message: string) {
+    super(message);
+    this.name = 'ReprocessStateError';
+  }
+}
+
 /**
  * Re-run the async tail on an existing row whose previous ingest failed.
  *
@@ -487,8 +495,39 @@ export async function retryContentIngest(
   if (row.processing_status === 'pending') {
     throw new RetryStateError('IN_FLIGHT', `Content item ${id} is still pending; cannot retry an in-flight ingest`);
   }
+  return rerunIngestTail(deps, row, 'retry');
+}
 
-  // Clear tail-produced state so retry runs cleanly. chunk_entities cascade
+/**
+ * Re-run the async tail on a healthy row to regenerate chunks + embeddings +
+ * metadata + entity graph. Intended for "I want fresh metadata after a model
+ * upgrade" or "the chunk size changed" workflows — the row's text/blob
+ * content is unchanged but everything derived from it gets rebuilt.
+ *
+ * Mechanics are identical to retryContentIngest with one difference: the
+ * starting state must be 'ready' or 'failed' (NOT 'pending', since the tail
+ * is still in flight there).
+ */
+export async function reprocessContent(
+  deps: ServiceDeps,
+  id: string,
+): Promise<StartContentResult> {
+  const row = await getContentItemById(deps.db, id);
+  if (!row) throw new ReprocessStateError('NOT_FOUND', `Content item ${id} not found`);
+  if (row.processing_status === 'pending') {
+    throw new ReprocessStateError('IN_FLIGHT', `Content item ${id} is still pending; cannot reprocess an in-flight ingest`);
+  }
+  return rerunIngestTail(deps, row, 'reprocess');
+}
+
+async function rerunIngestTail(
+  deps: ServiceDeps,
+  row: ContentItemRow,
+  mode: 'retry' | 'reprocess',
+): Promise<StartContentResult> {
+  const id = row.id;
+
+  // Clear tail-produced state so the rerun is clean. chunk_entities cascade
   // off chunks via FK; entities themselves are global by design (shared
   // canonical names across the corpus) so we leave them alone.
   await deleteChunksByContentItem(deps.db, id);
@@ -501,18 +540,18 @@ export async function retryContentIngest(
     try {
       const bytes = await deps.blobStorage.download(row.blob_url);
       const filename = (row.metadata as Record<string, unknown>)?.filename as string | undefined
-        ?? `retry-${id}`;
+        ?? `${mode}-${id}`;
       file = { data: bytes, mimeType: row.mime_type, filename };
       if (row.mime_type === 'application/pdf') {
         try {
           const pdf = await extractPdfText(bytes);
           pdfText = pdf.text;
         } catch (err) {
-          console.warn(`[retry] PDF re-extract failed for ${id}, falling back to text-only retry:`, err);
+          console.warn(`[${mode}] PDF re-extract failed for ${id}, falling back to text-only:`, err);
         }
       }
     } catch (err) {
-      console.warn(`[retry] Blob download failed for ${id}, falling back to text-only retry:`, err);
+      console.warn(`[${mode}] Blob download failed for ${id}, falling back to text-only:`, err);
     }
   }
 
@@ -536,7 +575,7 @@ export async function retryContentIngest(
   // via its CASE expression, so the polling endpoint reports a fresh start.
   await updateProcessingStatus(deps.db, id, 'pending', null);
 
-  console.log(`[retry] Re-running ingest tail for ${row.type} ${id}`);
+  console.log(`[${mode}] Re-running ingest tail for ${row.type} ${id}`);
 
   const completion = runIngestTail(deps, id, input, pdfText, trace).catch((err) => {
     const errMsg = err instanceof Error ? err.message : String(err);

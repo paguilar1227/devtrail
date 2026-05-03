@@ -424,6 +424,100 @@ describe('Content items API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /content/:id/reprocess works on a healthy ready row (the differentiator vs retry)', async () => {
+    const fakeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'Healthy doc',
+            content: 'Body content that should re-chunk fine.',
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready',
+            processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/reprocess`, {
+      method: 'POST',
+      headers: { ...AUTH },
+    }));
+
+    // Critical: reprocess on 'ready' is the WHOLE POINT (retry would 409 here).
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toEqual({ id: fakeId, status: 'pending' });
+
+    // Same pre-tail mechanics as retry: chunks gone, status flipped to pending.
+    const chunksDeleted = queries.find(
+      (q) => /DELETE\s+FROM\s+chunks/i.test(q.sql) && q.params[0] === fakeId,
+    );
+    expect(chunksDeleted).toBeDefined();
+    const statusReset = queries.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status\s*=\s*\$1/.test(q.sql)
+        && q.params[0] === 'pending'
+        && q.params[2] === fakeId,
+    );
+    expect(statusReset).toBeDefined();
+  });
+
+  it('POST /content/:id/reprocess returns 409 when the row is still pending (in-flight)', async () => {
+    const fakeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'Still ingesting',
+            content: 'partial', blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'pending', processing_error: null,
+            ingest_completed_at: null,
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/content/${fakeId}/reprocess`, {
+      method: 'POST',
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('IN_FLIGHT');
+  });
+
+  it('POST /content/:id/reprocess returns 404 for unknown ids and 400 for non-UUIDs', async () => {
+    // Explicit empty-rows mock so the SELECT returns 0 rows. Default mockDeps
+    // mock is { rows: [] } but using mockImplementation here to be defensive
+    // against suite-level mock state.
+    vi.mocked(deps.db.query).mockImplementation(async () => ({ rows: [] } as any));
+
+    const notFound = await app.fetch(new Request(
+      'http://localhost/api/v1/content/77777777-7777-7777-7777-777777777777/reprocess',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(notFound.status).toBe(404);
+
+    const badUuid = await app.fetch(new Request(
+      'http://localhost/api/v1/content/not-a-uuid/reprocess',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(badUuid.status).toBe(400);
+  });
+
   it('GET /content?processing_status=failed forwards a single status filter to the DB', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {

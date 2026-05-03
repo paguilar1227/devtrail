@@ -247,6 +247,25 @@ export function createApp(deps: ServiceDeps) {
     }
   });
 
+  // Reprocess a healthy (or previously failed) content item: regenerate
+  // chunks, embeddings, metadata, and entity edges from the row's existing
+  // text/blob content. Differs from /retry in the precondition only — retry
+  // is for failed rows; reprocess accepts ready or failed. 409 if pending.
+  app.post('/api/v1/content/:id/reprocess', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    try {
+      const result = await contentSvc.reprocessContent(deps, id);
+      return c.json({ id: result.id, status: result.status }, 202);
+    } catch (err) {
+      if (err instanceof contentSvc.ReprocessStateError) {
+        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+        return c.json({ error: err.message, code: err.code }, 409);
+      }
+      throw err;
+    }
+  });
+
   app.get('/api/v1/content/:id', async (c) => {
     const id = c.req.param('id');
     if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
