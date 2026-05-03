@@ -47,13 +47,17 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | RAG fast path | Azure Foundry chat completions | `gpt-5-4` |
 | RAG thorough path | Azure Foundry Responses API | `gpt-5-4-pro` |
 
-## Schema (3 migrations, see `migrations/`)
+## Schema (7 migrations, see `migrations/`)
 
 - `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
 - `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
 - `003_entities_graph.sql` — entities, chunk_entities, `published_at` column on content_items
+- `004_processing_status.sql` — `processing_status` (pending/ready/failed) + `processing_error` on content_items for the async ingest contract
+- `005_backfill_control_chars.sql` — strip C0/DEL bytes from old content_items.content rows
+- `006_ingest_completed_at.sql` — `ingest_completed_at` for the polling endpoint
+- `007_pinned.sql` — nullable `pinned_at` TIMESTAMPTZ on content_items, todos, projects, with partial indexes
 
-Auto-migration runs on container startup (`runMigrations()` in `src/server.ts`). It checks for table existence and applies missing migrations idempotently.
+Auto-migration runs on container startup (`runMigrations()` in `src/server.ts`). It checks for table/column existence and applies missing migrations idempotently.
 
 **No HNSW indexes.** B1ms tier doesn't have memory for HNSW init at 3072 dims. Sequential scan is fine at single-user scale.
 
@@ -101,7 +105,7 @@ src/
 │   ├── xai.ts              # X/Twitter live-search via Grok
 │   └── json-utils.ts       # extractJson() — strips markdown fences from LLM output
 ├── mcp/
-│   └── server.ts           # 8 MCP tools (see "MCP tools" below)
+│   └── server.ts           # 20 MCP tools (see "MCP tools" below)
 └── storage/
     └── blob.ts             # Azure Blob upload/download
 ```
@@ -110,18 +114,33 @@ src/
 
 Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
 
-## MCP tools (8 total — defined in `src/mcp/server.ts`)
+## MCP tools (20 total — defined in `src/mcp/server.ts`)
 
+Read:
 1. `list_projects` — list all (filter by status optional)
-2. `create_project`
-3. `list` — entity_type-filtered browse (document / note / todo)
-4. `get` — fetch by UUID, auto-detects type (project / content / todo)
-5. `create` — discriminated union over document / note / quick_note / todo
-6. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
-7. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
-8. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
+2. `list` — entity_type-filtered browse (document / note / todo)
+3. `get` — fetch by UUID, auto-detects type (project / content / todo)
+4. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
+5. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
+6. `list_tags` — tag inventory with usage counts; optional `project_id` scope
+7. `list_comments` — comments on a todo
+8. `list_activity` — recent ingest / edit / comment events with since/until/kinds/project_id filters
+9. `ask` — RAG synthesis (auto / fast / thorough depth)
 
-The MCP server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code). It tells the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs. **No `update_*` or `delete_*` tools** — the web UI handles edits.
+Write:
+10. `create_project`
+11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`)
+12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags), project (name/description/status)
+13. `archive` — soft delete on content / todo / project
+14. `restore` — undo `archive`
+15. `add_comment` — add a comment to a todo
+16. `update_comment` — edit a comment body
+17. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
+18. `retry` — re-run a failed ingest (state must be `failed`)
+19. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
+20. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
+
+Hard delete is REST-only by design. Bulk ops, pin/unpin, and stats are REST-only — those are UI affordances rather than AI workflows. The MCP server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code) telling the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
 
 ### Project membership (asymmetric — easy to get wrong)
 
@@ -139,17 +158,19 @@ Auth: `Authorization: Bearer <api-key>` or `?key=<api-key>`. Same key for `/api/
 Routes (see `src/app.ts`):
 
 - `GET /health`
-- `GET|POST|PUT|DELETE /api/v1/projects[/:id]` + `POST /api/v1/projects/:id/restore`
-- `GET|POST|PUT|DELETE /api/v1/content[/:id]` + `POST /api/v1/content/from-url` + `POST /api/v1/content/:id/restore`
-  - `POST /api/v1/content` accepts JSON or `multipart/form-data` (with `file` field for uploads)
-- `GET|POST|PUT|DELETE /api/v1/todos[/:id]` + restore
-- `GET|POST|PUT|DELETE /api/v1/todos/:id/comments[/:cid]`
-- `POST /api/v1/search` — hybrid vector + graph
-- `POST /api/v1/find-mentions`
-- `POST /api/v1/rag` — RAG Q&A with `depth: 'auto' | 'fast' | 'thorough'`
-- `ALL /mcp` — stateless MCP, fresh server + transport per request
+- **Projects** — `GET|POST|PUT|DELETE /api/v1/projects[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?status=` and `?pinned=`.
+- **Content** — `GET|POST|PUT|DELETE /api/v1/content[/:id]` + `/restore` + `/pin` + `/unpin` + `/retry` + `/reprocess` + `/status`. List supports `?type=`, `?project_id=`, `?tags=`, `?processing_status=`, `?pinned=`. `POST /api/v1/content` accepts JSON or `multipart/form-data` (with `file` field). `POST /api/v1/content/from-url` for URL ingest. `POST /api/v1/content/bulk` for batch ops (archive/restore/delete/add_tags/remove_tags/set_project_ids).
+- **Todos** — `GET|POST|PUT|DELETE /api/v1/todos[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?project_id=`, `?status=`, `?priority=`, `?pinned=`. `POST /api/v1/todos/bulk` for batch ops (archive/restore/delete/add_tags/remove_tags/set_status/set_priority/set_project_id/set_due_date).
+- **Comments** — `GET|POST|PUT|DELETE /api/v1/todos/:id/comments[/:cid]`.
+- **Tags** — `GET /api/v1/tags` (inventory with counts), `PUT /api/v1/tags/:name {to}` (rename / merge), `DELETE /api/v1/tags/:name` (corpus-wide delete).
+- **Activity** — `GET /api/v1/activity` with `?since=`, `?until=`, `?kinds=ingest,edit,comment`, `?project_id=`, `?limit=`.
+- **Stats** — `GET /api/v1/stats` (counts + freshness + top tags); optional `?project_id=` to scope.
+- **Search / RAG** — `POST /api/v1/search` (hybrid vector + graph), `POST /api/v1/find-mentions`, `POST /api/v1/rag` (`depth: 'auto'|'fast'|'thorough'`).
+- **MCP** — `ALL /mcp` — stateless, fresh server + transport per request.
 
-Soft delete by default (`archived = true`); pass `?hard=true` for permanent delete.
+Soft delete by default (`archived = true`); pass `?hard=true` for permanent delete on the `DELETE` endpoints.
+
+Async ingest contract: `POST /content` and `/from-url` return **202 + `{id, processing_status: 'pending'}`**. Poll `GET /content/:id/status` until `processing_status` is `ready` or `failed`. `POST /content/:id/retry` re-runs a failed ingest; `POST /content/:id/reprocess` regenerates chunks/embeddings on a ready or failed row.
 
 ## Development workflow
 
@@ -157,7 +178,7 @@ Soft delete by default (`archived = true`); pass `?hard=true` for permanent dele
 
 ```bash
 npx tsc --noEmit           # types
-npm test                    # full vitest run (12 files, 88 tests as of 2026-04-24)
+npm test                    # full vitest run (18 files, 208 tests as of 2026-04-30)
 docker compose up -d        # local Postgres on port 5434 (avoid clashing with 5432)
 npm run dev                 # tsx watch on src/server.ts
 ```

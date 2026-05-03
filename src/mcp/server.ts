@@ -111,10 +111,11 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 ## Known limitations
 
-- **Limited write surface via MCP.** Use \`update\` for metadata edits — todo status (mark done) / priority / due date / parent / tags / project, content item title / project_ids / tags, and project name / description / status. Use \`archive\` / \`restore\` for soft delete + undo. Use \`retry\` to re-run a failed ingest, or \`reprocess\` to regenerate chunks/embeddings/metadata on a healthy row. Use \`add_comment\` / \`list_comments\` / \`update_comment\` for todo discussion threads.
-- **Body edits are not yet supported.** You can rename and re-tag a note or document through \`update\`, but you cannot rewrite its body text — the existing chunks would go stale. A \`reprocess\` tool that re-chunks and re-embeds is coming.
-- **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (it's reversible via \`restore\`).
-- **Documents are body-immutable.** Once a document's text is extracted, the body itself is never re-derived. Title, project membership, and tags can change; the body cannot.
+- **MCP surface (20 tools).** Read: \`list_projects\`, \`list\`, \`get\`, \`search\`, \`find_mentions\`, \`list_tags\`, \`list_comments\`, \`list_activity\`, \`ask\` (RAG synthesis). Write: \`create_project\`, \`create\` (document/note/quick_note/todo), \`update\` (metadata across kinds), \`archive\` / \`restore\` (soft delete + undo), \`add_comment\` / \`update_comment\`, \`save_from_url\`, \`retry\` (failed ingest), \`reprocess\` (regenerate chunks/embeddings/metadata), \`rename_tag\` (corpus-wide).
+- **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (reversible via \`restore\`).
+- **Body edits not in MCP \`update\`.** \`update\` patches title / project membership / tags / status / priority etc., but cannot rewrite a content item's body text. To swap the body: archive the old item and \`save_from_url\` or \`create\` a new one. \`reprocess\` only re-derives chunks from the existing body; it does not change the body.
+- **No bulk MCP ops.** MCP tools work on one entity at a time. Bulk archive / retag / reassign live in the REST API for the web UI's multi-select.
+- **No pin/unpin via MCP.** Pinning is a UI affordance; the AI doesn't need to manage it.
 - **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
 - **URL ingestion — not yet supported:** Notion docs, Google Docs, Medium paywalls, Vimeo/Twitch — these need per-site auth or dedicated handlers.`;
 
