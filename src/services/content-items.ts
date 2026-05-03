@@ -342,6 +342,9 @@ export async function runIngestTail(
         topics: metadata.topics,
         filename: input.file?.filename,
         ingest_trace: trace,
+        // Preserve the replace cross-link the prelude stamped onto the row.
+        // Otherwise this UPDATE would clobber it on the way to 'ready'.
+        ...(input.replacesId ? { replaces: input.replacesId } : {}),
       },
     });
 
