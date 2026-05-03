@@ -15,6 +15,7 @@ import * as ragSvc from './services/rag.js';
 import * as tagsSvc from './services/tags.js';
 import * as activitySvc from './services/activity.js';
 import type { ActivityKind } from './services/activity.js';
+import * as statsSvc from './services/stats.js';
 import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
 
@@ -515,6 +516,19 @@ export function createApp(deps: ServiceDeps) {
       since, until, project_id, kinds, limit,
     });
     return c.json({ activity: rows });
+  });
+
+  // ==========================================================================
+  // STATS — inventory snapshot for dashboards
+  // ==========================================================================
+
+  app.get('/api/v1/stats', async (c) => {
+    const project_id = c.req.query('project_id') ?? undefined;
+    if (project_id !== undefined && !isValidUuid(project_id)) {
+      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
+    }
+    const stats = await statsSvc.getStats(deps, project_id);
+    return c.json(stats);
   });
 
   app.post('/api/v1/find-mentions', async (c) => {

@@ -677,6 +677,100 @@ describe('Content items API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('GET /stats returns the full inventory snapshot in a single round-trip', async () => {
+    let queryCount = 0;
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/content_counts/i.test(sql) && /todo_counts/i.test(sql) && /project_counts/i.test(sql)) {
+        queryCount++;
+        return {
+          rows: [{
+            documents: '12', notes: '8',
+            pending: '1', ready: '18', failed: '1',
+            last_ingest_at: new Date('2026-05-03T10:00:00Z'),
+            last_edit_at: new Date('2026-05-03T11:00:00Z'),
+            todos_total: '5', todos_not_started: '2', todos_in_progress: '2', todos_done: '1',
+            projects_total: '3', projects_active: '2', projects_archived: '0', projects_completed: '1',
+            comments: '4',
+            last_comment_at: new Date('2026-05-02T22:00:00Z'),
+            chunks: '120',
+            top_tags: [{ name: 'reading', count: 5 }, { name: 'work', count: 3 }],
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/stats', { headers: { ...AUTH } }));
+    expect(res.status).toBe(200);
+    expect(queryCount).toBe(1); // single multi-CTE query
+    const body = await res.json();
+    expect(body.counts.documents).toBe(12);
+    expect(body.counts.notes).toBe(8);
+    expect(body.counts.todos).toEqual({ total: 5, not_started: 2, in_progress: 2, done: 1 });
+    expect(body.counts.projects).toEqual({ total: 3, active: 2, archived: 0, completed: 1 });
+    expect(body.counts.comments).toBe(4);
+    expect(body.counts.chunks).toBe(120);
+    expect(body.processing).toEqual({ pending: 1, ready: 18, failed: 1 });
+    expect(body.freshness.last_ingest_at).toBe('2026-05-03T10:00:00.000Z');
+    expect(body.freshness.last_edit_at).toBe('2026-05-03T11:00:00.000Z');
+    expect(body.freshness.last_comment_at).toBe('2026-05-02T22:00:00.000Z');
+    expect(body.top_tags).toEqual([{ name: 'reading', count: 5 }, { name: 'work', count: 3 }]);
+  });
+
+  it('GET /stats?project_id=<uuid> scopes counts via project_ids array containment', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{}] } as any;
+    });
+
+    const pid = '11111111-1111-4111-8111-111111111111';
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/stats?project_id=${pid}`,
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const sQ = queries.find((q) => /content_counts/i.test(q.sql));
+    expect(sQ).toBeDefined();
+    expect(sQ!.params).toEqual([pid]);
+    // Content/todos/comments/chunks all scoped; projects count is not scoped.
+    expect(/project_ids @> ARRAY\[\$1\]::uuid\[\]/.test(sQ!.sql)).toBe(true);
+    expect(/project_id = \$1/.test(sQ!.sql)).toBe(true);
+  });
+
+  it('GET /stats?project_id=not-a-uuid returns 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/stats?project_id=not-a-uuid',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stats handles an empty workspace (zeros, nulls, no NaN)', async () => {
+    vi.mocked(deps.db.query).mockResolvedValueOnce({
+      rows: [{
+        documents: null, notes: null,
+        pending: null, ready: null, failed: null,
+        last_ingest_at: null, last_edit_at: null,
+        todos_total: null, todos_not_started: null, todos_in_progress: null, todos_done: null,
+        projects_total: null, projects_active: null, projects_archived: null, projects_completed: null,
+        comments: null, last_comment_at: null,
+        chunks: null,
+        top_tags: [],
+      }],
+    } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/stats', { headers: { ...AUTH } }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Empty workspace must coerce to 0 / null cleanly — UI dashboards crash on NaN.
+    expect(body.counts.documents).toBe(0);
+    expect(body.counts.todos.total).toBe(0);
+    expect(body.freshness.last_ingest_at).toBeNull();
+    expect(body.top_tags).toEqual([]);
+  });
+
   it('GET /tags?project_id=not-a-uuid returns 400', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/tags?project_id=not-a-uuid',
