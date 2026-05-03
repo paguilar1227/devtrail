@@ -6,7 +6,6 @@ set -euo pipefail
 RESOURCE_GROUP="${RESOURCE_GROUP:?Set RESOURCE_GROUP}"
 ACR_NAME="${ACR_NAME:?Set ACR_NAME}"
 CONTAINER_APP_NAME="${CONTAINER_APP_NAME:-openbrain-prod-api}"
-FUNCTION_APP_NAME="${FUNCTION_APP_NAME:-openbrain-prod-func}"
 IMAGE_NAME="open-brain-v2"
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
 
@@ -26,11 +25,6 @@ az containerapp update \
   --name "${CONTAINER_APP_NAME}" \
   --resource-group "${RESOURCE_GROUP}" \
   --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
-
-echo "=== Deploying Azure Function ==="
-cd functions/consolidation-trigger
-func azure functionapp publish "${FUNCTION_APP_NAME}" --typescript
-cd ../..
 
 # Run migration if DATABASE_URL is set (first deploy or schema changes)
 if [ -n "${DATABASE_URL:-}" ]; then

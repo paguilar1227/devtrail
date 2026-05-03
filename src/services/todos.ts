@@ -30,7 +30,7 @@ export async function createTodo(
     dueDate?: Date | null;
     tags?: string[];
   },
-): Promise<{ id: string }> {
+): Promise<TodoRow> {
   const embedding = await deps.embeddingProvider.embed(input.content);
   const todo: TodoInsert = {
     content: input.content,

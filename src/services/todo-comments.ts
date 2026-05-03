@@ -10,7 +10,7 @@ export async function createComment(
   deps: ServiceDeps,
   todoId: string,
   content: string,
-): Promise<{ id: string }> {
+): Promise<TodoCommentRow> {
   return insertComment(deps.db, { todoId, content });
 }
 

@@ -41,11 +41,11 @@ export interface ListTodosFilters {
   limit?: number;
 }
 
-export async function insertTodo(db: DbClient, todo: TodoInsert): Promise<{ id: string }> {
+export async function insertTodo(db: DbClient, todo: TodoInsert): Promise<TodoRow> {
   const result = await db.query(
     `INSERT INTO todos (content, project_id, section, parent_id, priority, due_date, tags, embedding)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id`,
+     RETURNING *`,
     [
       todo.content, todo.projectId, todo.section, todo.parentId,
       todo.priority, todo.dueDate, todo.tags,

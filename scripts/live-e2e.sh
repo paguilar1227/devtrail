@@ -362,17 +362,19 @@ phase "Phase 8: Todos (filters + pin + bulk)"
 resp=$(req POST "/api/v1/todos" "{\"content\":\"parent\",\"project_id\":\"$PROJECT_ID\"}")
 split_response "$resp"
 assert "POST /todos parent returns 201" "$STATUS" "201"
-PARENT=$(echo "$BODY" | jq -r '.id')
+PARENT=$(echo "$BODY" | jq -r '.todo.id')
+parent_content=$(echo "$BODY" | jq -r '.todo.content')
+assert "POST /todos returns full row wrapped under .todo" "$parent_content" "parent"
 TODO_IDS+=("$PARENT")
 
 resp=$(req POST "/api/v1/todos" "{\"content\":\"child 1\",\"project_id\":\"$PROJECT_ID\",\"parent_id\":\"$PARENT\",\"priority\":\"P1\",\"due_date\":\"2026-06-01T00:00:00Z\",\"tags\":[\"e2e-todo-$ts\"]}")
 split_response "$resp"
-CHILD1=$(echo "$BODY" | jq -r '.id')
+CHILD1=$(echo "$BODY" | jq -r '.todo.id')
 TODO_IDS+=("$CHILD1")
 
 resp=$(req POST "/api/v1/todos" "{\"content\":\"child 2\",\"project_id\":\"$PROJECT_ID\",\"parent_id\":\"$PARENT\",\"priority\":\"P3\",\"due_date\":\"2026-12-01T00:00:00Z\",\"tags\":[\"e2e-todo-$ts\"]}")
 split_response "$resp"
-CHILD2=$(echo "$BODY" | jq -r '.id')
+CHILD2=$(echo "$BODY" | jq -r '.todo.id')
 TODO_IDS+=("$CHILD2")
 
 resp=$(req GET "/api/v1/todos?parent_id=$PARENT")
@@ -432,6 +434,16 @@ assert "bulk set_project_id null detaches to Inbox" "$affected" "2"
 
 req POST "/api/v1/todos/bulk" "{\"action\":\"set_project_id\",\"ids\":$todo_ids_json,\"project_id\":\"$PROJECT_ID\"}" > /dev/null
 
+resp=$(req POST "/api/v1/todos/$PARENT/comments" '{"content":"first comment from e2e"}')
+split_response "$resp"
+assert "POST /todos/:id/comments returns 201" "$STATUS" "201"
+comment_id=$(echo "$BODY" | jq -r '.comment.id')
+comment_body=$(echo "$BODY" | jq -r '.comment.content')
+[ -n "$comment_id" ] && [ "$comment_id" != "null" ] \
+  && assert "POST /comments returns .comment.id" "set" "set" \
+  || assert "POST /comments returns .comment.id" "missing" "set"
+assert "POST /comments returns .comment.content" "$comment_body" "first comment from e2e"
+
 # ---------------- Phase 9: Stats + activity ----------------
 
 phase "Phase 9: Stats + activity"
@@ -447,7 +459,7 @@ assert_ge "/stats reports todos.total >= 3 in project" "$todos_count" "3"
 resp=$(req GET "/api/v1/activity?project_id=$PROJECT_ID&limit=50")
 split_response "$resp"
 assert "GET /activity?project_id= returns 200" "$STATUS" "200"
-event_count=$(echo "$BODY" | jq -r '.activity | length')
+event_count=$(echo "$BODY" | jq -r '.events | length')
 assert_ge "/activity has events for project" "$event_count" "1"
 
 # ---------------- Phase 10: Reprocess ----------------

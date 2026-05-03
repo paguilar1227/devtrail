@@ -554,7 +554,7 @@ export function createApp(deps: ServiceDeps) {
       tags?: string[];
     }>();
     if (!body.content) return c.json({ error: 'content is required' }, 400);
-    const result = await todosSvc.createTodo(deps, {
+    const todo = await todosSvc.createTodo(deps, {
       content: body.content,
       projectId: body.project_id ?? null,
       section: body.section ?? null,
@@ -563,7 +563,7 @@ export function createApp(deps: ServiceDeps) {
       dueDate: body.due_date ? new Date(body.due_date) : null,
       tags: body.tags,
     });
-    return c.json(result, 201);
+    return c.json({ todo: stripEmbedding(todo) }, 201);
   });
 
   app.get('/api/v1/todos/:id', async (c) => {
@@ -719,8 +719,8 @@ export function createApp(deps: ServiceDeps) {
 
   app.post('/api/v1/todos/:id/comments', async (c) => {
     const body = await c.req.json<{ content: string }>();
-    const result = await commentsSvc.createComment(deps, c.req.param('id'), body.content);
-    return c.json(result, 201);
+    const comment = await commentsSvc.createComment(deps, c.req.param('id'), body.content);
+    return c.json({ comment }, 201);
   });
 
   app.put('/api/v1/todos/:id/comments/:cid', async (c) => {
@@ -857,7 +857,7 @@ export function createApp(deps: ServiceDeps) {
     const rows = await activitySvc.listActivity(deps, {
       since, until, project_id, kinds, limit,
     });
-    return c.json({ activity: rows });
+    return c.json({ events: rows });
   });
 
   // ==========================================================================

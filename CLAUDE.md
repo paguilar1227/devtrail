@@ -24,7 +24,7 @@ A NotebookLM-style personal knowledge base + productivity tool. Single user. No 
 - **Todos** with optional project membership, recursive subtasks, comments.
 - **Entities + chunk_entities** form a graph layer over the corpus — extracted at ingest, used to expand vector retrieval along entity edges.
 
-There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine**. Those existed in pre-pivot versions and were deleted in the V2 rewrite (April 2026). If you find references to them anywhere outside legacy infra (`functions/consolidation-trigger`), fix the docs.
+There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine**. Those existed in pre-pivot versions and were deleted in the V2 rewrite (April 2026). If you find references to them anywhere, fix the docs.
 
 ## Stack
 
@@ -269,11 +269,6 @@ npx vitest run tests/integration/rest-api.test.ts
 - PDFs: downloaded as bytes → text via `pdf-parse` v2 PDFParse class. Watch for the v2 API change — older docs reference a function import that no longer exists.
 - HTML: Firecrawl markdown extraction. Reject results shorter than 300 chars or matching error/placeholder titles.
 - Dedup: by `source_url` first, then by `file_hash` for binary downloads.
-
-### Legacy infrastructure (cleanup candidates)
-
-- `functions/consolidation-trigger/` and the deploy step that publishes it (`Azure Function` step in `.github/workflows/deploy.yml`) are leftovers from the pre-pivot architecture. The function probably no-ops, but it's still being deployed. Consider removing on a quiet day.
-- `scripts/deploy.sh` also still publishes the function. If you delete the function, update this too.
 
 ## Production environment
 

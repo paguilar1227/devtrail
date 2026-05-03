@@ -1026,9 +1026,9 @@ describe('Content items API', () => {
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.activity).toHaveLength(3);
-    expect(body.activity[0].kind).toBe('comment');
-    expect(body.activity[2].kind).toBe('ingest');
+    expect(body.events).toHaveLength(3);
+    expect(body.events[0].kind).toBe('comment');
+    expect(body.events[2].kind).toBe('ingest');
   });
 
   it('GET /activity?since=&until= forwards bounds as timestamptz params', async () => {
@@ -1513,8 +1513,15 @@ describe('Todos API', () => {
     app = createApp(deps);
   });
 
-  it('creates a todo', async () => {
-    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [{ id: 't1' }] } as any);
+  it('creates a todo and returns the full row wrapped under todo', async () => {
+    vi.mocked(deps.db.query).mockResolvedValueOnce({
+      rows: [{
+        id: 't1', content: 'Do the thing', priority: 'P1',
+        project_id: null, parent_id: null, section: null,
+        status: 'not_started', due_date: null, tags: [], archived: false,
+        pinned_at: null, created_at: new Date(), updated_at: new Date(),
+      }],
+    } as any);
     const res = await app.fetch(new Request('http://localhost/api/v1/todos', {
       method: 'POST',
       headers: { ...AUTH, 'Content-Type': 'application/json' },
@@ -1522,7 +1529,10 @@ describe('Todos API', () => {
     }));
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.id).toBe('t1');
+    expect(body.todo.id).toBe('t1');
+    expect(body.todo.content).toBe('Do the thing');
+    expect(body.todo.priority).toBe('P1');
+    expect(body.todo.embedding).toBeUndefined();
   });
 
   it('rejects todo without content', async () => {

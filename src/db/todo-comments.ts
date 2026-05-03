@@ -16,9 +16,9 @@ export interface TodoCommentRow {
 export async function insertComment(
   db: DbClient,
   comment: TodoCommentInsert,
-): Promise<{ id: string }> {
+): Promise<TodoCommentRow> {
   const result = await db.query(
-    `INSERT INTO todo_comments (content, todo_id) VALUES ($1, $2) RETURNING id`,
+    `INSERT INTO todo_comments (content, todo_id) VALUES ($1, $2) RETURNING *`,
     [comment.content, comment.todoId],
   );
   return result.rows[0];
