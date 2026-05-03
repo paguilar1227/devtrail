@@ -510,6 +510,86 @@ describe('Content items API', () => {
     expect(tagsQ!.params).toContain(projId);
   });
 
+  it('PUT /tags/:name renames across content_items + todos in one transaction', async () => {
+    const txQueries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.transaction).mockImplementation(async (fn: any) => {
+      const txClient = {
+        query: vi.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
+          txQueries.push({ sql, params: params ?? [] });
+          return { rows: [], rowCount: 3 };
+        }),
+      };
+      return fn(txClient);
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/tags/old-tag', {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: 'new-tag' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ from: 'old-tag', to: 'new-tag', updated: 6 });
+
+    // Both tables must be hit. Catches a regression where someone forgets
+    // one of the two UPDATEs and tags drift between content_items and todos.
+    expect(txQueries.find((q) => /UPDATE\s+content_items/i.test(q.sql))).toBeDefined();
+    expect(txQueries.find((q) => /UPDATE\s+todos/i.test(q.sql))).toBeDefined();
+    // Both UPDATEs must include the dedup CASE so a row with both `from`
+    // and `to` ends up with single `to` instead of [to, to].
+    expect(txQueries.every((q) => /array_agg\(DISTINCT/i.test(q.sql))).toBe(true);
+  });
+
+  it('PUT /tags/:name with from === to is a no-op (no transaction)', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/tags/foo', {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: 'foo' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.noop).toBe(true);
+    expect(body.updated).toBe(0);
+    // Critical: the no-op must NOT thrash the DB.
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('PUT /tags/:name with missing `to` returns 400', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/tags/old', {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /tags/:name strips the tag from both tables', async () => {
+    const txQueries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.transaction).mockImplementation(async (fn: any) => {
+      const txClient = {
+        query: vi.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
+          txQueries.push({ sql, params: params ?? [] });
+          return { rows: [], rowCount: 2 };
+        }),
+      };
+      return fn(txClient);
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/tags/dead-tag', {
+      method: 'DELETE',
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ name: 'dead-tag', updated: 4 });
+
+    // Both UPDATEs must use array_remove (NOT array_replace or DELETE FROM).
+    // A regression where someone deletes rows instead of stripping the tag
+    // would surface here.
+    expect(txQueries.every((q) => /array_remove/i.test(q.sql))).toBe(true);
+    expect(txQueries.every((q) => /DELETE\s+FROM/i.test(q.sql))).toBe(false);
+  });
+
   it('GET /tags?project_id=not-a-uuid returns 400', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/tags?project_id=not-a-uuid',

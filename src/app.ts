@@ -442,6 +442,30 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ tags });
   });
 
+  // Rename a tag across content_items.tags + todos.tags in one transaction.
+  // Body { to } is required. Idempotent on no-op (from === to).
+  app.put('/api/v1/tags/:name', async (c) => {
+    const from = c.req.param('name');
+    const body = await c.req.json<{ to: string }>();
+    if (!body.to || typeof body.to !== 'string') {
+      return c.json({ error: 'Body must include `to` (string).' }, 400);
+    }
+    if (body.to === from) {
+      // No-op rename. Return success without thrashing the DB.
+      return c.json({ from, to: body.to, updated: 0, noop: true });
+    }
+    const result = await tagsSvc.renameTag(deps, from, body.to);
+    return c.json({ from, to: body.to, updated: result.updated });
+  });
+
+  // Strip a tag from every row that has it. The rows themselves are NOT
+  // deleted — only the tag is removed.
+  app.delete('/api/v1/tags/:name', async (c) => {
+    const name = c.req.param('name');
+    const result = await tagsSvc.deleteTag(deps, name);
+    return c.json({ name, updated: result.updated });
+  });
+
   app.post('/api/v1/find-mentions', async (c) => {
     const body = await c.req.json<{
       entity: string;

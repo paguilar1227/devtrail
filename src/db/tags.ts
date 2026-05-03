@@ -72,3 +72,70 @@ export async function listTags(
     },
   }));
 }
+
+/**
+ * Rename a tag across content_items.tags and todos.tags atomically.
+ *
+ * Merge semantics: if a row already had both `from` and `to`, the result
+ * deduplicates — the row keeps a single `to` instead of `[to, to]`. This
+ * is what the user wants when rename is being used to consolidate parallel
+ * labels (e.g. "meeting-notes" + "meetings" → "meeting-notes").
+ *
+ * Returns the total number of affected rows across both tables.
+ */
+export async function renameTag(
+  db: DbClient,
+  from: string,
+  to: string,
+): Promise<{ updated: number }> {
+  return db.transaction(async (client) => {
+    const r1 = await client.query(
+      `UPDATE content_items
+          SET tags = (
+            SELECT COALESCE(array_agg(DISTINCT CASE WHEN t = $1 THEN $2 ELSE t END), ARRAY[]::text[])
+              FROM unnest(tags) AS t
+          ),
+              updated_at = now()
+        WHERE tags @> ARRAY[$1]`,
+      [from, to],
+    );
+    const r2 = await client.query(
+      `UPDATE todos
+          SET tags = (
+            SELECT COALESCE(array_agg(DISTINCT CASE WHEN t = $1 THEN $2 ELSE t END), ARRAY[]::text[])
+              FROM unnest(tags) AS t
+          ),
+              updated_at = now()
+        WHERE tags @> ARRAY[$1]`,
+      [from, to],
+    );
+    return { updated: (r1.rowCount ?? 0) + (r2.rowCount ?? 0) };
+  });
+}
+
+/**
+ * Strip a tag from every row that has it. Does NOT delete the rows
+ * themselves — only the tag is removed. Returns the number of affected rows.
+ */
+export async function deleteTag(
+  db: DbClient,
+  name: string,
+): Promise<{ updated: number }> {
+  return db.transaction(async (client) => {
+    const r1 = await client.query(
+      `UPDATE content_items
+          SET tags = array_remove(tags, $1),
+              updated_at = now()
+        WHERE tags @> ARRAY[$1]`,
+      [name],
+    );
+    const r2 = await client.query(
+      `UPDATE todos
+          SET tags = array_remove(tags, $1),
+              updated_at = now()
+        WHERE tags @> ARRAY[$1]`,
+      [name],
+    );
+    return { updated: (r1.rowCount ?? 0) + (r2.rowCount ?? 0) };
+  });
+}

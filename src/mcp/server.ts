@@ -706,6 +706,31 @@ Returns: [{ name, total, by_type: { document, note, todo } }]. Optional project_
     },
   );
 
+  // ---------- 6f. rename_tag ----------
+  server.tool(
+    'rename_tag',
+    `Rename a tag across all content items and todos in one transaction. Use when the user wants to consolidate parallel labels (e.g., 'meetings' + 'meeting-notes' → 'meeting-notes') or fix a typo retroactively.
+
+Merge-aware: if a row already had both \`from\` and \`to\`, the result is deduplicated (single \`to\`, not duplicated). Idempotent if from === to (no-op).
+
+Returns { from, to, updated } where \`updated\` is the total count of affected rows. To remove a tag entirely (without renaming), use the web UI — destructive ops stay UI-only.`,
+    {
+      from: z.string().min(1).describe('The existing tag name to rename. Must match exactly (case-sensitive).'),
+      to:   z.string().min(1).describe('The new tag name. Lowercase kebab-case conventional.'),
+    },
+    async ({ from, to }) => {
+      if (from === to) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ from, to, updated: 0, noop: true }, null, 2) }],
+        };
+      }
+      const result = await tagsSvc.renameTag(deps, from, to);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ from, to, updated: result.updated }, null, 2) }],
+      };
+    },
+  );
+
   // ---------- 6d. ask (RAG synthesis) ----------
   server.tool(
     'ask',
