@@ -225,7 +225,7 @@ REQUIRED PER TYPE:
 - document: content (the extracted text, reference material from outside sources). Optional: title (auto-generated from content if omitted), project_ids, tags.
 - note: content (self-authored text, potentially long). Optional: title, project_ids, tags. The user wrote this themselves.
 - quick_note: content (a short captured thought). AI auto-generates the title. Optional: project_ids, tags. Use for mid-conversation "jot this down" saves.
-- todo: content (the task description, e.g., "Email John"). Optional: project_id (SINGLE, not array), priority (P1/P2/P3), due_date (ISO 8601), tags.
+- todo: content (the task description, e.g., "Email John"). Optional: project_id (SINGLE, not array), priority (P1/P2/P3), due_date (ISO 8601), tags, parent_id (UUID of an existing todo to make this a subtask), section (free-text label for grouping inside a project, e.g., "Inbox", "Backlog").
 
 NOTES ON MEMBERSHIP:
 - document/note/quick_note use project_ids (ARRAY). Empty/omitted = personal/global scope.
@@ -250,6 +250,10 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         .describe('TODO ONLY. P1 = urgent, P2 = normal, P3 = low. Omit for unprioritized.'),
       due_date: z.string().optional()
         .describe('TODO ONLY. ISO 8601 timestamp (e.g., "2026-04-20T17:00:00Z").'),
+      parent_id: z.string().optional()
+        .describe('TODO ONLY. UUID of an existing todo. Set this to make the new todo a subtask of that one. Omit for top-level todos.'),
+      section: z.string().optional()
+        .describe('TODO ONLY. Free-text section label for grouping todos inside a project (e.g., "Inbox", "Backlog", "Doing"). Omit for unsectioned.'),
     },
     async (input) => {
       const { type } = input;
@@ -257,6 +261,8 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         const result = await todosSvc.createTodo(deps, {
           content: input.content,
           projectId: input.project_id ?? null,
+          parentId: input.parent_id ?? null,
+          section: input.section ?? null,
           priority: input.priority,
           dueDate: input.due_date ? new Date(input.due_date) : null,
           tags: input.tags,

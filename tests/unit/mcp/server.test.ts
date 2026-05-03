@@ -672,4 +672,32 @@ describe('MCP server', () => {
     expect(r2.body.result?.isError).toBe(true);
     expect(r2.sqlCalls.length).toBe(0);
   });
+
+  // ---------- create todo: subtasks + sections ----------
+
+  it('create type=todo with parent_id + section forwards both to insertTodo', async () => {
+    const parentId = 'aaaa1111-1111-1111-1111-111111111111';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/INSERT INTO todos/i.test(sql)) {
+        return { rows: [{ id: 'child-todo-1' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, {
+      type: 'todo',
+      content: 'Subtask under parent',
+      parent_id: parentId,
+      section: 'Backlog',
+    }, 'create');
+
+    expect(body.result?.isError).not.toBe(true);
+    const insertSql = sqlCalls.find((q) => /INSERT INTO todos/i.test(q.sql));
+    expect(insertSql).toBeDefined();
+    // Both fields must reach the DB. Without them the AI couldn't build
+    // hierarchies (regression of the original MCP gap).
+    expect(insertSql!.params).toContain(parentId);
+    expect(insertSql!.params).toContain('Backlog');
+  });
 });
