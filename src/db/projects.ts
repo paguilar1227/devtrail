@@ -10,6 +10,7 @@ export interface ProjectRow {
   name: string;
   description: string | null;
   status: 'active' | 'archived' | 'completed';
+  pinned_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -22,14 +23,43 @@ export async function insertProject(db: DbClient, project: ProjectInsert): Promi
   return result.rows[0];
 }
 
-export async function listProjects(db: DbClient, status?: string): Promise<ProjectRow[]> {
-  const where = status ? `WHERE status = $1` : '';
-  const params = status ? [status] : [];
+export async function listProjects(
+  db: DbClient,
+  status?: string,
+  pinned?: boolean,
+): Promise<ProjectRow[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (status) { conditions.push(`status = $${i++}`); params.push(status); }
+  if (pinned === true) conditions.push('pinned_at IS NOT NULL');
+  else if (pinned === false) conditions.push('pinned_at IS NULL');
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderBy = pinned === true
+    ? 'ORDER BY pinned_at DESC'
+    : 'ORDER BY created_at DESC';
   const result = await db.query(
-    `SELECT * FROM projects ${where} ORDER BY created_at DESC`,
+    `SELECT * FROM projects ${where} ${orderBy}`,
     params,
   );
   return result.rows;
+}
+
+export async function pinProject(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE projects SET pinned_at = now(), updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
+}
+
+export async function unpinProject(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE projects SET pinned_at = NULL, updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
 }
 
 export async function getProjectById(db: DbClient, id: string): Promise<ProjectRow | null> {

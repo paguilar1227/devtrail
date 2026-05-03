@@ -13,6 +13,8 @@ import {
   bulkSetPriorityTodos,
   bulkSetProjectIdTodos,
   bulkSetDueDateTodos,
+  pinTodo as dbPinTodo,
+  unpinTodo as dbUnpinTodo,
   type TodoRow, type TodoInsert, type ListTodosFilters, type TodoSearchResult,
   type BulkTodoStatus, type BulkTodoPriority, type BulkTodoResult,
 } from '../db/todos.js';
@@ -97,6 +99,14 @@ export async function unarchiveTodoById(deps: ServiceDeps, id: string): Promise<
 /** Hard delete a todo. Subtasks cascade via FK. */
 export async function deleteTodoHardById(deps: ServiceDeps, id: string): Promise<void> {
   await deleteTodoHard(deps.db, id);
+}
+
+export async function pinTodo(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbPinTodo(deps.db, id);
+}
+
+export async function unpinTodo(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbUnpinTodo(deps.db, id);
 }
 
 export async function searchTodos(

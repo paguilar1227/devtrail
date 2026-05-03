@@ -40,6 +40,7 @@ export interface ContentItemRow {
   processing_status: ProcessingStatus;
   processing_error: string | null;
   ingest_completed_at: Date | null;
+  pinned_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -64,6 +65,7 @@ export interface ListContentItemsFilters {
   project_id?: string;              // matches if project_id is in project_ids[]
   tags?: string[];                   // AND semantics: all tags must be present
   processing_status?: ProcessingStatus[]; // OR semantics: row must match any
+  pinned?: boolean;                  // true = only pinned, false = only not pinned, undefined = no filter
   include_archived?: boolean;
   limit?: number;
 }
@@ -155,15 +157,39 @@ export async function listContentItems(
     conditions.push(`processing_status = ANY($${i++}::text[])`);
     params.push(filters.processing_status);
   }
+  if (filters.pinned === true) conditions.push('pinned_at IS NOT NULL');
+  else if (filters.pinned === false) conditions.push('pinned_at IS NULL');
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filters.limit ? `LIMIT ${filters.limit}` : '';
 
+  // Pinned-first ordering when filtering pins (most-recently-pinned wins);
+  // otherwise default chronological browse.
+  const orderBy = filters.pinned === true
+    ? 'ORDER BY pinned_at DESC'
+    : 'ORDER BY created_at DESC';
+
   const result = await db.query(
-    `SELECT * FROM content_items ${where} ORDER BY created_at DESC ${limit}`,
+    `SELECT * FROM content_items ${where} ${orderBy} ${limit}`,
     params,
   );
   return result.rows;
+}
+
+export async function pinContentItem(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE content_items SET pinned_at = now(), updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
+}
+
+export async function unpinContentItem(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE content_items SET pinned_at = NULL, updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
 }
 
 export async function getContentItemById(db: DbClient, id: string): Promise<ContentItemRow | null> {

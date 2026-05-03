@@ -14,6 +14,8 @@ import {
   bulkAddTagsContentItems,
   bulkRemoveTagsContentItems,
   bulkSetProjectIdsContentItems,
+  pinContentItem as dbPinContentItem,
+  unpinContentItem as dbUnpinContentItem,
   type ContentItemRow, type ContentItemStatus, type ContentType,
   type ListContentItemsFilters, type ProcessingStatus,
   type BulkContentResult,
@@ -643,6 +645,14 @@ export async function unarchiveContentItemById(deps: ServiceDeps, id: string): P
 /** Hard delete a content item. Chunks cascade via FK. Does NOT remove blob storage files. */
 export async function deleteContentItemHardById(deps: ServiceDeps, id: string): Promise<void> {
   await deleteContentItemHard(deps.db, id);
+}
+
+export async function pinContentItem(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbPinContentItem(deps.db, id);
+}
+
+export async function unpinContentItem(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbUnpinContentItem(deps.db, id);
 }
 
 export type BulkContentAction =

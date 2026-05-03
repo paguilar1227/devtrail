@@ -23,6 +23,7 @@ export interface TodoRow {
   tags: string[];
   embedding: number[] | null;
   archived: boolean;
+  pinned_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -35,6 +36,7 @@ export interface ListTodosFilters {
   tags?: string[];
   due_before?: Date;
   due_after?: Date;
+  pinned?: boolean;                  // true = only pinned, false = only not pinned, undefined = no filter
   include_archived?: boolean;
   limit?: number;
 }
@@ -96,15 +98,38 @@ export async function listTodos(
     conditions.push(`due_date >= $${i++}`);
     params.push(filters.due_after);
   }
+  if (filters.pinned === true) conditions.push('pinned_at IS NOT NULL');
+  else if (filters.pinned === false) conditions.push('pinned_at IS NULL');
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filters.limit ? `LIMIT ${filters.limit}` : '';
 
+  // When filtering for pinned items, sort pinned-first by recency.
+  const orderBy = filters.pinned === true
+    ? 'ORDER BY pinned_at DESC'
+    : 'ORDER BY created_at DESC';
+
   const result = await db.query(
-    `SELECT * FROM todos ${where} ORDER BY created_at DESC ${limit}`,
+    `SELECT * FROM todos ${where} ${orderBy} ${limit}`,
     params,
   );
   return result.rows;
+}
+
+export async function pinTodo(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE todos SET pinned_at = now(), updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
+}
+
+export async function unpinTodo(db: DbClient, id: string): Promise<{ found: boolean }> {
+  const r = await db.query(
+    `UPDATE todos SET pinned_at = NULL, updated_at = now() WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return { found: r.rows.length > 0 };
 }
 
 export async function getTodoById(db: DbClient, id: string): Promise<TodoRow | null> {

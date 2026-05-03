@@ -41,7 +41,11 @@ export function createApp(deps: ServiceDeps) {
   // ==========================================================================
   app.get('/api/v1/projects', async (c) => {
     const status = c.req.query('status') ?? undefined;
-    const projects = await projectsSvc.listProjects(deps, status);
+    const pinned = parsePinned(c.req.query('pinned'));
+    if (pinned === 'invalid') {
+      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
+    }
+    const projects = await projectsSvc.listProjects(deps, status, pinned);
     return c.json({ projects });
   });
 
@@ -82,6 +86,22 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ ok: true });
   });
 
+  app.post('/api/v1/projects/:id/pin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await projectsSvc.pinProject(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: true });
+  });
+
+  app.post('/api/v1/projects/:id/unpin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await projectsSvc.unpinProject(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: false });
+  });
+
   // ==========================================================================
   // CONTENT ITEMS (documents + notes)
   // ==========================================================================
@@ -108,8 +128,13 @@ export function createApp(deps: ServiceDeps) {
       processing_status = values as Array<'pending' | 'ready' | 'failed'>;
     }
 
+    const pinned = parsePinned(c.req.query('pinned'));
+    if (pinned === 'invalid') {
+      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
+    }
+
     const items = await contentSvc.listContentItems(deps, {
-      type, project_id, tags, processing_status, limit, include_archived,
+      type, project_id, tags, processing_status, pinned, limit, include_archived,
     });
     return c.json({ items: items.map((it) => stripAndSignContent(deps.blobStorage, it)) });
   });
@@ -306,6 +331,22 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ ok: true });
   });
 
+  app.post('/api/v1/content/:id/pin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await contentSvc.pinContentItem(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: true });
+  });
+
+  app.post('/api/v1/content/:id/unpin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await contentSvc.unpinContentItem(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: false });
+  });
+
   // Bulk ops on content_items. Single SQL per request, returns
   // { requested, affected, missing_ids } so the UI can flag rows that
   // didn't apply (typically already-deleted ids in a stale selection).
@@ -373,10 +414,16 @@ export function createApp(deps: ServiceDeps) {
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
     const include_archived = c.req.query('include_archived') === 'true';
 
+    const pinned = parsePinned(c.req.query('pinned'));
+    if (pinned === 'invalid') {
+      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
+    }
+
     const todos = await todosSvc.listTodos(deps, {
       project_id: projectId === 'null' ? null : projectId ?? undefined,
       status: status ?? undefined,
       priority: priority ?? undefined,
+      pinned,
       limit,
       include_archived,
     });
@@ -443,6 +490,22 @@ export function createApp(deps: ServiceDeps) {
   app.post('/api/v1/todos/:id/restore', async (c) => {
     await todosSvc.unarchiveTodoById(deps, c.req.param('id'));
     return c.json({ ok: true });
+  });
+
+  app.post('/api/v1/todos/:id/pin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await todosSvc.pinTodo(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: true });
+  });
+
+  app.post('/api/v1/todos/:id/unpin', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const r = await todosSvc.unpinTodo(deps, id);
+    if (!r.found) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true, pinned: false });
   });
 
   // Bulk ops on todos. Mirrors POST /content/bulk but with todo-specific
@@ -878,4 +941,17 @@ function stripAndSignContent<T extends { embedding?: unknown; blob_url?: string 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidUuid(s: string): boolean {
   return UUID_RE.test(s);
+}
+
+/**
+ * Parse a `?pinned=` query string param into a tri-state:
+ *   undefined → no filter (param wasn't sent at all)
+ *   true / false → strict boolean
+ *   'invalid' sentinel → caller should 400 with the original raw value
+ */
+function parsePinned(raw: string | undefined): boolean | undefined | 'invalid' {
+  if (raw === undefined) return undefined;
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return 'invalid';
 }

@@ -5,6 +5,8 @@ import {
   archiveProject as dbArchiveProject,
   unarchiveProject as dbUnarchiveProject,
   deleteProjectHard as dbDeleteHard,
+  pinProject as dbPinProject,
+  unpinProject as dbUnpinProject,
   type ProjectRow,
 } from '../db/projects.js';
 
@@ -16,8 +18,20 @@ export async function createProject(
   return insertProject(deps.db, { name, description });
 }
 
-export async function listProjects(deps: ServiceDeps, status?: string): Promise<ProjectRow[]> {
-  return dbListProjects(deps.db, status);
+export async function listProjects(
+  deps: ServiceDeps,
+  status?: string,
+  pinned?: boolean,
+): Promise<ProjectRow[]> {
+  return dbListProjects(deps.db, status, pinned);
+}
+
+export async function pinProject(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbPinProject(deps.db, id);
+}
+
+export async function unpinProject(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
+  return dbUnpinProject(deps.db, id);
 }
 
 export async function getProject(deps: ServiceDeps, id: string): Promise<ProjectRow | null> {

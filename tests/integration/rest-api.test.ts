@@ -1014,6 +1014,90 @@ describe('Content items API', () => {
     expect(body.error).toMatch(/non-empty tags/);
   });
 
+  it('POST /content/:id/pin sets pinned_at and returns pinned:true', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111' }] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content/11111111-1111-4111-8111-111111111111/pin',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, pinned: true });
+
+    const pinQ = queries.find((q) => /UPDATE content_items.*pinned_at = now\(\)/i.test(q.sql));
+    expect(pinQ).toBeDefined();
+    expect(pinQ!.params[0]).toBe('11111111-1111-4111-8111-111111111111');
+  });
+
+  it('POST /content/:id/unpin clears pinned_at and returns pinned:false', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111' }] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content/11111111-1111-4111-8111-111111111111/unpin',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, pinned: false });
+
+    const unpinQ = queries.find((q) => /UPDATE content_items.*pinned_at = NULL/i.test(q.sql));
+    expect(unpinQ).toBeDefined();
+  });
+
+  it('POST /content/:id/pin returns 404 when row missing, 400 on bad UUID', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async () => ({ rows: [] } as any));
+
+    const notFound = await app.fetch(new Request(
+      'http://localhost/api/v1/content/77777777-7777-7777-7777-777777777777/pin',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(notFound.status).toBe(404);
+
+    const badUuid = await app.fetch(new Request(
+      'http://localhost/api/v1/content/not-a-uuid/pin',
+      { method: 'POST', headers: { ...AUTH } },
+    ));
+    expect(badUuid.status).toBe(400);
+  });
+
+  it('GET /content?pinned=true filters by pinned and orders pinned-first', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?pinned=true',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(/pinned_at IS NOT NULL/.test(listQ!.sql)).toBe(true);
+    // Pinned-first ordering matters: a UI showing the user's starred list
+    // expects most-recently-starred at the top.
+    expect(/ORDER BY pinned_at DESC/.test(listQ!.sql)).toBe(true);
+  });
+
+  it('GET /content?pinned=garbage returns 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?pinned=garbage',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+  });
+
   it('GET /tags?project_id=not-a-uuid returns 400', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/tags?project_id=not-a-uuid',

@@ -135,6 +135,18 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 006 complete.');
     }
 
+    // Migration 007: pinned_at on content_items, todos, projects
+    const m007Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'content_items' AND column_name = 'pinned_at'`,
+    );
+    if (parseInt(m007Check.rows[0].count) === 0) {
+      console.log('Running migration 007...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '007_pinned.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 007 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);
