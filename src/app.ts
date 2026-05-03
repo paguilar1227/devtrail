@@ -409,8 +409,12 @@ export function createApp(deps: ServiceDeps) {
   // ==========================================================================
   app.get('/api/v1/todos', async (c) => {
     const projectId = c.req.query('project_id');
+    const parentIdRaw = c.req.query('parent_id');
     const status = c.req.query('status');
     const priority = c.req.query('priority');
+    const tagsRaw = c.req.query('tags');
+    const dueBeforeRaw = c.req.query('due_before');
+    const dueAfterRaw = c.req.query('due_after');
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
     const include_archived = c.req.query('include_archived') === 'true';
 
@@ -419,10 +423,40 @@ export function createApp(deps: ServiceDeps) {
       return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
     }
 
+    // parent_id null filter is meaningful (= top-level todos only) and distinct
+    // from "no filter at all" — match the project_id pattern.
+    let parent_id: string | null | undefined;
+    if (parentIdRaw === 'null') parent_id = null;
+    else if (parentIdRaw !== undefined) {
+      if (!isValidUuid(parentIdRaw)) {
+        return c.json({ error: `Invalid parent_id: "${parentIdRaw}". Expected UUID or "null".` }, 400);
+      }
+      parent_id = parentIdRaw;
+    }
+
+    const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+
+    let due_before: Date | undefined;
+    let due_after: Date | undefined;
+    if (dueBeforeRaw) {
+      const d = new Date(dueBeforeRaw);
+      if (isNaN(d.getTime())) return c.json({ error: `Invalid due_before: "${dueBeforeRaw}". Expected ISO 8601.` }, 400);
+      due_before = d;
+    }
+    if (dueAfterRaw) {
+      const d = new Date(dueAfterRaw);
+      if (isNaN(d.getTime())) return c.json({ error: `Invalid due_after: "${dueAfterRaw}". Expected ISO 8601.` }, 400);
+      due_after = d;
+    }
+
     const todos = await todosSvc.listTodos(deps, {
       project_id: projectId === 'null' ? null : projectId ?? undefined,
+      parent_id,
       status: status ?? undefined,
       priority: priority ?? undefined,
+      tags,
+      due_before,
+      due_after,
       pinned,
       limit,
       include_archived,

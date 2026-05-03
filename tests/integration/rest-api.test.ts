@@ -1224,6 +1224,102 @@ describe('Todos API', () => {
     expect(body.todos[0].embedding).toBeUndefined();
   });
 
+  it('GET /todos?parent_id=<uuid> filters subtasks of a specific parent', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const parentId = '11111111-1111-4111-8111-111111111111';
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/todos?parent_id=${parentId}`,
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(/parent_id = \$/.test(listQ!.sql)).toBe(true);
+    expect(listQ!.params).toContain(parentId);
+  });
+
+  it('GET /todos?parent_id=null returns top-level todos only (IS NULL clause)', async () => {
+    // null is a meaningful filter — the UI uses it to render the root of the
+    // tree. Distinct from "no parent_id filter" (which returns everything).
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?parent_id=null',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(/parent_id IS NULL/.test(listQ!.sql)).toBe(true);
+  });
+
+  it('GET /todos?parent_id=not-a-uuid returns 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?parent_id=not-a-uuid',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /todos?tags=urgent,bug filters by tag set', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?tags=urgent,bug',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(/tags @>/.test(listQ!.sql)).toBe(true);
+    expect(listQ!.params).toContainEqual(['urgent', 'bug']);
+  });
+
+  it('GET /todos?due_before=&due_after= forwards bounds as Date params', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?due_before=2026-06-01T00:00:00Z&due_after=2026-05-01T00:00:00Z',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(/due_date <=/.test(listQ!.sql)).toBe(true);
+    expect(/due_date >=/.test(listQ!.sql)).toBe(true);
+    const dateParams = listQ!.params.filter((p): p is Date => p instanceof Date);
+    expect(dateParams).toHaveLength(2);
+  });
+
+  it('GET /todos rejects malformed due_before/due_after with 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?due_before=tomorrow',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(400);
+  });
+
   it('POST /todos/bulk set_status: single SQL with status param', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
