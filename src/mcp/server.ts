@@ -4,6 +4,7 @@ import type { ServiceDeps } from '../services/index.js';
 import * as projectsSvc from '../services/projects.js';
 import * as contentSvc from '../services/content-items.js';
 import * as todosSvc from '../services/todos.js';
+import * as commentsSvc from '../services/todo-comments.js';
 import * as searchSvc from '../services/search.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
 
@@ -427,6 +428,85 @@ Returns the updated record.`,
         return { content: [{ type: 'text', text: `No project found with id ${input.id}` }], isError: true };
       }
       return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
+    },
+  );
+
+  // ---------- 5c. add_comment ----------
+  server.tool(
+    'add_comment',
+    `Append a comment to a todo. Use when the user asks you to leave a note on a task ("note on this todo that I'm waiting on Sarah" / "add a comment that we tried approach X and it didn't work") and when leaving an AI-driven triage trail (after running search/analysis on a todo, summarize what you found here so the next session has it).
+
+Comments accumulate; they aren't merged. Returns { id, todo_id }.`,
+    {
+      todo_id: z.string().describe('UUID of the todo to comment on. Must exist.'),
+      content: z.string().min(1).describe('The comment text. Markdown allowed; rendered by the UI.'),
+    },
+    async ({ todo_id, content }) => {
+      if (!isValidUuid(todo_id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${todo_id}".` }],
+          isError: true,
+        };
+      }
+      const result = await commentsSvc.createComment(deps, todo_id, content);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ id: result.id, todo_id }, null, 2) }],
+      };
+    },
+  );
+
+  // ---------- 5d. list_comments ----------
+  server.tool(
+    'list_comments',
+    `List all comments on a todo, oldest first. Use this BEFORE leaving a new comment so you don't repeat what's already been said, and BEFORE answering "what's the status of X" type questions about a tracked task — comments often hold the latest context that isn't on the todo body itself.`,
+    {
+      todo_id: z.string().describe('UUID of the todo whose comments you want.'),
+    },
+    async ({ todo_id }) => {
+      if (!isValidUuid(todo_id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${todo_id}".` }],
+          isError: true,
+        };
+      }
+      const comments = await commentsSvc.listComments(deps, todo_id);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(comments, null, 2) }],
+      };
+    },
+  );
+
+  // ---------- 5e. update_comment ----------
+  server.tool(
+    'update_comment',
+    `Edit an existing comment by id. Use sparingly — only when the user explicitly asks to fix a comment they (or you) just wrote. For corrections to an old thread, prefer add_comment with a clarifying note rather than rewriting history.
+
+No delete via MCP — comment removal is UI-only by design.`,
+    {
+      comment_id: z.string().describe('UUID of the comment to edit. Must come from a prior list_comments result.'),
+      content: z.string().min(1).describe('The new comment text. Replaces the existing content entirely.'),
+    },
+    async ({ comment_id, content }) => {
+      if (!isValidUuid(comment_id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${comment_id}".` }],
+          isError: true,
+        };
+      }
+      // Service-level updateComment returns void; verify the row exists by
+      // reading it back so callers get a real error on unknown ids instead
+      // of a silent no-op (the underlying UPDATE would just affect 0 rows).
+      const existing = await commentsSvc.getComment(deps, comment_id);
+      if (!existing) {
+        return {
+          content: [{ type: 'text', text: `No comment found with id ${comment_id}` }],
+          isError: true,
+        };
+      }
+      await commentsSvc.updateComment(deps, comment_id, content);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ id: comment_id, ok: true }, null, 2) }],
+      };
     },
   );
 

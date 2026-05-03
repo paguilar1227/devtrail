@@ -168,12 +168,15 @@ describe('MCP server', () => {
       'get',
       'create',
       'update',
+      'add_comment',
+      'list_comments',
+      'update_comment',
       'search',
       'find_mentions',
       'retry',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(10);
+    expect(toolNames).toHaveLength(13);
   });
 
   it('calls create_project and returns the created project', async () => {
@@ -232,13 +235,17 @@ describe('MCP server', () => {
   // ---------- update tool ----------
 
   /**
-   * Init + call helper for update tests. Avoids 60 lines of session setup
-   * per test. Returns the parsed response body so each test can assert on
-   * either the success payload or the JSON-RPC error.
+   * Init + call helper for tool-call tests. Avoids 60 lines of session
+   * setup per test. Returns the parsed response body so each test can
+   * assert on either the success payload or the JSON-RPC error.
+   *
+   * Defaults to the 'update' tool for back-compat with the existing tests
+   * that called this as `callUpdate`. Pass a `toolName` to target other tools.
    */
-  async function callUpdate(
+  async function callTool(
     deps: ServiceDeps,
     args: Record<string, unknown>,
+    toolName: string = 'update',
   ): Promise<{ status: number; body: any; sqlCalls: Array<{ sql: string; params: unknown[] }> }> {
     const sqlCalls: Array<{ sql: string; params: unknown[] }> = [];
     // Capture the existing mock implementation once, then wrap it. Reading
@@ -276,7 +283,7 @@ describe('MCP server', () => {
       },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 2, method: 'tools/call',
-        params: { name: 'update', arguments: args },
+        params: { name: toolName, arguments: args },
       }),
     });
     const callRes = await transport.handleRequest(callReq);
@@ -297,7 +304,7 @@ describe('MCP server', () => {
       return { rows: [] } as any;
     });
 
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'todo',
       id: todoId,
       status: 'done',
@@ -330,7 +337,7 @@ describe('MCP server', () => {
       return { rows: [] } as any;
     });
 
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'content',
       id: ciId,
       title: 'Renamed',
@@ -368,7 +375,7 @@ describe('MCP server', () => {
       return { rows: [] } as any;
     });
 
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'project',
       id: projId,
       name: 'Renamed',
@@ -384,7 +391,7 @@ describe('MCP server', () => {
 
   it('update rejects todo status that is actually a project status (cross-kind)', async () => {
     const deps = mockDeps();
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'todo',
       id: '11111111-1111-1111-1111-111111111111',
       status: 'completed',  // valid for project, NOT for todo
@@ -398,7 +405,7 @@ describe('MCP server', () => {
 
   it('update rejects status field on kind=content with a clear error', async () => {
     const deps = mockDeps();
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'content',
       id: '22222222-2222-2222-2222-222222222222',
       status: 'done',  // valid enum value, but `status` isn't a content field
@@ -411,7 +418,7 @@ describe('MCP server', () => {
 
   it('update rejects a non-UUID id', async () => {
     const deps = mockDeps();
-    const { body, sqlCalls } = await callUpdate(deps, {
+    const { body, sqlCalls } = await callTool(deps, {
       kind: 'todo',
       id: 'not-a-uuid',
       status: 'done',
@@ -427,7 +434,7 @@ describe('MCP server', () => {
     // The DB UPDATE returns no rows → service returns null → tool returns error
     vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
 
-    const { body } = await callUpdate(deps, {
+    const { body } = await callTool(deps, {
       kind: 'project',
       id: '33333333-3333-3333-3333-333333333333',
       name: 'X',
@@ -435,5 +442,109 @@ describe('MCP server', () => {
 
     expect(body.result?.isError).toBe(true);
     expect(body.result.content[0].text).toMatch(/No project found/i);
+  });
+
+  // ---------- comment tools ----------
+
+  it('add_comment forwards todo_id + content to insertComment', async () => {
+    const todoId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/INSERT INTO todo_comments/i.test(sql)) {
+        return { rows: [{ id: 'c-1' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, {
+      todo_id: todoId,
+      content: 'Triage note: blocked on Sarah',
+    }, 'add_comment');
+
+    expect(body.result?.isError).not.toBe(true);
+    const insertSql = sqlCalls.find((q) => /INSERT INTO todo_comments/i.test(q.sql));
+    expect(insertSql).toBeDefined();
+    expect(insertSql!.params).toContain(todoId);
+    expect(insertSql!.params).toContain('Triage note: blocked on Sarah');
+
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed).toEqual({ id: 'c-1', todo_id: todoId });
+  });
+
+  it('list_comments returns the comment rows verbatim', async () => {
+    const todoId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/FROM\s+todo_comments/i.test(sql)) {
+        return {
+          rows: [
+            { id: 'c-1', todo_id: todoId, content: 'first', created_at: new Date(), updated_at: new Date() },
+            { id: 'c-2', todo_id: todoId, content: 'second', created_at: new Date(), updated_at: new Date() },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body } = await callTool(deps, { todo_id: todoId }, 'list_comments');
+    expect(body.result?.isError).not.toBe(true);
+
+    const parsed = JSON.parse(body.result.content[0].text);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].content).toBe('first');
+    expect(parsed[1].content).toBe('second');
+  });
+
+  it('update_comment 404s on unknown id BEFORE issuing the UPDATE', async () => {
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);  // getComment returns nothing
+
+    const { body, sqlCalls } = await callTool(deps, {
+      comment_id: '11111111-1111-1111-1111-111111111111',
+      content: 'fix typo',
+    }, 'update_comment');
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/No comment found/i);
+    // Critical: must not silently UPDATE 0 rows. The lookup must run, and
+    // the UPDATE must NOT.
+    expect(sqlCalls.find((q) => /UPDATE\s+todo_comments/i.test(q.sql))).toBeUndefined();
+  });
+
+  it('update_comment writes the new content when the id exists', async () => {
+    const cid = '22222222-2222-2222-2222-222222222222';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // First call (getComment) returns the row; subsequent UPDATE returns no rows.
+      if (/SELECT.*FROM\s+todo_comments\s+WHERE\s+id/i.test(sql)) {
+        return {
+          rows: [{ id: cid, todo_id: 't1', content: 'old', created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, {
+      comment_id: cid,
+      content: 'updated content',
+    }, 'update_comment');
+
+    expect(body.result?.isError).not.toBe(true);
+    const updateSql = sqlCalls.find((q) => /UPDATE\s+todo_comments/i.test(q.sql));
+    expect(updateSql).toBeDefined();
+    expect(updateSql!.params).toContain('updated content');
+    expect(updateSql!.params).toContain(cid);
+  });
+
+  it('comment tools reject non-UUID ids', async () => {
+    const deps = mockDeps();
+    const r1 = await callTool(deps, { todo_id: 'bad', content: 'x' }, 'add_comment');
+    expect(r1.body.result?.isError).toBe(true);
+
+    const r2 = await callTool(deps, { todo_id: 'bad' }, 'list_comments');
+    expect(r2.body.result?.isError).toBe(true);
+
+    const r3 = await callTool(deps, { comment_id: 'bad', content: 'x' }, 'update_comment');
+    expect(r3.body.result?.isError).toBe(true);
   });
 });
