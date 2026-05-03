@@ -113,7 +113,8 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 - **MCP surface (20 tools).** Read: \`list_projects\`, \`list\`, \`get\`, \`search\`, \`find_mentions\`, \`list_tags\`, \`list_comments\`, \`list_activity\`, \`ask\` (RAG synthesis). Write: \`create_project\`, \`create\` (document/note/quick_note/todo), \`update\` (metadata across kinds), \`archive\` / \`restore\` (soft delete + undo), \`add_comment\` / \`update_comment\`, \`save_from_url\`, \`retry\` (failed ingest), \`reprocess\` (regenerate chunks/embeddings/metadata), \`rename_tag\` (corpus-wide).
 - **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (reversible via \`restore\`).
-- **Body edits — partial.** \`update\` accepts \`content\` for body edits when the row is text-only (no binary file backing it: notes, markdown documents, URL-ingested articles). Triggers an async re-chunk + re-embed; the call awaits completion. Items with a blob (PDF, audio, video, image) refuse body edits with code BODY_IMMUTABLE — use the archive-and-reupload workflow to swap the file.
+- **Body edits — partial.** \`update\` accepts \`content\` for body edits when the row is text-only (no binary file backing it: notes, markdown documents, URL-ingested articles). Triggers an async re-chunk + re-embed; the call awaits completion. Items with a blob (PDF, audio, video, image) refuse body edits with code BODY_IMMUTABLE — use the \`replace\` tool to archive the old row and create a v2.
+- **Replace tool.** Use \`replace\` when you have a new version of an item and want to preserve v1 in the archive (rather than overwriting via edit-body). Common case: you generated a markdown doc, the user iterates with you, and you push v2 to supersede v1.
 - **No bulk MCP ops.** MCP tools work on one entity at a time. Bulk archive / retag / reassign live in the REST API for the web UI's multi-select.
 - **No pin/unpin via MCP.** Pinning is a UI affordance; the AI doesn't need to manage it.
 - **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
@@ -998,6 +999,68 @@ Same return shape as retry/create. Use carefully — reprocessing a large PDF or
         };
       } catch (err) {
         if (err instanceof contentSvc.ReprocessStateError) {
+          return {
+            content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+            isError: true,
+          };
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // ---------- 6e. replace ----------
+  server.tool(
+    'replace',
+    `Archive an existing content item and create a v2 in its place — the canonical "I have a new version" path for any content where edit-body isn't appropriate. Common cases:
+- A markdown doc you uploaded prematurely and want to supersede with a finalized version
+- A PDF that got revised (PDF v2)
+- A URL article that has been substantially updated since you saved it
+
+The old row is archived (soft-delete, recoverable via \`restore\`) and stamped with metadata.replaced_by pointing at the new id. The new row carries over project_ids and tags, preserves the type (document stays document), and runs the normal ingest pipeline. Dedup is bypassed — identical bytes still produce a new row.
+
+Required: id of the old row, plus content (new body text). For binary file replacement (PDF, audio, video), use the REST endpoint or the UI — MCP can't carry binary payloads.
+
+State: refuses pending rows with IN_FLIGHT (don't replace an in-flight ingest). Allows already-archived rows to be replaced (you can stack v3 onto an archived v2).`,
+    {
+      id: z.string().describe('UUID of the content item to replace. The old row gets archived; a new row supersedes it.'),
+      content: z.string().describe('New body text. Required.'),
+      title: z.string().optional().describe('Optional new title. Defaults to the old item\'s title.'),
+    },
+    async ({ id, content, title }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}".` }],
+          isError: true,
+        };
+      }
+      try {
+        const started = await contentSvc.replaceContent(deps, id, { content, title });
+        const finished = await started.completion;
+        if (finished.status === 'failed') {
+          return {
+            content: [{ type: 'text', text: `Replace failed: ${finished.error || 'Unknown error'}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              old_id: started.oldId,
+              new_id: started.newId,
+              title: finished.title,
+              chunkCount: finished.chunkCount,
+              status: finished.status,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        if (err instanceof contentSvc.ReplaceContentError) {
           return {
             content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
             isError: true,

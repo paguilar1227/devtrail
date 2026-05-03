@@ -47,6 +47,13 @@ export interface CreateContentInput {
   tags?: string[];
   sourceUrl?: string;          // optional — set for URL-ingested content
   trace?: IngestTrace;         // optional — passed in by url-ingest. Otherwise a fresh one is made here.
+  /** Skip the file-hash and source-url dedup gate. Used by the replace
+   *  workflow where the caller explicitly wants a new row even if bytes
+   *  collide with an existing item. */
+  skipDedup?: boolean;
+  /** Stamped onto the new row's metadata. Used by replace to record which
+   *  row this one supersedes, for traceability and version history. */
+  replacesId?: string;
 }
 
 export interface CreateContentResult {
@@ -100,27 +107,30 @@ export async function createContentItem(
   const trace = input.trace ?? newTrace({ source_url: input.sourceUrl });
   recordStage(trace, 'input.content', input.content);
 
-  // Prelude step 1: dedup by file hash
+  // Prelude step 1: dedup by file hash. Skipped on replace, where the caller
+  // explicitly wants a fresh row even if the bytes collide with an archive.
   let fileHash: string | null = null;
   let blobUrl: string | null = null;
   if (input.file) {
     fileHash = createHash('sha256').update(input.file.data).digest('hex');
     console.log(`[content] File hash: ${fileHash}`);
 
-    const existing = await findByFileHash(deps.db, fileHash);
-    if (existing) {
-      console.log(`[content] Duplicate file detected, returning existing: ${existing.id}`);
-      return {
-        id: existing.id,
-        status: existing.processing_status,
-        completion: Promise.resolve({
+    if (!input.skipDedup) {
+      const existing = await findByFileHash(deps.db, fileHash);
+      if (existing) {
+        console.log(`[content] Duplicate file detected, returning existing: ${existing.id}`);
+        return {
           id: existing.id,
-          title: existing.title,
-          chunkCount: 0,
-          warnings: ['Duplicate file — returning existing item.'],
           status: existing.processing_status,
-        }),
-      };
+          completion: Promise.resolve({
+            id: existing.id,
+            title: existing.title,
+            chunkCount: 0,
+            warnings: ['Duplicate file — returning existing item.'],
+            status: existing.processing_status,
+          }),
+        };
+      }
     }
   }
 
@@ -168,7 +178,9 @@ export async function createContentItem(
     projectIds: input.projectIds ?? [],
     tags: input.tags ?? [],
     embedding: null,
-    metadata: { ingest_trace: trace },
+    metadata: input.replacesId
+      ? { ingest_trace: trace, replaces: input.replacesId }
+      : { ingest_trace: trace },
     sourceUrl: input.sourceUrl ?? null,
     publishedAt: null,
     processingStatus: 'pending',
@@ -811,4 +823,113 @@ export async function bulkContent(
       }
       return bulkSetProjectIdsContentItems(deps.db, req.ids, req.project_ids);
   }
+}
+
+/** Errors replaceContent signals to the adapter so REST/MCP can map cleanly. */
+export class ReplaceContentError extends Error {
+  constructor(
+    public readonly code: 'NOT_FOUND' | 'IN_FLIGHT' | 'BAD_INPUT',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ReplaceContentError';
+  }
+}
+
+export interface ReplaceContentInput {
+  /** New file payload (PDF v2, audio v2, etc.). */
+  file?: { data: Buffer; mimeType: string; filename: string };
+  /** New text body — use this for replacing a markdown / plain-text doc. */
+  content?: string;
+  /** New title. Defaults to old item's title if omitted. */
+  title?: string;
+}
+
+export interface ReplaceContentResult {
+  oldId: string;
+  newId: string;
+  status: ProcessingStatus;
+  completion: Promise<CreateContentResult>;
+}
+
+/**
+ * Archive-and-reupload: the canonical "v2 of an existing content item" path.
+ *
+ * Old row gets archived (soft delete) and stamped with metadata.replaced_by.
+ * New row is created via the standard ingest pipeline with project_ids and
+ * tags carried over, type preserved, and metadata.replaces pointing at the
+ * old id. Dedup is bypassed so identical bytes still produce a new row.
+ *
+ * Use cases:
+ *   - PDF v2 / audio v2 / video v2 (blob-backed content where edit-body is
+ *     forbidden)
+ *   - Refreshing a URL-ingested article (re-fetch with the same source_url)
+ *   - Alex iterating with Claude on a markdown doc and wanting to preserve
+ *     v1 in the archive rather than overwriting it via edit-body
+ *
+ * State rules:
+ *   - Old row missing → NOT_FOUND
+ *   - Old row pending → IN_FLIGHT (don't replace an in-flight ingest)
+ *   - Already archived → ok, replace anyway (the user might want a v3 from
+ *     a previously-archived v2)
+ *
+ * Returns the new id immediately (after the cheap prelude). Caller polls
+ * /status until ready.
+ */
+export async function replaceContent(
+  deps: ServiceDeps,
+  oldId: string,
+  input: ReplaceContentInput,
+): Promise<ReplaceContentResult> {
+  const oldRow = await getContentItemById(deps.db, oldId);
+  if (!oldRow) throw new ReplaceContentError('NOT_FOUND', `Content item ${oldId} not found`);
+  if (oldRow.processing_status === 'pending') {
+    throw new ReplaceContentError(
+      'IN_FLIGHT',
+      `Content item ${oldId} is still pending; cannot replace an in-flight ingest`,
+    );
+  }
+  if (!input.file && (input.content === undefined || input.content === '')) {
+    throw new ReplaceContentError(
+      'BAD_INPUT',
+      'replace requires either a file (multipart) or content (text)',
+    );
+  }
+
+  // Run the standard ingest pipeline with dedup bypassed and the parent
+  // stamped on metadata. Type is preserved from the old row — replace
+  // doesn't switch a document into a note or vice versa.
+  const started = await createContentItem(deps, {
+    type: oldRow.type,
+    file: input.file,
+    content: input.content,
+    title: input.title ?? oldRow.title,
+    projectIds: oldRow.project_ids,
+    tags: oldRow.tags,
+    skipDedup: true,
+    replacesId: oldId,
+  });
+
+  // Now archive the old row and stamp it with replaced_by. We do this
+  // AFTER createContentItem returns its id so the back-link is accurate.
+  // Failure here is fine — the new row is already in flight; old just
+  // stays unarchived which the user can fix manually.
+  try {
+    await dbUpdate(deps.db, oldId, {
+      metadata: {
+        ...(oldRow.metadata as Record<string, unknown>),
+        replaced_by: started.id,
+      },
+    });
+    await archiveContentItem(deps.db, oldId);
+  } catch (err) {
+    console.warn(`[replace] Failed to archive/stamp old row ${oldId}:`, err instanceof Error ? err.message : err);
+  }
+
+  return {
+    oldId,
+    newId: started.id,
+    status: started.status,
+    completion: started.completion,
+  };
 }

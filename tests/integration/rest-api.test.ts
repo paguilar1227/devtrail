@@ -581,6 +581,140 @@ describe('Content items API', () => {
     expect((await empty.json()).error).toMatch(/non-empty/);
   });
 
+  it('POST /content/:id/replace creates a v2 and archives v1 with metadata cross-links', async () => {
+    const oldId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const newRowId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    let insertCount = 0;
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      // The lookup of the old row.
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql) && params?.[0] === oldId) {
+        return {
+          rows: [{
+            id: oldId, type: 'document', title: 'Spec v1',
+            content: 'v1 body',
+            blob_url: null, mime_type: null, file_hash: null,
+            project_ids: ['proj-1'], tags: ['spec'],
+            embedding: null, metadata: { ingest_trace: {} },
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      // The early-row insert in the new createContentItem returns the new id.
+      if (/INSERT INTO content_items/i.test(sql)) {
+        insertCount++;
+        return { rows: [{ id: newRowId }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${oldId}/replace`,
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'v2 body — improved' }),
+      },
+    ));
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toEqual({ old_id: oldId, new_id: newRowId, status: 'pending' });
+
+    // A new row was inserted (one INSERT into content_items).
+    expect(insertCount).toBe(1);
+
+    // The old row was archived. We assert via the UPDATE statement and id param.
+    const oldArchive = queries.find(
+      (q) => /UPDATE content_items SET archived = true/i.test(q.sql) && q.params[0] === oldId,
+    );
+    expect(oldArchive).toBeDefined();
+
+    // The new row carried over project_ids and tags from the old. We can
+    // see this via the INSERT's parameters. (project_ids is the 8th, tags
+    // the 9th — see insertContentItem in src/db/content-items.ts.)
+    const insertQ = queries.find((q) => /INSERT INTO content_items/i.test(q.sql));
+    expect(insertQ!.params[7]).toEqual(['proj-1']);
+    expect(insertQ!.params[8]).toEqual(['spec']);
+  });
+
+  it('POST /content/:id/replace returns 409 IN_FLIGHT when the old row is still pending', async () => {
+    const oldId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: oldId, type: 'note', title: 'In-flight',
+            content: null, blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'pending', processing_error: null,
+            ingest_completed_at: null,
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${oldId}/replace`,
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'v2' }),
+      },
+    ));
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('IN_FLIGHT');
+  });
+
+  it('POST /content/:id/replace returns 400 when neither file nor content is provided', async () => {
+    const oldId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: oldId, type: 'note', title: 'X',
+            content: 'old', blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${oldId}/replace`,
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({}) },
+    ));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/file.*content/i);
+  });
+
+  it('POST /content/:id/replace returns 404 / 400 errors as appropriate', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async () => ({ rows: [] } as any));
+
+    const notFound = await app.fetch(new Request(
+      'http://localhost/api/v1/content/77777777-7777-7777-7777-777777777777/replace',
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) },
+    ));
+    expect(notFound.status).toBe(404);
+
+    const badUuid = await app.fetch(new Request(
+      'http://localhost/api/v1/content/not-a-uuid/replace',
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) },
+    ));
+    expect(badUuid.status).toBe(400);
+  });
+
   it('POST /content/:id/reprocess works on a healthy ready row (the differentiator vs retry)', async () => {
     const fakeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const queries: Array<{ sql: string; params: unknown[] }> = [];

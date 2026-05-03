@@ -327,6 +327,54 @@ export function createApp(deps: ServiceDeps) {
   // /status until 'ready' or 'failed'. Refuses rows with blob_url set
   // (PDF/audio/video/image) — those need archive-and-reupload to swap the
   // canonical file in Azure.
+  // Archive-and-reupload: the canonical "v2" path for blob-backed content.
+  // Old row gets archived + stamped with metadata.replaced_by; new row goes
+  // through the normal ingest pipeline with project_ids/tags carried over.
+  // Accepts JSON {content} or multipart {file}. Type is preserved from old.
+  app.post('/api/v1/content/:id/replace', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const contentType = c.req.header('Content-Type') ?? '';
+
+    let file: { data: Buffer; mimeType: string; filename: string } | undefined;
+    let textContent: string | undefined;
+    let title: string | undefined;
+
+    if (contentType.includes('multipart/form-data')) {
+      const body = await c.req.parseBody();
+      title = typeof body.title === 'string' ? body.title : undefined;
+      textContent = typeof body.content === 'string' ? body.content : undefined;
+      const uploaded = body.file as File | undefined;
+      if (uploaded && uploaded.size > 0) {
+        file = {
+          data: Buffer.from(await uploaded.arrayBuffer()),
+          mimeType: resolveUploadMime(uploaded.type, uploaded.name),
+          filename: uploaded.name,
+        };
+      }
+    } else {
+      const body = await c.req.json<{ content?: string; title?: string }>().catch(() => ({} as { content?: string; title?: string }));
+      textContent = body.content;
+      title = body.title;
+    }
+
+    try {
+      const result = await contentSvc.replaceContent(deps, id, { file, content: textContent, title });
+      return c.json({
+        old_id: result.oldId,
+        new_id: result.newId,
+        status: result.status,
+      }, 202);
+    } catch (err) {
+      if (err instanceof contentSvc.ReplaceContentError) {
+        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+        if (err.code === 'BAD_INPUT') return c.json({ error: err.message }, 400);
+        return c.json({ error: err.message, code: err.code }, 409);
+      }
+      throw err;
+    }
+  });
+
   app.post('/api/v1/content/:id/edit-body', async (c) => {
     const id = c.req.param('id');
     if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
