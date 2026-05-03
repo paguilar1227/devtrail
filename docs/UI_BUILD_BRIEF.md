@@ -93,6 +93,70 @@ Don't poll the full `GET /content/:id` — it returns the full body + metadata +
 
 ---
 
+## Complete view inventory (28 surfaces)
+
+Build all of these. The numbering is for reference only — pick a build order that makes sense.
+
+### Pages (full screens)
+
+| # | Page | Backend coverage |
+|---|---|---|
+| 1 | API Key Gate | `Authorization: Bearer` flow; 401 → bounce |
+| 2 | Home / Dashboard | `GET /stats`, `GET /projects?pinned=true`, `GET /activity?limit=20`, Inbox preview, global search entry |
+| 3 | All Projects | `GET /projects?status=&pinned=`; create; pin/unpin; archive/restore; hard-delete |
+| 4 | Project Detail (shell) | header (rename inline, pin, archive, hard-delete, edit description) + 4 tabs |
+| 5 | Inbox | `GET /todos?project_id=null` — personal todos with no project; same filters/bulk as project todos tab |
+| 6 | Tags Management | `GET /tags`, `PUT /tags/:name`, `DELETE /tags/:name`; click a tag → filtered view |
+| 7 | Activity Feed | `GET /activity` with `?since=&until=&kinds=&project_id=`; click event → jump to source |
+| 8 | Search Results | `POST /search` with all filters; `retrieval_path` icon per hit; jump to source |
+| 9 | Find Mentions | `POST /find-mentions {entity, type?, project_id?}` — entity-driven view |
+| 10 | Trash / Archived | `?include_archived=true` for content, todos, projects; restore + hard-delete |
+
+### Tabs inside Project Detail
+
+| # | Tab | Backend coverage |
+|---|---|---|
+| 11 | Documents | `GET /content?type=document&project_id=` + filters; upload; URL save; per-row pin/archive/delete/reprocess/retry/**replace**; bulk-select |
+| 12 | Notes | `GET /content?type=note&project_id=` + filters; new note; **edit-body** (only when `blob_url IS NULL`); per-row + bulk |
+| 13 | Todos | `GET /todos?project_id=` with hierarchy (parent_id), filters (status, priority, tags, due_before/after, pinned); inline edit; subtasks; bulk |
+| 14 | Chat (RAG) | `POST /rag` with depth toggle (auto/fast/thorough); clickable citations; timing footer; client-side history |
+
+### Modals / sheets / panels
+
+> **Mobile reminder:** these are full-screen on mobile, centered modals or right-rail drawers on desktop.
+
+| # | Surface | Backend coverage |
+|---|---|---|
+| 15 | File Upload | multipart `POST /content`; progress; MIME inference; project_ids prefilled |
+| 16 | URL Save | `POST /content/from-url`; dedup feedback ("already saved on …") |
+| 17 | Note Editor | new note + `edit-body`; markdown preview; status polling on save |
+| 18 | Document Reader | `GET /content/:id`; body or signed blob link; metadata (source_url, published_at, mime, file_hash); per-row actions |
+| 19 | Replace | `POST /content/:id/replace`; file picker for blob-backed, text editor for blob-null; renders v1 → v2 cross-link |
+| 20 | Todo Detail | full content edit, status/priority/due/parent/project, tags, **comments thread** |
+| 21 | Bulk Action confirm | `POST /content/bulk` and `POST /todos/bulk`; shows count + missing_ids on response |
+| 22 | Confirmation dialog | reusable for hard-delete, tag rename/delete, archive cascades. Mobile: typed-name confirmation for hard-delete. |
+
+### Reusable components
+
+| # | Component | Backend coverage |
+|---|---|---|
+| 23 | App shell + nav | bottom tab bar (mobile) / left sidebar (desktop); contextual top bar |
+| 24 | Status badge | `processing_status` → pending / ready / failed (with retry button calling `POST /content/:id/retry`) |
+| 25 | Bulk select toolbar | varies by entity; toggled into bulk mode by a Select button on mobile |
+| 26 | Tag chip | inline rename, click to filter, remove on hover/tap (calls `bulk remove_tags`) |
+| 27 | Citation pill | in chat, expands chunk preview, links to source content item |
+| 28 | Pin / archive / delete action group | reused on all entity rows |
+
+### What's intentionally out of scope
+
+- Multi-tenancy / sharing UI
+- Real-time collab
+- In-app PDF/audio/video preview rendering — link to signed `blob_url`, browser handles it
+- Native iOS/Android app (PWA-friendly is the bar, not a native shell)
+- Diagnostics endpoints (`/diagnostics/*`)
+
+---
+
 ## Required views / features
 
 ### P0 — must work
@@ -226,6 +290,63 @@ The API has some shape inconsistencies (kept for stability). Don't fight them �
 
 ---
 
+## Responsive design — both phone and desktop are P0
+
+Alex uses this **a lot on mobile**. Mobile is not an afterthought — every view, every interaction, must be designed for a 360px-wide phone first, then enhanced for desktop. Use Tailwind's mobile-first breakpoints (`sm:` 640+, `md:` 768+, `lg:` 1024+, `xl:` 1280+).
+
+### Navigation pattern
+
+| Form factor | Pattern |
+|---|---|
+| **Mobile** (<768px) | Bottom tab bar with 5 destinations: Home / Projects / Inbox / Search / More. Top app bar shows current screen title + contextual actions. Modals + side panels are **full-screen overlays**. |
+| **Desktop** (≥1024px) | Persistent left sidebar with the same destinations + nested sub-items (e.g. pinned projects expanded). Modals are centered cards. Side panels are right-rail drawers. |
+| **Tablet** (768–1023px) | Sidebar collapses to icon strip; modals stay centered. |
+
+### Interaction patterns that change between mobile and desktop
+
+| Interaction | Mobile | Desktop |
+|---|---|---|
+| **Bulk select** | Explicit "Select" button in toolbar toggles bulk mode → checkboxes appear, action bar slides up from bottom | Hover row → checkbox visible, click into bulk mode |
+| **Search** | Search icon in top bar → opens full-screen search overlay | Cmd-K opens centered search modal; persistent search bar in sidebar |
+| **Drag-drop file upload** | Skip drag — tap "Upload" button → native file picker | Both drag-drop zone and Upload button |
+| **Drag-to-reorder** | Skip on mobile (use up/down buttons or move-to menu) | Optional, not P0 |
+| **Hover actions** (pin, archive icons) | Always visible OR revealed by tap-on-row toggling action mode | Visible on hover |
+| **Side panel** (todo detail, document reader) | Full-screen view with back button | Right-rail drawer (40–50% viewport) |
+| **Cmd-K shortcut** | n/a | Yes, opens global search |
+| **Tabs in Project Detail** | Horizontal scroll (Documents/Notes/Todos/Chat). Sticky under app bar. | Tab strip across the top, no scroll needed |
+| **Confirmation dialogs** | Full-width bottom sheet | Centered modal |
+| **Pull-to-refresh** | Yes, on every list view | n/a (use refresh button) |
+
+### Touch + mobile hygiene
+
+- **Touch targets:** minimum 44×44 px. Tag chips, icon buttons, list rows — all must clear this.
+- **Native form controls** for date pickers (`<input type="date">`), file pickers — don't roll custom on mobile.
+- **Sticky composer** on Chat tab — message input stays anchored above the on-screen keyboard.
+- **Safe-area insets** (`env(safe-area-inset-bottom)`) for bottom tab bar on iOS notch devices.
+- **No hover-only affordances.** If something is only visible on `:hover`, mobile users can't reach it. Replace with a tap-target or always-visible icon.
+- **Status polling pauses** when `document.hidden === true` (Page Visibility API) so background tabs don't drain battery.
+- **Hard-delete on mobile** requires typed-name confirmation (e.g. type the project name) — touch is too easy to misfire.
+
+### Layout rules of thumb
+
+- **Cards over tables** on mobile. Convert any table to a stacked card list at `<md`. On desktop, tables are fine.
+- **Single column at <md, two columns at md, three at xl.** Don't try a 4-column dashboard.
+- **Filters collapse to a "Filter" button** that opens a sheet on mobile. On desktop, filters are inline above the list.
+- **Long content respects the viewport.** No horizontal scroll on the main page (only intentionally — e.g. tab strip, code blocks).
+
+### Acceptance test for responsive
+
+Open every view at:
+- 360 × 800 (small Android phone)
+- 390 × 844 (iPhone 14)
+- 768 × 1024 (iPad portrait)
+- 1440 × 900 (laptop)
+- 1920 × 1080 (desktop)
+
+No view should require horizontal scrolling. No primary action should be unreachable. The bottom tab bar must not overlap content (use `pb-` padding).
+
+---
+
 ## Workflow gotchas
 
 ### Body editability
@@ -259,28 +380,34 @@ Each search hit includes `retrieval_path: ('vector' | 'graph')[]` showing how it
 - **Optimistic where safe** (pin, archive, edit). Refetch on confirm.
 - **Hash routing, not query params**, to match existing `App.tsx`.
 - **No new heavy deps.** Date formatting? Use `Intl`. Markdown? Already have `react-markdown`. Icons? Inline SVG or a small icon set is fine — don't add a UI kit.
-- **Mobile-acceptable, desktop-first.** This is a productivity tool used on a laptop.
+- **Mobile-first AND desktop. Both are P0.** Alex uses this on the phone *and* on the laptop. Every view must work fluidly at 360px wide and at 1440px wide. See the "Responsive design" section below — don't skip it.
 
 ---
 
 ## Acceptance criteria — when are you done?
 
-A user can do all of the following without touching curl:
+A user can do all of the following without touching curl, **on both a phone and a laptop**:
 
 1. Create a project, pin it, see it pinned on home
-2. Drop a PDF into a project, see it processing, see it ready, click into it and read the content
+2. Drop a PDF into a project (mobile: tap-to-pick), see it processing, see it ready, click into it and read the content
 3. Save a YouTube URL, watch the dedup case (save again → "already saved")
 4. Write a note in markdown, edit it, see the chunks update (verified by a follow-up search hit)
 5. Replace a PDF (upload v2), see v1 archived with a "→ v2" link
-6. Bulk-tag five todos in one click
+6. Bulk-tag five todos in one click (toggle into bulk mode with the Select button on mobile, hover-checkbox on desktop)
 7. Filter todos by `parent_id`, by tag, by `due_before`, all working
 8. Add a comment to a todo, see it persist
 9. Rename a tag corpus-wide, see counts on every affected item update
-10. Ask the chat a question, get back an answer with clickable citations
+10. Ask the chat a question, get back an answer with clickable citations (sticky composer above keyboard on mobile)
 11. View the activity feed, filter by `kinds=ingest`
-12. Hard-delete a project (with confirm) and watch all its content + todos cascade
+12. Hard-delete a project (with typed-name confirm on mobile) and watch all its content + todos cascade
 
-When all 12 work end-to-end against the live API, you're done.
+**Plus the responsive bar:** every view above renders without horizontal scroll and without unreachable actions at:
+- 360 × 800 (small Android)
+- 390 × 844 (iPhone 14)
+- 768 × 1024 (iPad portrait)
+- 1440 × 900 (laptop)
+
+When all 12 flows work end-to-end against the live API at all 4 breakpoints, you're done.
 
 ---
 
@@ -290,7 +417,7 @@ When all 12 work end-to-end against the live API, you're done.
 - Real-time collaboration
 - File preview rendering for PDFs / audio / video — link to `blob_url` (or the SAS-signed `signed_url` field on the GET response) and let the browser handle it
 - Custom domain / branding
-- Mobile-native app
+- Native iOS/Android wrapper — PWA-friendly is the bar, no Capacitor/React Native shell
 
 ---
 
