@@ -424,6 +424,163 @@ describe('Content items API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('PUT /content/:id rejects body in payload — body edits live at /edit-body', async () => {
+    // Regression for the silent-desync footgun: PUT used to accept content
+    // and inline-rechunk regardless of blob_url. We now refuse.
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content/11111111-1111-4111-8111-111111111111',
+      {
+        method: 'PUT',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'New body that should never reach the DB' }),
+      },
+    ));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/edit-body/);
+  });
+
+  it('POST /content/:id/edit-body returns 202 + pending on a text-only note', async () => {
+    const fakeId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'My note',
+            content: 'old body', blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      // dbUpdate (UPDATE ... RETURNING *) needs to return at least one row
+      // for the body-write step to succeed.
+      if (/UPDATE\s+content_items\s+SET/i.test(sql)) {
+        return { rows: [{ id: fakeId }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${fakeId}/edit-body`,
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'shiny new markdown body' }),
+      },
+    ));
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toEqual({ id: fakeId, status: 'pending' });
+
+    // Pre-tail synchronous side effects we must observe before responding.
+    const chunksDeleted = queries.find(
+      (q) => /DELETE\s+FROM\s+chunks/i.test(q.sql) && q.params[0] === fakeId,
+    );
+    expect(chunksDeleted).toBeDefined();
+    const statusReset = queries.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status\s*=\s*\$1/.test(q.sql)
+        && q.params[0] === 'pending',
+    );
+    expect(statusReset).toBeDefined();
+  });
+
+  it('POST /content/:id/edit-body returns 409 BODY_IMMUTABLE when blob_url is set', async () => {
+    const fakeId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'document', title: 'My PDF',
+            content: 'extracted text from the pdf',
+            blob_url: 'https://blob/example.pdf',  // <-- the gate
+            mime_type: 'application/pdf', file_hash: 'abc',
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'ready', processing_error: null,
+            ingest_completed_at: new Date(),
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${fakeId}/edit-body`,
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'rewriting the PDF text by hand — DO NOT' }),
+      },
+    ));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('BODY_IMMUTABLE');
+    expect(body.error).toMatch(/archive-and-reupload/i);
+  });
+
+  it('POST /content/:id/edit-body returns 409 IN_FLIGHT when row is pending', async () => {
+    const fakeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return {
+          rows: [{
+            id: fakeId, type: 'note', title: 'Still ingesting',
+            content: 'partial', blob_url: null, mime_type: null, file_hash: null,
+            project_ids: [], tags: [], embedding: null, metadata: {},
+            source_url: null, published_at: null, archived: false,
+            processing_status: 'pending', processing_error: null,
+            ingest_completed_at: null,
+            created_at: new Date(), updated_at: new Date(),
+          }],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${fakeId}/edit-body`,
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'new content' }),
+      },
+    ));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('IN_FLIGHT');
+  });
+
+  it('POST /content/:id/edit-body returns 404 / 400 / empty-content errors', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async () => ({ rows: [] } as any));
+
+    const notFound = await app.fetch(new Request(
+      'http://localhost/api/v1/content/77777777-7777-7777-7777-777777777777/edit-body',
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) },
+    ));
+    expect(notFound.status).toBe(404);
+
+    const badUuid = await app.fetch(new Request(
+      'http://localhost/api/v1/content/not-a-uuid/edit-body',
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) },
+    ));
+    expect(badUuid.status).toBe(400);
+
+    const empty = await app.fetch(new Request(
+      'http://localhost/api/v1/content/77777777-7777-7777-7777-777777777777/edit-body',
+      { method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '' }) },
+    ));
+    expect(empty.status).toBe(400);
+    expect((await empty.json()).error).toMatch(/non-empty/);
+  });
+
   it('POST /content/:id/reprocess works on a healthy ready row (the differentiator vs retry)', async () => {
     const fakeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const queries: Array<{ sql: string; params: unknown[] }> = [];

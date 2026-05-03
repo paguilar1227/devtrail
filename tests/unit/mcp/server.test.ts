@@ -369,6 +369,77 @@ describe('MCP server', () => {
     expect(parsed).not.toHaveProperty('embedding');
   });
 
+  it('update kind=content with content edits the body when blob_url is null (text note)', async () => {
+    const ciId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return { rows: [{
+          id: ciId, type: 'note', title: 'My note',
+          content: 'old body', blob_url: null, mime_type: null, file_hash: null,
+          project_ids: [], tags: [], embedding: null, metadata: {},
+          source_url: null, published_at: null, archived: false,
+          processing_status: 'ready', processing_error: null,
+          ingest_completed_at: new Date(),
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      if (/UPDATE\s+content_items\s+SET/i.test(sql)) {
+        return { rows: [{ id: ciId }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body, sqlCalls } = await callTool(deps, {
+      kind: 'content',
+      id: ciId,
+      content: 'totally new markdown body, much improved',
+    });
+
+    expect(body.result?.isError).not.toBe(true);
+
+    // Body-edit branch ran: chunks deleted + status flipped to pending.
+    const chunksDeleted = sqlCalls.find((q) => /DELETE\s+FROM\s+chunks/i.test(q.sql));
+    expect(chunksDeleted).toBeDefined();
+    const statusReset = sqlCalls.find(
+      (q) => /UPDATE\s+content_items/i.test(q.sql)
+        && /processing_status/i.test(q.sql)
+        && q.params[0] === 'pending',
+    );
+    expect(statusReset).toBeDefined();
+  });
+
+  it('update kind=content with content returns BODY_IMMUTABLE when blob_url is set', async () => {
+    const ciId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id = \$1/i.test(sql)) {
+        return { rows: [{
+          id: ciId, type: 'document', title: 'Some PDF',
+          content: 'extracted text from pdf',
+          blob_url: 'https://blob/file.pdf',
+          mime_type: 'application/pdf', file_hash: 'abc',
+          project_ids: [], tags: [], embedding: null, metadata: {},
+          source_url: null, published_at: null, archived: false,
+          processing_status: 'ready', processing_error: null,
+          ingest_completed_at: new Date(),
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body } = await callTool(deps, {
+      kind: 'content',
+      id: ciId,
+      content: 'rewriting the PDF transcript by hand — DO NOT',
+    });
+
+    expect(body.result?.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/BODY_IMMUTABLE/);
+    expect(body.result.content[0].text).toMatch(/archive-and-reupload/i);
+  });
+
   it('update kind=project changes name + status', async () => {
     const projId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const deps = mockDeps();

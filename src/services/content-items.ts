@@ -460,6 +460,17 @@ export class ReprocessStateError extends Error {
   }
 }
 
+/** Errors editContentBody signals. BODY_IMMUTABLE means the row has a blob backing it. */
+export class EditBodyError extends Error {
+  constructor(
+    public readonly code: 'NOT_FOUND' | 'BODY_IMMUTABLE' | 'IN_FLIGHT',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EditBodyError';
+  }
+}
+
 /**
  * Re-run the async tail on an existing row whose previous ingest failed.
  *
@@ -594,44 +605,138 @@ async function rerunIngestTail(
   return { id, status: 'pending', completion };
 }
 
+/**
+ * Metadata-only update on a content item: title, project_ids, tags.
+ *
+ * Body edits are deliberately NOT here — they're async (re-chunk + re-embed
+ * + entity-graph rebuild) and gated by the body-immutability rule. Use
+ * editContentBody() instead.
+ */
 export async function updateContentItem(
   deps: ServiceDeps,
   id: string,
   patch: {
     title?: string;
-    content?: string;
     projectIds?: string[];
     tags?: string[];
   },
 ): Promise<ContentItemRow | null> {
-  // If content changed, we'd need to re-chunk. For v1, keep it simple: chunks are immutable.
-  // TODO: re-chunk on content update (future work).
-  if (patch.content !== undefined) {
-    // Delete old chunks, re-chunk new content
-    await deleteChunksByContentItem(deps.db, id);
-    if (patch.content) {
-      const textChunks = chunkText(patch.content);
-      const chunks: ChunkInsert[] = await mapConcurrent(
-        textChunks,
-        EMBED_CONCURRENCY,
-        async (text, i) => ({
-          contentItemId: id,
-          chunkIndex: i,
-          chunkType: 'text' as ChunkType,
-          content: text,
-          embedding: await deps.embeddingProvider.embed(text),
-          metadata: { token_estimate: approximateTokens(text) },
-        }),
-      );
-      await insertChunks(deps.db, chunks);
-    }
-  }
   return dbUpdate(deps.db, id, {
     title: patch.title,
-    content: patch.content,
     projectIds: patch.projectIds,
     tags: patch.tags,
   });
+}
+
+/**
+ * Edit the body of a text-only content item — notes, markdown documents,
+ * URL-ingested articles, anything where blob_url IS NULL.
+ *
+ * Same async contract as ingest: returns 202 + completion. The tail
+ * deletes old chunks, re-chunks the new body, re-embeds, rebuilds the
+ * entity graph, and flips processing_status to 'ready'.
+ *
+ * State rules:
+ *   - blob_url IS NOT NULL → BODY_IMMUTABLE (body is extracted from a file
+ *     in Azure Blob; editing the text would silently desync from the file).
+ *     Use the archive-and-reupload workflow to swap the file instead.
+ *   - processing_status = 'pending' → IN_FLIGHT (a tail is still running;
+ *     concurrent chunk inserts would race).
+ *   - missing → NOT_FOUND.
+ *
+ * Does NOT re-run metadata extraction. The user controls title and tags
+ * directly via metadata edits, or via reprocess() if they want auto-regen.
+ */
+export async function editContentBody(
+  deps: ServiceDeps,
+  id: string,
+  newContent: string,
+): Promise<StartContentResult> {
+  const row = await getContentItemById(deps.db, id);
+  if (!row) throw new EditBodyError('NOT_FOUND', `Content item ${id} not found`);
+  if (row.blob_url !== null) {
+    throw new EditBodyError(
+      'BODY_IMMUTABLE',
+      `Content item ${id} has an external file backing (blob_url is set); body is extracted from it. Use the archive-and-reupload workflow to replace the file.`,
+    );
+  }
+  if (row.processing_status === 'pending') {
+    throw new EditBodyError(
+      'IN_FLIGHT',
+      `Content item ${id} is still pending; cannot edit body during ingest`,
+    );
+  }
+
+  // Persist the new body up front so any caller polling /status sees it.
+  // Reset to pending and clear chunks so the tail starts from a clean slate.
+  await dbUpdate(deps.db, id, { content: newContent });
+  await deleteChunksByContentItem(deps.db, id);
+  await updateProcessingStatus(deps.db, id, 'pending', null);
+
+  console.log(`[edit-body] Re-chunking + re-embedding ${row.type} ${id} (${newContent.length} chars)`);
+
+  const completion = runBodyEditTail(deps, id, newContent, row.title).catch((err) => {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      id,
+      title: row.title,
+      chunkCount: 0,
+      warnings: undefined,
+      status: 'failed' as ProcessingStatus,
+      error: errMsg,
+    };
+  });
+
+  return { id, status: 'pending', completion };
+}
+
+async function runBodyEditTail(
+  deps: ServiceDeps,
+  id: string,
+  newContent: string,
+  fallbackTitle: string,
+): Promise<CreateContentResult> {
+  try {
+    const textChunks = chunkText(newContent);
+    const chunkInserts: ChunkInsert[] = await mapConcurrent(
+      textChunks,
+      EMBED_CONCURRENCY,
+      async (text, i) => ({
+        contentItemId: id,
+        chunkIndex: i,
+        chunkType: 'text' as ChunkType,
+        content: text,
+        embedding: await deps.embeddingProvider.embed(text),
+        metadata: { token_estimate: approximateTokens(text) },
+      }),
+    );
+    await insertChunks(deps.db, chunkInserts);
+
+    // Rebuild entity graph from the new chunks. Failures here shouldn't
+    // fail the whole edit — log and continue, same posture as the main
+    // ingest pipeline. The user can rerun reprocess() if the graph is
+    // important and missing.
+    try {
+      const insertedChunks = await getChunksByContentItem(deps.db, id);
+      await buildGraphEdges(deps, newContent, insertedChunks);
+    } catch (err) {
+      console.warn(`[edit-body] Entity graph rebuild failed for ${id}:`, err instanceof Error ? err.message : err);
+    }
+
+    await updateProcessingStatus(deps.db, id, 'ready', null);
+    const finalRow = await getContentItemById(deps.db, id);
+    return {
+      id,
+      title: finalRow?.title ?? fallbackTitle,
+      chunkCount: chunkInserts.length,
+      warnings: undefined,
+      status: 'ready',
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await updateProcessingStatus(deps.db, id, 'failed', errMsg);
+    throw err;
+  }
 }
 
 export async function archiveContentItemById(deps: ServiceDeps, id: string): Promise<void> {

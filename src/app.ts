@@ -299,6 +299,9 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
   });
 
+  // Metadata-only update. Body edits live at POST /content/:id/edit-body
+  // because they're async (re-chunk + re-embed) and have a body-immutability
+  // guard that PUT shouldn't enforce silently.
   app.put('/api/v1/content/:id', async (c) => {
     const body = await c.req.json<{
       title?: string;
@@ -306,14 +309,42 @@ export function createApp(deps: ServiceDeps) {
       project_ids?: string[];
       tags?: string[];
     }>();
+    if (body.content !== undefined) {
+      return c.json({
+        error: 'Body edits are not allowed on PUT /content/:id. Use POST /content/:id/edit-body instead (async, gated by body-immutability rule).',
+      }, 400);
+    }
     const item = await contentSvc.updateContentItem(deps, c.req.param('id'), {
       title: body.title,
-      content: body.content,
       projectIds: body.project_ids,
       tags: body.tags,
     });
     if (!item) return c.json({ error: 'Not found' }, 404);
     return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
+  });
+
+  // Async body edit. Returns 202 + {id, processing_status:'pending'}; poll
+  // /status until 'ready' or 'failed'. Refuses rows with blob_url set
+  // (PDF/audio/video/image) — those need archive-and-reupload to swap the
+  // canonical file in Azure.
+  app.post('/api/v1/content/:id/edit-body', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
+    const body = await c.req.json<{ content?: string }>().catch(() => ({} as { content?: string }));
+    const content = body.content;
+    if (typeof content !== 'string' || content.length === 0) {
+      return c.json({ error: 'content is required and must be a non-empty string' }, 400);
+    }
+    try {
+      const result = await contentSvc.editContentBody(deps, id, content);
+      return c.json({ id: result.id, status: result.status }, 202);
+    } catch (err) {
+      if (err instanceof contentSvc.EditBodyError) {
+        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+        return c.json({ error: err.message, code: err.code }, 409);
+      }
+      throw err;
+    }
   });
 
   app.delete('/api/v1/content/:id', async (c) => {

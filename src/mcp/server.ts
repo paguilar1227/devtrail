@@ -113,7 +113,7 @@ Don't invent project UUIDs. Always get them from \`list_projects\` or a prior se
 
 - **MCP surface (20 tools).** Read: \`list_projects\`, \`list\`, \`get\`, \`search\`, \`find_mentions\`, \`list_tags\`, \`list_comments\`, \`list_activity\`, \`ask\` (RAG synthesis). Write: \`create_project\`, \`create\` (document/note/quick_note/todo), \`update\` (metadata across kinds), \`archive\` / \`restore\` (soft delete + undo), \`add_comment\` / \`update_comment\`, \`save_from_url\`, \`retry\` (failed ingest), \`reprocess\` (regenerate chunks/embeddings/metadata), \`rename_tag\` (corpus-wide).
 - **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (reversible via \`restore\`).
-- **Body edits not in MCP \`update\`.** \`update\` patches title / project membership / tags / status / priority etc., but cannot rewrite a content item's body text. To swap the body: archive the old item and \`save_from_url\` or \`create\` a new one. \`reprocess\` only re-derives chunks from the existing body; it does not change the body.
+- **Body edits — partial.** \`update\` accepts \`content\` for body edits when the row is text-only (no binary file backing it: notes, markdown documents, URL-ingested articles). Triggers an async re-chunk + re-embed; the call awaits completion. Items with a blob (PDF, audio, video, image) refuse body edits with code BODY_IMMUTABLE — use the archive-and-reupload workflow to swap the file.
 - **No bulk MCP ops.** MCP tools work on one entity at a time. Bulk archive / retag / reassign live in the REST API for the web UI's multi-select.
 - **No pin/unpin via MCP.** Pinning is a UI affordance; the AI doesn't need to manage it.
 - **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
@@ -320,11 +320,11 @@ REQUIRED:
 
 FIELDS PER KIND:
 - todo: status (not_started | in_progress | paused | done), priority (P1 | P2 | P3 | null to clear), due_date (ISO 8601 or null), content (rename the task), parent_id (UUID or null to detach), section (string or null), tags, project_id (single UUID or null)
-- content: title, project_ids (array of UUIDs — replaces existing membership), tags
+- content: title, project_ids (array of UUIDs — replaces existing membership), tags. **Also \`content\` for body edits on text-only items** — notes, markdown documents, URL-ingested articles. Triggers an async re-chunk + re-embed; the tool awaits completion before returning. Items with a binary file backing (PDFs, audio, video, image — anything where blob_url is set) refuse body edits with code BODY_IMMUTABLE; use the archive-and-reupload workflow to swap the file.
 - project: name, description, status (active | archived | completed)
 
 NOT SUPPORTED via this tool:
-- Body edits on notes/documents — coming via the \`reprocess\` tool (re-chunks + re-embeds). Title and metadata are fine here; the body itself is not.
+- Body edits on blob-backed content (PDF/audio/video/image) — replace the file, not the extracted text.
 - Hard delete — UI only. Use \`archive\` for soft delete.
 - Changing a content item's type (document ↔ note) — create a new one if you really want this.
 
@@ -334,9 +334,9 @@ Returns the updated record.`,
         .describe('Which kind of entity. Determines which fields are valid.'),
       id: z.string().describe('UUID of the entity. Must match the kind.'),
 
-      // todo fields
+      // todo fields (also reused by content for body edit on text-only items)
       content: z.string().optional()
-        .describe('TODO ONLY. New task description.'),
+        .describe('TODO: new task description. CONTENT: new body text for text-only items (notes/markdown/URL articles). Refused on rows with a binary file backing — use archive-and-reupload there.'),
       status: z.enum([...TODO_STATUSES, ...PROJECT_STATUSES]).optional()
         .describe('TODO uses not_started/in_progress/paused/done. PROJECT uses active/archived/completed. Mismatched values return an error.'),
       priority: z.enum(['P1', 'P2', 'P3']).nullable().optional()
@@ -413,18 +413,65 @@ Returns the updated record.`,
       }
 
       if (input.kind === 'content') {
-        // Body edits intentionally not supported here — see #74 reprocess for
-        // the re-chunk path. We accept title/project_ids/tags only.
-        const updated = await contentSvc.updateContentItem(deps, input.id, {
-          title: input.title,
-          projectIds: input.project_ids,
-          tags: input.tags,
-        });
-        if (!updated) {
-          return { content: [{ type: 'text', text: `No content item found with id ${input.id}` }], isError: true };
+        // Apply metadata changes first so they land even if the body edit
+        // fails afterward. The update returns the row, so we don't need a
+        // separate read.
+        let row: Awaited<ReturnType<typeof contentSvc.updateContentItem>> | null = null;
+        const hasMetadataChange =
+          input.title !== undefined || input.project_ids !== undefined || input.tags !== undefined;
+        if (hasMetadataChange) {
+          row = await contentSvc.updateContentItem(deps, input.id, {
+            title: input.title,
+            projectIds: input.project_ids,
+            tags: input.tags,
+          });
+          if (!row) {
+            return { content: [{ type: 'text', text: `No content item found with id ${input.id}` }], isError: true };
+          }
         }
-        // Strip the embedding for protocol size — clients don't need 3072 floats.
-        const { embedding: _embedding, ...rest } = updated;
+
+        // Body edit branch — async path with sync MCP contract (await tail).
+        if (input.content !== undefined) {
+          try {
+            const started = await contentSvc.editContentBody(deps, input.id, input.content);
+            const finished = await started.completion;
+            if (finished.status === 'failed') {
+              return {
+                content: [{ type: 'text', text: `Body edit failed: ${finished.error || 'Unknown error'}` }],
+                isError: true,
+              };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  id: started.id,
+                  title: finished.title,
+                  chunkCount: finished.chunkCount,
+                  status: finished.status,
+                }, null, 2),
+              }],
+            };
+          } catch (err) {
+            if (err instanceof contentSvc.EditBodyError) {
+              return {
+                content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+                isError: true,
+              };
+            }
+            throw err;
+          }
+        }
+
+        // Metadata-only path: we have the row from the update above. If the
+        // caller passed nothing actionable, fetch and return as-is.
+        if (!row) {
+          row = await contentSvc.getContentItem(deps, input.id);
+          if (!row) {
+            return { content: [{ type: 'text', text: `No content item found with id ${input.id}` }], isError: true };
+          }
+        }
+        const { embedding: _embedding, ...rest } = row;
         return { content: [{ type: 'text', text: JSON.stringify(rest, null, 2) }] };
       }
 
