@@ -399,12 +399,15 @@ export async function runIngestTail(
         warnings.push('Entity graph construction failed; item is searchable but not graph-linked.');
       }
       // Persist the updated trace with any notes added during graph construction.
+      // Like the earlier UPDATE, preserve the replace cross-link the prelude
+      // stamped onto the row — otherwise this second UPDATE clobbers it.
       try {
         await dbUpdate(deps.db, contentItemId, {
           metadata: {
             topics: metadata.topics,
             filename: input.file?.filename,
             ingest_trace: trace,
+            ...(input.replacesId ? { replaces: input.replacesId } : {}),
           },
         });
       } catch (err) {
@@ -429,7 +432,12 @@ export async function runIngestTail(
     addNote(trace, `tail_failed: ${errMsg}`);
     try {
       await updateProcessingStatus(deps.db, contentItemId, 'failed', errMsg.slice(0, 1000));
-      await dbUpdate(deps.db, contentItemId, { metadata: { ingest_trace: trace } });
+      await dbUpdate(deps.db, contentItemId, {
+        metadata: {
+          ingest_trace: trace,
+          ...(input.replacesId ? { replaces: input.replacesId } : {}),
+        },
+      });
     } catch (updateErr) {
       console.error(`[content] Failed to mark row as failed:`, updateErr);
     }

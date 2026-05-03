@@ -639,6 +639,38 @@ describe('Content items API', () => {
     const insertQ = queries.find((q) => /INSERT INTO content_items/i.test(q.sql));
     expect(insertQ!.params[7]).toEqual(['proj-1']);
     expect(insertQ!.params[8]).toEqual(['spec']);
+
+    // Regression: every metadata UPDATE on the new row must carry the
+    // `replaces: oldId` cross-link. Two separate UPDATEs run in the tail —
+    // the post-metadata one and the post-graph trace persist — and both
+    // overwrite metadata, so both must include the field.
+    const newRowMetaUpdates = queries.filter(
+      (q) =>
+        /UPDATE content_items SET .*metadata = /i.test(q.sql) &&
+        q.params[q.params.length - 1] === newRowId,
+    );
+    expect(newRowMetaUpdates.length).toBeGreaterThanOrEqual(1);
+    for (const q of newRowMetaUpdates) {
+      const metaParam = q.params.find(
+        (p) => typeof p === 'string' && p.startsWith('{') && p.includes('"ingest_trace"'),
+      );
+      expect(metaParam, `metadata UPDATE missing ingest_trace param: ${q.sql}`).toBeDefined();
+      const meta = JSON.parse(metaParam as string);
+      expect(meta.replaces).toBe(oldId);
+    }
+
+    // The old row got `replaced_by` stamped before being archived.
+    const oldRowMetaUpdate = queries.find(
+      (q) =>
+        /UPDATE content_items SET .*metadata = /i.test(q.sql) &&
+        q.params[q.params.length - 1] === oldId,
+    );
+    expect(oldRowMetaUpdate).toBeDefined();
+    const oldMetaParam = oldRowMetaUpdate!.params.find(
+      (p) => typeof p === 'string' && p.startsWith('{') && p.includes('"replaced_by"'),
+    );
+    expect(oldMetaParam).toBeDefined();
+    expect(JSON.parse(oldMetaParam as string).replaced_by).toBe(newRowId);
   });
 
   it('POST /content/:id/replace returns 409 IN_FLIGHT when the old row is still pending', async () => {
