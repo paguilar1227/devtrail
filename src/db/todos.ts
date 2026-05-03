@@ -158,6 +158,140 @@ export async function deleteTodoHard(db: DbClient, id: string): Promise<void> {
   await db.query(`DELETE FROM todos WHERE id = $1`, [id]);
 }
 
+export type BulkTodoStatus = 'not_started' | 'in_progress' | 'paused' | 'done';
+export type BulkTodoPriority = 'P1' | 'P2' | 'P3' | null;
+
+export interface BulkTodoResult {
+  requested: number;
+  affected: number;
+  missing_ids: string[];
+}
+
+/**
+ * Bulk operations on todos. Same single-SQL pattern as bulk content ops.
+ * Distinct from content-bulk in three ways:
+ *   - Todos use single project_id (nullable), not project_ids[]
+ *   - Status / priority / due_date are first-class set-by-bulk operations
+ *     (UI workflows: "mark all done", "snooze to next week", etc.)
+ *   - Sub-task hierarchy is NOT touched in bulk; archiving a parent does
+ *     not cascade to children. Caller must include children explicitly if
+ *     they want them archived.
+ */
+export async function bulkArchiveTodos(db: DbClient, ids: string[]): Promise<BulkTodoResult> {
+  return runTodoBulk(db, ids,
+    `UPDATE todos SET archived = true,  updated_at = now() WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkRestoreTodos(db: DbClient, ids: string[]): Promise<BulkTodoResult> {
+  return runTodoBulk(db, ids,
+    `UPDATE todos SET archived = false, updated_at = now() WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkDeleteTodosHard(db: DbClient, ids: string[]): Promise<BulkTodoResult> {
+  return runTodoBulk(db, ids,
+    `DELETE FROM todos WHERE id = ANY($1::uuid[]) RETURNING id`);
+}
+
+export async function bulkAddTagsTodos(
+  db: DbClient,
+  ids: string[],
+  tags: string[],
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET tags = ARRAY(SELECT DISTINCT t FROM UNNEST(tags || $2::text[]) AS t ORDER BY t),
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [tags]);
+}
+
+export async function bulkRemoveTagsTodos(
+  db: DbClient,
+  ids: string[],
+  tags: string[],
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET tags = ARRAY(
+             SELECT t FROM UNNEST(tags) AS t
+             WHERE t <> ALL($2::text[])
+             ORDER BY t),
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [tags]);
+}
+
+export async function bulkSetStatusTodos(
+  db: DbClient,
+  ids: string[],
+  status: BulkTodoStatus,
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET status = $2,
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [status]);
+}
+
+export async function bulkSetPriorityTodos(
+  db: DbClient,
+  ids: string[],
+  priority: BulkTodoPriority,
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET priority = $2,
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [priority]);
+}
+
+export async function bulkSetProjectIdTodos(
+  db: DbClient,
+  ids: string[],
+  projectId: string | null,
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET project_id = $2,
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [projectId]);
+}
+
+export async function bulkSetDueDateTodos(
+  db: DbClient,
+  ids: string[],
+  dueDate: Date | null,
+): Promise<BulkTodoResult> {
+  const sql = `
+    UPDATE todos
+       SET due_date = $2,
+           updated_at = now()
+     WHERE id = ANY($1::uuid[])
+     RETURNING id`;
+  return runTodoBulk(db, ids, sql, [dueDate]);
+}
+
+async function runTodoBulk(
+  db: DbClient,
+  ids: string[],
+  sql: string,
+  extraParams: unknown[] = [],
+): Promise<BulkTodoResult> {
+  if (ids.length === 0) return { requested: 0, affected: 0, missing_ids: [] };
+  const result = await db.query(sql, [ids, ...extraParams]);
+  const affectedIds = new Set(result.rows.map((r: { id: string }) => r.id));
+  const missing = ids.filter((id) => !affectedIds.has(id));
+  return { requested: ids.length, affected: affectedIds.size, missing_ids: missing };
+}
+
 export async function findChildTodos(db: DbClient, parentId: string): Promise<TodoRow[]> {
   const result = await db.query(
     `SELECT * FROM todos WHERE parent_id = $1 AND archived = false ORDER BY created_at ASC`,

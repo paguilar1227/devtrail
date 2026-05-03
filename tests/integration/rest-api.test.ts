@@ -1045,6 +1045,158 @@ describe('Todos API', () => {
     // embedding should be stripped
     expect(body.todos[0].embedding).toBeUndefined();
   });
+
+  it('POST /todos/bulk set_status: single SQL with status param', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111' }] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_status',
+        status: 'done',
+      }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.requested).toBe(1);
+    expect(body.affected).toBe(1);
+
+    expect(queries).toHaveLength(1);
+    expect(/UPDATE todos/i.test(queries[0].sql)).toBe(true);
+    expect(/status\s*=\s*\$2/.test(queries[0].sql)).toBe(true);
+    expect(queries[0].params[1]).toBe('done');
+  });
+
+  it('POST /todos/bulk set_priority null clears the priority', async () => {
+    // Distinguish "not provided" from "null". Both must work, but null
+    // means "clear" — which is what `has_priority: true` + priority=null
+    // signals through to the service layer.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_priority',
+        priority: null,
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(queries[0].params[1]).toBeNull();
+  });
+
+  it('POST /todos/bulk set_project_id null detaches to Inbox', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_project_id',
+        project_id: null,
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(queries[0].params[1]).toBeNull();
+  });
+
+  it('POST /todos/bulk set_due_date accepts ISO 8601 and forwards as Date', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_due_date',
+        due_date: '2026-06-01T00:00:00Z',
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(queries[0].params[1]).toBeInstanceOf(Date);
+    expect((queries[0].params[1] as Date).toISOString()).toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  it('POST /todos/bulk rejects bogus status / priority / due_date with 400', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+
+    const badStatus = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action: 'set_status', status: 'imploded' }),
+    }));
+    expect(badStatus.status).toBe(400);
+    expect((await badStatus.json()).error).toMatch(/imploded/);
+
+    const badPriority = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action: 'set_priority', priority: 'P9' }),
+    }));
+    expect(badPriority.status).toBe(400);
+
+    const badDate = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action: 'set_due_date', due_date: 'tomorrow' }),
+    }));
+    expect(badDate.status).toBe(400);
+  });
+
+  it('POST /todos/bulk set_priority without priority field returns 400', async () => {
+    // Forgetting the priority field is a real mistake — the API distinguishes
+    // "missing" from "null" so the service can refuse rather than silently
+    // null-out everyone's priority.
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['11111111-1111-4111-8111-111111111111'],
+        action: 'set_priority',
+      }),
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/priority/);
+  });
+
+  it('POST /todos/bulk archive uses set semantics for ids and returns missing_ids', async () => {
+    vi.mocked(deps.db.query).mockResolvedValueOnce({
+      rows: [{ id: '11111111-1111-4111-8111-111111111111' }],
+    } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/bulk', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: [
+          '11111111-1111-4111-8111-111111111111',
+          '22222222-2222-4222-8222-222222222222',
+        ],
+        action: 'archive',
+      }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.affected).toBe(1);
+    expect(body.missing_ids).toEqual(['22222222-2222-4222-8222-222222222222']);
+  });
 });
 
 describe('Search API', () => {

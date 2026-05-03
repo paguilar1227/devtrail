@@ -426,6 +426,96 @@ export function createApp(deps: ServiceDeps) {
     return c.json({ ok: true });
   });
 
+  // Bulk ops on todos. Mirrors POST /content/bulk but with todo-specific
+  // actions (set_status, set_priority, set_due_date, set_project_id) since
+  // those are the most common multi-select workflows in a task UI.
+  app.post('/api/v1/todos/bulk', async (c) => {
+    const raw = await c.req.json<{
+      ids?: string[];
+      action?: todosSvc.BulkTodoAction;
+      tags?: string[];
+      status?: string;
+      priority?: 'P1' | 'P2' | 'P3' | null;
+      project_id?: string | null;
+      due_date?: string | null;
+    }>();
+
+    if (!Array.isArray(raw.ids) || raw.ids.length === 0) {
+      return c.json({ error: 'ids must be a non-empty array of UUIDs' }, 400);
+    }
+    if (raw.ids.length > 100) {
+      return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
+    }
+    const badId = raw.ids.find((id) => !isValidUuid(id));
+    if (badId) return c.json({ error: `Invalid UUID in ids: "${badId}"` }, 400);
+
+    const allowedActions = new Set([
+      'archive', 'restore', 'delete', 'add_tags', 'remove_tags',
+      'set_status', 'set_priority', 'set_project_id', 'set_due_date',
+    ]);
+    if (!raw.action || !allowedActions.has(raw.action)) {
+      return c.json({
+        error: `Invalid action: "${raw.action}". Allowed: ${[...allowedActions].join(', ')}.`,
+      }, 400);
+    }
+
+    if (raw.tags !== undefined && !Array.isArray(raw.tags)) {
+      return c.json({ error: 'tags must be an array of strings' }, 400);
+    }
+
+    const allowedStatus = new Set(['not_started', 'in_progress', 'paused', 'done']);
+    if (raw.status !== undefined && !allowedStatus.has(raw.status)) {
+      return c.json({
+        error: `Invalid status: "${raw.status}". Allowed: ${[...allowedStatus].join(', ')}.`,
+      }, 400);
+    }
+
+    if (raw.priority !== undefined && raw.priority !== null
+        && !['P1', 'P2', 'P3'].includes(raw.priority)) {
+      return c.json({ error: `Invalid priority: "${raw.priority}". Allowed: P1, P2, P3 or null.` }, 400);
+    }
+
+    if (raw.project_id !== undefined && raw.project_id !== null && !isValidUuid(raw.project_id)) {
+      return c.json({ error: `Invalid project_id: "${raw.project_id}". Must be UUID or null.` }, 400);
+    }
+
+    let dueDate: Date | null | undefined = undefined;
+    let hasDueDate = false;
+    if (raw.due_date !== undefined) {
+      hasDueDate = true;
+      if (raw.due_date === null) {
+        dueDate = null;
+      } else {
+        const d = new Date(raw.due_date);
+        if (isNaN(d.getTime())) {
+          return c.json({ error: `Invalid due_date: "${raw.due_date}". Expected ISO 8601 or null.` }, 400);
+        }
+        dueDate = d;
+      }
+    }
+
+    try {
+      const result = await todosSvc.bulkTodos(deps, {
+        ids: raw.ids,
+        action: raw.action,
+        tags: raw.tags,
+        status: raw.status as todosSvc.BulkTodoRequest['status'],
+        priority: raw.priority ?? null,
+        has_priority: 'priority' in raw,
+        project_id: raw.project_id ?? null,
+        has_project_id: 'project_id' in raw,
+        due_date: dueDate ?? null,
+        has_due_date: hasDueDate,
+      });
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof todosSvc.BulkTodoValidationError) {
+        return c.json({ error: err.message }, 400);
+      }
+      throw err;
+    }
+  });
+
   // Todo comments
   app.get('/api/v1/todos/:id/comments', async (c) => {
     const comments = await commentsSvc.listComments(deps, c.req.param('id'));

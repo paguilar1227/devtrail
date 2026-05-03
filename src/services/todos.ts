@@ -4,7 +4,17 @@ import {
   updateTodo as dbUpdateTodo,
   archiveTodo, unarchiveTodo, deleteTodoHard,
   findChildTodos, findSimilarTodos,
+  bulkArchiveTodos,
+  bulkRestoreTodos,
+  bulkDeleteTodosHard,
+  bulkAddTagsTodos,
+  bulkRemoveTagsTodos,
+  bulkSetStatusTodos,
+  bulkSetPriorityTodos,
+  bulkSetProjectIdTodos,
+  bulkSetDueDateTodos,
   type TodoRow, type TodoInsert, type ListTodosFilters, type TodoSearchResult,
+  type BulkTodoStatus, type BulkTodoPriority, type BulkTodoResult,
 } from '../db/todos.js';
 
 export async function createTodo(
@@ -96,4 +106,88 @@ export async function searchTodos(
 ): Promise<TodoSearchResult[]> {
   const embedding = await deps.embeddingProvider.embed(query);
   return findSimilarTodos(deps.db, embedding, 0.3, limit);
+}
+
+export type BulkTodoAction =
+  | 'archive'
+  | 'restore'
+  | 'delete'
+  | 'add_tags'
+  | 'remove_tags'
+  | 'set_status'
+  | 'set_priority'
+  | 'set_project_id'
+  | 'set_due_date';
+
+export interface BulkTodoRequest {
+  ids: string[];
+  action: BulkTodoAction;
+  tags?: string[];
+  status?: BulkTodoStatus;
+  /** P1/P2/P3 to set, or null to clear. Distinguish "not provided" from "clear". */
+  priority?: BulkTodoPriority;
+  has_priority?: boolean;
+  /** UUID to assign, or null to detach to Inbox. Distinguish "not provided" from "clear". */
+  project_id?: string | null;
+  has_project_id?: boolean;
+  /** ISO 8601 string to set, or null to clear. */
+  due_date?: Date | null;
+  has_due_date?: boolean;
+}
+
+export class BulkTodoValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BulkTodoValidationError';
+  }
+}
+
+export async function bulkTodos(
+  deps: ServiceDeps,
+  req: BulkTodoRequest,
+): Promise<BulkTodoResult> {
+  switch (req.action) {
+    case 'archive':
+      return bulkArchiveTodos(deps.db, req.ids);
+    case 'restore':
+      return bulkRestoreTodos(deps.db, req.ids);
+    case 'delete':
+      return bulkDeleteTodosHard(deps.db, req.ids);
+    case 'add_tags':
+      if (!req.tags || req.tags.length === 0) {
+        throw new BulkTodoValidationError('action="add_tags" requires non-empty tags array');
+      }
+      return bulkAddTagsTodos(deps.db, req.ids, req.tags);
+    case 'remove_tags':
+      if (!req.tags || req.tags.length === 0) {
+        throw new BulkTodoValidationError('action="remove_tags" requires non-empty tags array');
+      }
+      return bulkRemoveTagsTodos(deps.db, req.ids, req.tags);
+    case 'set_status':
+      if (!req.status) {
+        throw new BulkTodoValidationError('action="set_status" requires a status value');
+      }
+      return bulkSetStatusTodos(deps.db, req.ids, req.status);
+    case 'set_priority':
+      if (!req.has_priority) {
+        throw new BulkTodoValidationError(
+          'action="set_priority" requires a priority field (P1/P2/P3 or null to clear)',
+        );
+      }
+      return bulkSetPriorityTodos(deps.db, req.ids, req.priority ?? null);
+    case 'set_project_id':
+      if (!req.has_project_id) {
+        throw new BulkTodoValidationError(
+          'action="set_project_id" requires a project_id field (UUID or null to detach)',
+        );
+      }
+      return bulkSetProjectIdTodos(deps.db, req.ids, req.project_id ?? null);
+    case 'set_due_date':
+      if (!req.has_due_date) {
+        throw new BulkTodoValidationError(
+          'action="set_due_date" requires a due_date field (ISO 8601 or null to clear)',
+        );
+      }
+      return bulkSetDueDateTodos(deps.db, req.ids, req.due_date ?? null);
+  }
 }
