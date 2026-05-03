@@ -30,7 +30,7 @@ Open Brain runs as a single Hono process serving three surfaces — REST API, MC
 | Layer | Technology |
 |-------|-----------|
 | API | Hono on Node 20, served by `@hono/node-server` |
-| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| Web UI | Vite + React + Tailwind, built into `frontend/dist`, served statically by Hono |
 | MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
 | Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
 | Blob storage | Azure Blob Storage (private; SAS-signed read URLs at API response time) |
@@ -42,7 +42,28 @@ Open Brain runs as a single Hono process serving three surfaces — REST API, MC
 | RAG thorough path | Azure Foundry Responses API (gpt-5-4-pro) |
 | CI/CD | GitHub Actions (OIDC) |
 
-The Container App hosts all three surfaces in a single process. Adapters are thin; all business logic lives in `src/services/` (see `CLAUDE.md` for the layout). Migrations auto-apply on startup.
+The Container App hosts all three surfaces in a single process. Adapters are thin; all business logic lives in `backend/src/services/` (see `CLAUDE.md` for the layout). Migrations auto-apply on startup.
+
+## Repo layout
+
+```
+backend/                  # Hono API + MCP server (Node 20)
+frontend/                 # Vite + React + Tailwind web client
+migrations/               # SQL migrations applied on backend startup
+scripts/                  # deploy.sh, live-e2e.sh, diagnostics
+docs/                     # design docs, plans, UI build brief
+.github/workflows/        # CI + Deploy to Azure
+Dockerfile                # multi-stage: frontend build → backend build → runtime
+```
+
+Root `package.json` is a thin script delegator:
+
+```bash
+npm run install:all        # backend + frontend deps
+npm run dev                # backend dev server
+npm test                   # backend test suite
+npm run build:all          # production build of both
+```
 
 ## Schema
 
@@ -58,24 +79,21 @@ The Container App hosts all three surfaces in a single process. Adapters are thi
 # 1. Local Postgres (pgvector image, mapped to host port 5434 to avoid clashing with the system 5432)
 docker compose up -d
 
-# 2. Backend deps
-npm install
+# 2. Backend + frontend deps
+npm run install:all
 
-# 3. Web UI deps
-cd web && npm install && cd ..
-
-# 4. Configure environment
+# 3. Configure environment
 cp .env.example .env
 # edit .env — DATABASE_URL=postgresql://openbrain:openbrain@localhost:5434/openbrain
 # plus GEMINI_API_KEY, ANTHROPIC_API_KEY, AZURE_STORAGE_CONNECTION_STRING,
 #       AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_KEY, XAI_API_KEY, FIRECRAWL_API_KEY,
 #       OPEN_BRAIN_API_KEY (any string for local)
 
-# 5. Backend dev server (auto-runs migrations on first boot)
+# 4. Backend dev server (auto-runs migrations on first boot)
 npm run dev
 
-# 6. (separately) Web dev server
-cd web && npm run dev
+# 5. Frontend dev server (separately)
+cd frontend && npm run dev
 ```
 
 ## Testing
@@ -83,14 +101,14 @@ cd web && npm run dev
 88 tests across 12 files: provider-level mocks, MCP server wiring, REST integration against a test pg, URL detection, multimodal upload paths, chunker, blob client.
 
 ```bash
-# Type check
-npx tsc --noEmit
-
-# All tests
+# All tests (delegates to backend)
 npm test
 
-# Single file
-npx vitest run tests/integration/rest-api.test.ts
+# Type check (from backend/)
+cd backend && npx tsc --noEmit
+
+# Single file (from backend/)
+cd backend && npx vitest run tests/integration/rest-api.test.ts
 ```
 
 There is no separate e2e suite in the repo. The integration tests already exercise the full app surface against mocked providers. For full live-system validation see [`E2E_TEST_PLAN.md`](./E2E_TEST_PLAN.md) — a manual test plan that hits production.

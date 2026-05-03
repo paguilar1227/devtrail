@@ -13,12 +13,12 @@
  *     npx tsx scripts/backfill-entities.ts
  */
 
-import { createDbClient } from '../src/db/client.js';
-import { GeminiEmbeddingProvider } from '../src/providers/gemini-embedding.js';
-import { AnthropicLLMProvider } from '../src/providers/anthropic-llm.js';
-import { buildGraphEdges } from '../src/services/entities.js';
-import { getChunksByContentItem } from '../src/db/chunks.js';
-import type { ServiceDeps } from '../src/services/index.js';
+import { createDbClient } from '../backend/src/db/client.js';
+import { GeminiEmbeddingProvider } from '../backend/src/providers/gemini-embedding.js';
+import { AnthropicLLMProvider } from '../backend/src/providers/anthropic-llm.js';
+import { buildGraphEdges } from '../backend/src/services/entities.js';
+import { getChunksByContentItem } from '../backend/src/db/chunks.js';
+import type { ServiceDeps } from '../backend/src/services/index.js';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;

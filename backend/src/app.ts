@@ -1024,8 +1024,8 @@ export function createApp(deps: ServiceDeps) {
   // ==========================================================================
   // Static web UI (served last, after API + MCP so they take precedence)
   // ==========================================================================
-  app.use('/*', serveStatic({ root: './web/dist' }));
-  app.get('*', serveStatic({ path: './web/dist/index.html' }));
+  app.use('/*', serveStatic({ root: './frontend/dist' }));
+  app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
   return app;
 }

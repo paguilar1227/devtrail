@@ -14,9 +14,9 @@
  *   - sequential-equivalent baseline (for context)
  */
 
-import type { ServiceDeps } from '../../src/services/index.js';
-import type { LLMResponse } from '../../src/providers/types.js';
-import { createContentItem } from '../../src/services/content-items.js';
+import type { ServiceDeps } from '../../backend/src/services/index.js';
+import type { LLMResponse } from '../../backend/src/providers/types.js';
+import { createContentItem } from '../../backend/src/services/content-items.js';
 
 const EMBED_LATENCY_MS = 200;
 const META_LLM_LATENCY_MS = 1500;

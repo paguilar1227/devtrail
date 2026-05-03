@@ -7,9 +7,10 @@ Project-specific instructions for AI sessions working on this codebase.
 Before trusting anything in this file, this CLAUDE.md, prior session notes, or your auto-memory: **verify against the current code**. Architecture changes happen between sessions. Cheap checks before committing to a mental model:
 
 - `git log --oneline -20` — what changed recently
-- `find src -type f -name '*.ts' | sort` — what files actually exist
+- `find backend/src -type f -name '*.ts' | sort` — backend files
+- `find frontend/src -type f -name '*.ts*' | sort` — frontend files
 - `ls migrations/` — what schema is current
-- `cat package.json` — what dependencies are current
+- `cat backend/package.json frontend/package.json` — current deps
 - A live `/health` hit on production confirms what's deployed
 
 If a memory or doc references a file path, function, or entity name that no longer exists in the repo, treat the doc as stale and update it. **Don't chase a phantom architecture.** Past pivots have completely replaced the entity model and code layout — assumptions from older sessions go stale fast.
@@ -31,13 +32,13 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | Layer | Tech |
 |------|------|
 | API | Hono on Node 20, served by `@hono/node-server` |
-| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| Web UI | Vite + React + Tailwind, built into `frontend/dist`, served statically by Hono |
 | MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
 | Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
 | Blob storage | Azure Blob Storage |
 | Container | Docker on Azure Container Apps |
 
-## Models (see `src/server.ts`)
+## Models (see `backend/src/server.ts`)
 
 | Role | Provider | Model |
 |------|----------|-------|
@@ -57,11 +58,38 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 - `006_ingest_completed_at.sql` — `ingest_completed_at` for the polling endpoint
 - `007_pinned.sql` — nullable `pinned_at` TIMESTAMPTZ on content_items, todos, projects, with partial indexes
 
-Auto-migration runs on container startup (`runMigrations()` in `src/server.ts`). It checks for table/column existence and applies missing migrations idempotently.
+Auto-migration runs on container startup (`runMigrations()` in `backend/src/server.ts`). It checks for table/column existence and applies missing migrations idempotently.
 
 **No HNSW indexes.** B1ms tier doesn't have memory for HNSW init at 3072 dims. Sequential scan is fine at single-user scale.
 
 ## Code layout
+
+Top-level split:
+
+```
+backend/                  # Hono API + MCP server (Node 20)
+├── src/                  # source
+├── tests/                # unit + integration
+├── package.json
+├── tsconfig.json
+└── vitest.config.ts
+
+frontend/                 # Vite + React + Tailwind web client
+├── src/
+├── index.html
+├── package.json
+└── vite.config.ts
+
+migrations/               # SQL migrations (applied at backend startup)
+scripts/                  # deploy.sh + live-e2e.sh + diagnostics
+docs/                     # design docs, plans, UI build brief
+.github/workflows/        # CI (tests + frontend build) + Deploy (Docker → ACA)
+Dockerfile                # multi-stage: frontend build → backend build → runtime
+```
+
+Root `package.json` is a thin script delegator (`npm run dev` → `cd backend`, etc.).
+
+**Backend** layout (everything under `backend/src/`):
 
 ```
 src/
@@ -112,9 +140,9 @@ src/
 
 ### Service layer pattern
 
-Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
+Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `backend/src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
 
-## MCP tools (20 total — defined in `src/mcp/server.ts`)
+## MCP tools (20 total — defined in `backend/src/mcp/server.ts`)
 
 Read:
 1. `list_projects` — list all (filter by status optional)
@@ -155,7 +183,7 @@ Mixing them up will make the call fail.
 
 Auth: `Authorization: Bearer <api-key>` or `?key=<api-key>`. Same key for `/api/*` and `/mcp`.
 
-Routes (see `src/app.ts`):
+Routes (see `backend/src/app.ts`):
 
 - `GET /health`
 - **Projects** — `GET|POST|PUT|DELETE /api/v1/projects[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?status=` and `?pinned=`.
@@ -177,13 +205,16 @@ Async ingest contract: `POST /content` and `/from-url` return **202 + `{id, proc
 ### Local cycle
 
 ```bash
-npx tsc --noEmit           # types
-npm test                    # full vitest run (18 files, 208 tests as of 2026-04-30)
-docker compose up -d        # local Postgres on port 5434 (avoid clashing with 5432)
-npm run dev                 # tsx watch on src/server.ts
+docker compose up -d                         # local Postgres on port 5434 (avoid clashing with 5432)
+npm run install:all                          # backend + frontend deps (first time only)
+cd backend && npx tsc --noEmit               # types
+npm test                                     # backend vitest run (delegates to backend/)
+npm run dev                                  # backend dev server (tsx watch on backend/src/server.ts)
+cd frontend && npm run dev                   # frontend dev server (Vite, separate terminal)
+npm run build:all                            # full production build (backend dist/ + frontend dist/)
 ```
 
-There is **no separate e2e suite**. The integration tests in `tests/integration/` already exercise the full app surface (REST + MCP) against mocked providers and an in-memory or test pg.
+There is **no separate e2e suite**. The integration tests in `backend/tests/integration/` already exercise the full app surface (REST + MCP) against mocked providers and an in-memory or test pg.
 
 ### Plan-first
 
@@ -223,24 +254,24 @@ Confirm before:
 
 | Layer | Path | What |
 |-------|------|------|
-| Unit | `tests/unit/**` | Single modules: providers, db client, mcp server wiring, capture utilities, storage |
-| Integration | `tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
-| Integration | `tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
-| Integration | `tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
-| Integration | `tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
+| Unit | `backend/tests/unit/**` | Single modules: providers, db client, mcp server wiring, capture utilities, storage |
+| Integration | `backend/tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
+| Integration | `backend/tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
+| Integration | `backend/tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
+| Integration | `backend/tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
 
-Mocks live in `tests/helpers/mocks.ts`. Add new tests at the appropriate layer when you change behavior. Bug fixes get a regression test.
+Mocks live in `backend/tests/helpers/mocks.ts`. Add new tests at the appropriate layer when you change behavior. Bug fixes get a regression test.
 
-Run a single file:
+Run a single file (from `backend/`):
 ```bash
-npx vitest run tests/integration/rest-api.test.ts
+cd backend && npx vitest run tests/integration/rest-api.test.ts
 ```
 
 ## Known gotchas
 
 ### LLMs
 
-- **Markdown-wrapped JSON.** Anthropic and Gemini both sometimes return JSON inside ` ```json … ``` ` fences even with `responseFormat: 'json'`. Always pipe `LLMProvider` JSON output through `extractJson()` from `src/providers/json-utils.ts` before `JSON.parse`.
+- **Markdown-wrapped JSON.** Anthropic and Gemini both sometimes return JSON inside ` ```json … ``` ` fences even with `responseFormat: 'json'`. Always pipe `LLMProvider` JSON output through `extractJson()` from `backend/src/providers/json-utils.ts` before `JSON.parse`.
 - **Output token budget.** Haiku 4.5 metadata calls use `maxTokens: 8192` for PDF-scale inputs (raised from 2048 — see `fix(metadata): raise Flash maxTokens 2048→8192 for PDF-scale inputs`). For entity extraction, 4096 is enough because we cap input at 50k chars.
 - **Model IDs change.** Verify the current ID if you get 404s. The codebase pins Haiku to `claude-haiku-4-5-20251001` explicitly.
 
@@ -254,7 +285,7 @@ npx vitest run tests/integration/rest-api.test.ts
 
 - `db.query()` calls `ensureVector()` which lazily registers pgvector types on first use. Migrations that create the `vector` extension must use `pool.query()` directly (not `db.query()`) to avoid the chicken-and-egg.
 - HNSW is **not** in use — too memory-hungry for B1ms at 3072 dims. Sequential scan is the current cost.
-- Migrations are checked by table-existence probes in `runMigrations()`. Adding a new migration: add the file and a new probe in `src/server.ts`.
+- Migrations are checked by table-existence probes in `runMigrations()`. Adding a new migration: add the file and a new probe in `backend/src/server.ts`.
 
 ### Search and RAG
 

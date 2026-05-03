@@ -1,6 +1,6 @@
 # Open Brain v2 — UI Build Brief
 
-You are picking up the **web client** for Open Brain v2. The backend API is finished, deployed, and verified end-to-end. Your job is to evolve the existing minimal web UI (`web/`) into a complete client that exercises the full API surface.
+You are picking up the **web client** for Open Brain v2. The backend API is finished, deployed, and verified end-to-end. Your job is to evolve the existing minimal web UI (`frontend/`) into a complete client that exercises the full API surface.
 
 This is a **single-user** personal knowledge base + productivity tool (NotebookLM crossed with a task manager, owned by Alex). No multi-tenancy, no signup flow — just one API key in `localStorage`. Design for that scale: **clarity, speed, keyboard-friendly** beats heavy onboarding or "social" patterns.
 
@@ -8,10 +8,10 @@ This is a **single-user** personal knowledge base + productivity tool (NotebookL
 
 ## What's already there (don't rewrite, evolve)
 
-`web/` is a Vite + React 18 + Tailwind app, served statically by the Hono API in production at `/`.
+`frontend/` is a Vite + React 18 + Tailwind app, served statically by the Hono API in production at `/`.
 
 ```
-web/src/
+frontend/src/
 ├── App.tsx                    # API key gate + hash router (#/project/:id)
 ├── lib/api.ts                 # 273 LOC — partial coverage of v2 API. NEEDS EXTENSION.
 ├── pages/
@@ -35,8 +35,8 @@ web/src/
 
 **Build & dev:**
 ```bash
-cd web && npm install && npm run dev    # localhost:5173 → proxies to API
-npm run build                            # builds into web/dist/, served by Hono
+npm run install:all && npm run dev    # localhost:5173 → proxies to API
+npm run build                            # builds into frontend/dist/, served by Hono
 ```
 
 ---
@@ -45,7 +45,7 @@ npm run build                            # builds into web/dist/, served by Hono
 
 Read these in the repo:
 - `CLAUDE.md` — entity model, REST routes, async ingest contract, gotchas
-- `src/app.ts` — every REST route handler (authoritative source for shapes)
+- `backend/src/app.ts` — every REST route handler (authoritative source for shapes)
 - `scripts/live-e2e.sh` — 59 live assertions exercising the API; the request/response shapes you'll work with are all here
 
 If a doc says one thing and the code says another, **the code wins**. Update the doc.
@@ -423,7 +423,7 @@ When all 12 flows work end-to-end against the live API at all 4 breakpoints, you
 
 ## Pointers when stuck
 
-- **Authoritative API contract:** `src/app.ts` route handlers
+- **Authoritative API contract:** `backend/src/app.ts` route handlers
 - **Live verification of any flow:** `scripts/live-e2e.sh` (run with `API_KEY=… ./scripts/live-e2e.sh`)
 - **Architecture context:** `CLAUDE.md`
 - **Whether the deployed code matches a fix:** `gh run list --limit 5` (CI + Deploy must both be green for the SHA you're testing)

@@ -1,20 +1,20 @@
-# ---------- Web build stage ----------
-FROM node:20-alpine AS web-builder
+# ---------- Frontend build stage ----------
+FROM node:20-alpine AS frontend-builder
 
-WORKDIR /web
-COPY web/package*.json ./
+WORKDIR /frontend
+COPY frontend/package*.json ./
 RUN npm ci
-COPY web/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # ---------- Backend build stage ----------
-FROM node:20-alpine AS builder
+FROM node:20-alpine AS backend-builder
 
 WORKDIR /app
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci
-COPY tsconfig.json ./
-COPY src/ ./src/
+COPY backend/tsconfig.json ./
+COPY backend/src/ ./src/
 RUN npm run build
 
 # ---------- Runtime ----------
@@ -23,11 +23,11 @@ FROM node:20-alpine AS runner
 RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --omit=dev
 
-COPY --from=builder /app/dist ./dist
-COPY --from=web-builder /web/dist ./web/dist
+COPY --from=backend-builder /app/dist ./dist
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
 COPY migrations/ ./migrations/
 
 EXPOSE 3000

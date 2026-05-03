@@ -16,16 +16,23 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
       - name: Type check backend
+        working-directory: backend
         run: npx tsc --noEmit
-      - name: Unit tests
+      - name: Unit + integration tests
+        working-directory: backend
         run: npm test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      - name: Install web deps
-        working-directory: web
+      - name: Install frontend deps
+        working-directory: frontend
         run: npm ci
-      - name: Type check + build web
-        working-directory: web
+      - name: Type check + build frontend
+        working-directory: frontend
         run: npm run build

@@ -12,7 +12,7 @@
  *   DATABASE_URL=... npx tsx scripts/cleanup-stale-ingests.ts --execute  # actually delete
  */
 
-import { createDbClient } from '../src/db/client.js';
+import { createDbClient } from '../backend/src/db/client.js';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
