@@ -175,11 +175,12 @@ describe('MCP server', () => {
       'restore',
       'search',
       'find_mentions',
+      'list_tags',
       'ask',
       'retry',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(16);
+    expect(toolNames).toHaveLength(17);
   });
 
   it('calls create_project and returns the created project', async () => {

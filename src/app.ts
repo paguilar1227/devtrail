@@ -12,6 +12,7 @@ import * as todosSvc from './services/todos.js';
 import * as commentsSvc from './services/todo-comments.js';
 import * as searchSvc from './services/search.js';
 import * as ragSvc from './services/rag.js';
+import * as tagsSvc from './services/tags.js';
 import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
 
@@ -426,6 +427,19 @@ export function createApp(deps: ServiceDeps) {
       queryEntities,
     });
     return c.json({ hits });
+  });
+
+  // ==========================================================================
+  // TAGS — aggregate view over content_items.tags + todos.tags
+  // ==========================================================================
+
+  app.get('/api/v1/tags', async (c) => {
+    const project_id = c.req.query('project_id') ?? undefined;
+    if (project_id !== undefined && !isValidUuid(project_id)) {
+      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
+    }
+    const tags = await tagsSvc.listTags(deps, { project_id });
+    return c.json({ tags });
   });
 
   app.post('/api/v1/find-mentions', async (c) => {

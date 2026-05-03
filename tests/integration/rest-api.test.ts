@@ -460,6 +460,64 @@ describe('Content items API', () => {
     expect(listQ!.params).toContainEqual(['pending', 'failed']);
   });
 
+  it('GET /tags aggregates tag rows with by_type counts', async () => {
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/WITH\s+tag_rows/i.test(sql)) {
+        return {
+          rows: [
+            { name: 'reference', total: 5, doc_count: 3, note_count: 2, todo_count: 0 },
+            { name: 'urgent',    total: 2, doc_count: 0, note_count: 0, todo_count: 2 },
+          ],
+        } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/tags', {
+      headers: { ...AUTH },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.tags).toHaveLength(2);
+    expect(body.tags[0]).toEqual({
+      name: 'reference',
+      total: 5,
+      by_type: { document: 3, note: 2, todo: 0 },
+    });
+    expect(body.tags[1].name).toBe('urgent');
+    expect(body.tags[1].by_type.todo).toBe(2);
+  });
+
+  it('GET /tags?project_id=<uuid> scopes the SQL via project filter', async () => {
+    const projId = '12345678-1234-1234-1234-123456789012';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/tags?project_id=${projId}`,
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const tagsQ = queries.find((q) => /WITH\s+tag_rows/i.test(q.sql));
+    expect(tagsQ).toBeDefined();
+    // Both content_items and todos branches need to filter by project_id when scoped.
+    expect(tagsQ!.sql).toMatch(/project_ids\s*@>/i);
+    expect(tagsQ!.sql).toMatch(/project_id\s*=\s*\$1/i);
+    expect(tagsQ!.params).toContain(projId);
+  });
+
+  it('GET /tags?project_id=not-a-uuid returns 400', async () => {
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/tags?project_id=not-a-uuid',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+  });
+
   it('GET /content?processing_status=junk returns 400 with a helpful error', async () => {
     const res = await app.fetch(new Request(
       'http://localhost/api/v1/content?processing_status=junk',

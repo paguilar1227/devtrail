@@ -7,6 +7,7 @@ import * as todosSvc from '../services/todos.js';
 import * as commentsSvc from '../services/todo-comments.js';
 import * as searchSvc from '../services/search.js';
 import * as ragSvc from '../services/rag.js';
+import * as tagsSvc from '../services/tags.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
 
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
@@ -678,6 +679,30 @@ If no entity matches the input name (as canonical or alias), returns { entity: n
         limit,
       });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  // ---------- 6e. list_tags ----------
+  server.tool(
+    'list_tags',
+    `List every tag in use across documents, notes, and todos with usage counts. Sorted by total desc.
+
+Use BEFORE applying tags via \`update\` or \`create\` so you pick from the user's existing taxonomy instead of inventing parallel labels (e.g., "meeting-notes" vs "meeting_notes" vs "meetings"). Also useful for "what topics am I tracking" overview questions.
+
+Returns: [{ name, total, by_type: { document, note, todo } }]. Optional project_id scopes to one project's tags only.`,
+    {
+      project_id: z.string().optional()
+        .describe('Optional. Restrict the count to items in a single project. Omit for global tag inventory.'),
+    },
+    async ({ project_id }) => {
+      if (project_id !== undefined && !isValidUuid(project_id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${project_id}".` }],
+          isError: true,
+        };
+      }
+      const tags = await tagsSvc.listTags(deps, { project_id });
+      return { content: [{ type: 'text', text: JSON.stringify(tags, null, 2) }] };
     },
   );
 
