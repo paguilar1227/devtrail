@@ -102,27 +102,60 @@ export function createApp(deps: ServiceDeps) {
   app.use('*', cors({ origin: '*' }));
 
   // ----- auth -----
-  // Two paths are accepted in parallel:
-  //   1. Bearer (Authorization header or `?key=`) — MCP, CLI, scripts, any
-  //      non-browser caller.
-  //   2. Container Apps Easy Auth principal headers — the React UI sitting
-  //      behind Entra ID. Even though `/api/*` is in Easy Auth's
-  //      excludedPaths (so anonymous Bearer callers aren't redirected),
-  //      Easy Auth still injects principal headers when the request
-  //      carries a valid session cookie. We treat any non-empty principal
-  //      as authenticated because the app registration itself is restricted
-  //      to one user (single-tenant + assignmentRequired).
-  app.use('/api/*', async (c, next) => {
+  // /api/v1/* and /api/openapi.json + /api/docs use Bearer (Authorization
+  // header or `?key=`). All non-browser callers (MCP, CLI, scripts, the
+  // OpenAPI/Swagger viewer with `?key=`) hit this surface.
+  //
+  // /api/auth/* is intentionally NOT covered by this middleware — those
+  // endpoints sit in front of Easy Auth and read the
+  // `x-ms-client-principal-*` headers Easy Auth injects on authenticated
+  // browser requests. Easy Auth's `excludedPaths` covers `/api/v1/*` and
+  // `/api/openapi.json` + `/api/docs` so Bearer callers aren't redirected
+  // to login, but `/api/auth/*` is gated so the principal headers are
+  // actually injected when a valid session cookie is present.
+  app.use('/api/v1/*', async (c, next) => {
     const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key === deps.config.apiKey) {
-      await next();
-      return;
+    if (key !== deps.config.apiKey) {
+      return c.json({ error: 'Unauthorized' }, 401);
     }
-    if (c.req.header('x-ms-client-principal-id') || c.req.header('x-ms-client-principal')) {
-      await next();
-      return;
+    await next();
+  });
+  app.use('/api/openapi.json', async (c, next) => {
+    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
+    if (key !== deps.config.apiKey) {
+      return c.json({ error: 'Unauthorized' }, 401);
     }
-    return c.json({ error: 'Unauthorized' }, 401);
+    await next();
+  });
+  app.use('/api/docs', async (c, next) => {
+    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
+    if (key !== deps.config.apiKey) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    await next();
+  });
+
+  // /api/auth/token: the React UI calls this on boot to exchange its Easy
+  // Auth session cookie for the long-lived Bearer key the rest of the
+  // /api/v1 surface expects. Easy Auth gates this endpoint (it isn't in
+  // excludedPaths), so by the time the request reaches us the platform has
+  // already validated the cookie and injected the principal headers.
+  // Anonymous browser sessions get a 302 to the AAD login flow before
+  // ever reaching this code.
+  //
+  // Note: this returns the same long-lived key today — option 3 phase 1.
+  // Phase 2 will derive a short-lived per-session token (see task #122).
+  app.get('/api/auth/token', (c) => {
+    const principalId = c.req.header('x-ms-client-principal-id');
+    const principal = c.req.header('x-ms-client-principal');
+    if (!principalId && !principal) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    return c.json({
+      key: deps.config.apiKey,
+      principalId: principalId ?? null,
+      principalName: c.req.header('x-ms-client-principal-name') ?? null,
+    });
   });
 
   // ----- health -----

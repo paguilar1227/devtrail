@@ -64,8 +64,59 @@ import {
 } from '@open-brain/shared';
 import { z } from 'zod';
 
-const API_KEY = import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? 'local-dev-key-not-secret';
 const BASE = '/api/v1';
+const TOKEN_STORAGE_KEY = 'ob.api_key';
+
+// Resolve the Bearer key the UI uses for /api/v1/* calls. Two sources:
+//   - Local dev: `VITE_OPEN_BRAIN_API_KEY` from the build env (matches the
+//     backend's stub-mode default).
+//   - Production: the `/api/auth/token` exchange, which sits behind Easy
+//     Auth — the platform has already validated the user's cookie session
+//     by the time that endpoint runs, and the response carries the long-
+//     lived Bearer key plus the Entra principal id/name. We cache it in
+//     localStorage so the next page load skips the round-trip.
+//
+// `bootAuth()` is called once before React mounts (see main.tsx). If the
+// session has expired, the fetch comes back as an opaque redirect and we
+// hard-navigate to the AAD login URL with `post_login_redirect_uri` set
+// to the current page so the user lands back where they were.
+let API_KEY: string =
+  import.meta.env.VITE_OPEN_BRAIN_API_KEY ??
+  (typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '') ??
+  '';
+
+export async function bootAuth(): Promise<void> {
+  // If the build supplied a key, we're in local dev — nothing to exchange.
+  if (import.meta.env.VITE_OPEN_BRAIN_API_KEY) return;
+
+  // If we already have a cached token from a prior session, optimistically
+  // use it; expired-cookie re-auth will surface as 401 on the next /api/v1
+  // call and the React error boundary surfaces it.
+  if (API_KEY) return;
+
+  const res = await fetch('/api/auth/token', {
+    credentials: 'include',
+    redirect: 'manual',
+  });
+
+  // `redirect: 'manual'` returns an opaque 0-status response when the
+  // platform 302s us to login. Hard-navigate so the browser follows.
+  if (res.type === 'opaqueredirect' || res.status === 0) {
+    const here = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.assign(`/.auth/login/aad?post_login_redirect_uri=${here}`);
+    // Block React from mounting; the navigation above tears the page down.
+    throw new Error('Redirecting to login…');
+  }
+
+  if (!res.ok) {
+    throw new Error(`bootAuth failed: HTTP ${res.status}`);
+  }
+  const data = (await res.json()) as { key: string };
+  API_KEY = data.key;
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, data.key);
+  } catch { /* ignore quota / private-mode errors */ }
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {

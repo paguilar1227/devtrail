@@ -63,7 +63,7 @@ function mockDeps(): ServiceDeps {
 
 const AUTH = { 'Authorization': 'Bearer test-key' };
 
-describe('Auth gate (/api/*)', () => {
+describe('Auth gate (/api/v1/*)', () => {
   let deps: ServiceDeps;
   let app: ReturnType<typeof createApp>;
 
@@ -84,26 +84,60 @@ describe('Auth gate (/api/*)', () => {
     expect(res.status).toBe(401);
   });
 
-  it('accepts request when Easy Auth principal headers are present', async () => {
-    // Container Apps Easy Auth injects these on every request that carries
-    // a valid session cookie, even when the path is in excludedPaths.
-    // The middleware treats any non-empty principal as authenticated.
-    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
+  it('rejects principal headers on /api/v1/* (Bearer-only surface)', async () => {
+    // /api/v1/* is Bearer-only. Browser sessions exchange the cookie for a
+    // Bearer key via /api/auth/token (see token-exchange tests below) and
+    // then call /api/v1/* with that Bearer.
     const res = await app.fetch(new Request('http://localhost/api/v1/projects', {
       headers: {
         'x-ms-client-principal-id': 'a-real-entra-object-id',
         'x-ms-client-principal-name': 'owner@example.com',
       },
     }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('Token exchange (/api/auth/token)', () => {
+  let deps: ServiceDeps;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    deps = mockDeps();
+    app = createApp(deps);
   });
 
-  it('accepts a non-empty x-ms-client-principal header alone (alternate signal)', async () => {
-    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects', {
+  it('returns 401 when no Easy Auth principal headers are present', async () => {
+    // In production this path is gated by Easy Auth itself: anonymous
+    // browsers get redirected to AAD login before hitting our handler.
+    // The 401 is a defense-in-depth check for the case where Easy Auth
+    // is misconfigured or bypassed.
+    const res = await app.fetch(new Request('http://localhost/api/auth/token'));
+    expect(res.status).toBe(401);
+  });
+
+  it('returns the API key when principal headers are present', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/auth/token', {
+      headers: {
+        'x-ms-client-principal-id': 'a-real-entra-object-id',
+        'x-ms-client-principal-name': 'owner@example.com',
+      },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.key).toBe('test-key');
+    expect(body.principalId).toBe('a-real-entra-object-id');
+    expect(body.principalName).toBe('owner@example.com');
+  });
+
+  it('accepts the opaque x-ms-client-principal header alone', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/auth/token', {
       headers: { 'x-ms-client-principal': 'eyJhbGciOiJIUzI1NiJ9.opaque-base64' },
     }));
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.key).toBe('test-key');
+    expect(body.principalId).toBe(null);
   });
 });
 
