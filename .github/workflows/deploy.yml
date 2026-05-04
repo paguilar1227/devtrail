@@ -68,30 +68,35 @@ jobs:
           done
           echo "Health check failed after 150s"; exit 1
 
+  # ---------------------------------------------------------------------------
+  # Post-deploy smoke
+  #
+  # Runs on every push to main, only after build-and-deploy succeeds. Its job
+  # is to prove the deployed container is alive and the auth boundaries are
+  # correctly wired — nothing more.
+  #
+  # COST INVARIANT — DO NOT VIOLATE:
+  #   Every endpoint hit here MUST be free (no LLM, no embedding, no external
+  #   API spend, no blob upload). Today that means:
+  #     - /health                       (constant response)
+  #     - /api/v1/projects (no key)     (rejected at middleware)
+  #     - /api/v1/projects (with key)   (Postgres SELECT only)
+  #     - /mcp initialize               (returns server capabilities)
+  #     - / as a browser                (Easy Auth redirect)
+  #
+  #   DO NOT add: /rag, /search, POST /content (any file/url), /find-mentions,
+  #   or any path that triggers ingest, embeddings, or LLM completions. Those
+  #   cost real money per call and smoke runs once per merge.
+  #
+  #   Coverage for those expensive paths lives in:
+  #     - CI integration tests (mocked providers, every PR, free)
+  #     - Local stack with LLM_PROVIDER=stub
+  #     - A separate manually-triggered quality validation suite
+  # ---------------------------------------------------------------------------
   smoke:
     needs: build-and-deploy
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Fetch API key from Key Vault
-        id: kv
-        run: |
-          KEY=$(az keyvault secret show \
-            --vault-name your-keyvault \
-            --name open-brain-api-key \
-            --query value -o tsv)
-          echo "::add-mask::$KEY"
-          echo "key=$KEY" >> "$GITHUB_OUTPUT"
-
       - name: Smoke — health (public)
         run: |
           curl -fsS "${{ needs.build-and-deploy.outputs.app_url }}/health" | tee /tmp/health.json
@@ -106,7 +111,7 @@ jobs:
 
       - name: Smoke — REST API with key → 200
         env:
-          KEY: ${{ steps.kv.outputs.key }}
+          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
         run: |
           curl -fsS \
             -H "Authorization: Bearer $KEY" \
@@ -115,7 +120,7 @@ jobs:
 
       - name: Smoke — MCP initialize → 200 with serverInfo
         env:
-          KEY: ${{ steps.kv.outputs.key }}
+          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
         run: |
           curl -fsS \
             -X POST \

@@ -1,4 +1,31 @@
 # .github/workflows/ci.yml
+#
+# CI on every PR + push to main. Today this runs:
+#   - Backend type check
+#   - Backend unit + integration tests (mocked DB, mocked providers)
+#   - Frontend build
+#   - Frontend e2e (Playwright against vite dev server, mock data)
+#
+# No Postgres, Azurite, or upstream LLM keys required — every test layer is
+# self-contained. When we add an integration test that needs real Postgres or
+# Blob, add them as service containers below. Pattern:
+#
+#   services:
+#     postgres:
+#       image: pgvector/pgvector:pg16
+#       env:
+#         POSTGRES_USER: openbrain
+#         POSTGRES_PASSWORD: openbrain
+#         POSTGRES_DB: openbrain
+#       ports: ['5434:5432']
+#       options: --health-cmd "pg_isready -U openbrain" --health-interval 2s --health-timeout 5s --health-retries 15
+#     azurite:
+#       image: mcr.microsoft.com/azure-storage/azurite:latest
+#       ports: ['10010:10000']
+#
+# That gives CI parity with `docker compose up` locally. Until we have a test
+# that needs them, leaving them out keeps CI fast (<3 min today).
+
 name: CI
 
 on:
@@ -28,8 +55,6 @@ jobs:
       - name: Unit + integration tests
         working-directory: backend
         run: npm test
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       - name: Install frontend deps
         working-directory: frontend
         run: npm ci
