@@ -71,28 +71,66 @@ jobs:
   smoke:
     needs: build-and-deploy
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm ci
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npm run test:e2e:install
-      - name: Run @smoke against deployed app
-        working-directory: frontend
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch API key from Key Vault
+        id: kv
+        run: |
+          KEY=$(az keyvault secret show \
+            --vault-name your-keyvault \
+            --name open-brain-api-key \
+            --query value -o tsv)
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke — health (public)
+        run: |
+          curl -fsS "${{ needs.build-and-deploy.outputs.app_url }}/health" | tee /tmp/health.json
+          grep -q '"ok":true' /tmp/health.json
+
+      - name: Smoke — REST API auth gate (no key → 401)
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "${{ needs.build-and-deploy.outputs.app_url }}/api/v1/projects")
+          echo "no-key code=$CODE"
+          test "$CODE" = "401"
+
+      - name: Smoke — REST API with key → 200
         env:
-          BASE_URL: ${{ needs.build-and-deploy.outputs.app_url }}
-        run: npm run test:smoke
-      - name: Upload smoke report on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-playwright-report
-          path: frontend/playwright-report
-          retention-days: 7
+          KEY: ${{ steps.kv.outputs.key }}
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer $KEY" \
+            "${{ needs.build-and-deploy.outputs.app_url }}/api/v1/projects" \
+            | jq -e '.projects | type == "array"'
+
+      - name: Smoke — MCP initialize → 200 with serverInfo
+        env:
+          KEY: ${{ steps.kv.outputs.key }}
+        run: |
+          curl -fsS \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "Authorization: Bearer $KEY" \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deploy-smoke","version":"1"}}}' \
+            "${{ needs.build-and-deploy.outputs.app_url }}/mcp" \
+            | jq -e '.result.serverInfo.name == "open-brain"'
+
+      - name: Smoke — UI is auth-gated (browser request → 302 to login)
+        run: |
+          REDIRECT=$(curl -s -o /dev/null -w '%{redirect_url}' \
+            -H 'Accept: text/html' \
+            -H 'User-Agent: Mozilla/5.0' \
+            "${{ needs.build-and-deploy.outputs.app_url }}/")
+          echo "ui redirect=$REDIRECT"
+          echo "$REDIRECT" | grep -q 'login.microsoftonline.com'
