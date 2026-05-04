@@ -1,11 +1,8 @@
 import type {
-  ActivityEvent,
   DocumentItem,
   Note,
   Project,
   SearchHit,
-  Stats,
-  TagRow,
   Todo,
   TodoComment,
 } from '../types';
@@ -20,47 +17,6 @@ export const PROJECTS: Project[] = [
   { id: 'research-rag', name: 'RAG Research', desc: 'Hybrid retrieval comparisons — vector vs graph vs reranker.', status: 'active', pinned: false, accent: 'cyan', created_at: ago(86400e3 * 60), updated_at: ago(86400e3 * 3), counts: { docs: 18, notes: 6, todos: 4, done: 4 } },
   { id: 'homelab', name: 'Homelab', desc: 'Tailscale + NAS + on-prem inference notes.', status: 'active', pinned: false, accent: 'neutral', created_at: ago(86400e3 * 90), updated_at: ago(86400e3 * 5), counts: { docs: 4, notes: 7, todos: 3, done: 1 } },
   { id: 'mcp-e2e-v2', name: 'MCP E2E Test v2', desc: 'delete me when done — run 2', status: 'archived', pinned: false, accent: 'neutral', created_at: ago(86400e3 * 7), updated_at: ago(86400e3 * 3), counts: { docs: 1, notes: 0, todos: 2, done: 1 } },
-];
-
-export const STATS: Stats = {
-  counts: { projects: 5, documents: 50, notes: 46, todos: 48, done: 23 },
-  freshness: { last_ingest_ms: 720e3, last_edit_ms: 180e3 },
-  processing: { pending: 1, ready: 95, failed: 1 },
-  top_tags: [
-    { name: 'architecture', count: 14 },
-    { name: 'auth', count: 9 },
-    { name: 'rag', count: 8 },
-    { name: 'claude-code', count: 7 },
-    { name: 'session-model', count: 6 },
-    { name: 'mobile', count: 5 },
-    { name: 'research', count: 5 },
-  ],
-};
-
-export const ACTIVITY: ActivityEvent[] = [
-  { id: 'a1', kind: 'ingest', entity_kind: 'document', entity_id: 'd1', title: 'ClaudePit — Headless Mode Reference', project: 'ClaudePit', project_id: 'claudepit', at: ago(720e3) },
-  { id: 'a2', kind: 'edit', entity_kind: 'note', entity_id: 'n1', title: 'Auth strategy — subscription cookies', project: 'ClaudePit', project_id: 'claudepit', at: ago(2400e3) },
-  { id: 'a3', kind: 'comment', entity_kind: 'todo', entity_id: 't1', title: 'Wire up streaming responses with SSE', project: 'ClaudePit', project_id: 'claudepit', at: ago(3600e3) },
-  { id: 'a4', kind: 'ingest', entity_kind: 'document', entity_id: 'd2', title: 'Anthropic — Tool Use Best Practices', project: 'Copilot CLI App', project_id: 'copilot-cli', at: ago(7200e3) },
-  { id: 'a5', kind: 'edit', entity_kind: 'note', entity_id: 'n2', title: 'Multi-session parallelism notes', project: 'ClaudePit', project_id: 'claudepit', at: ago(11400e3) },
-  { id: 'a6', kind: 'ingest', entity_kind: 'document', entity_id: 'd3', title: 'Domain Driven Design', project: 'Open Brain 2.5', project_id: 'open-brain-25', at: ago(86400e3) },
-  { id: 'a7', kind: 'comment', entity_kind: 'todo', entity_id: 't4', title: 'Spike: Tailscale auth handshake', project: 'ClaudePit', project_id: 'claudepit', at: ago(86400e3 + 7200e3) },
-  { id: 'a8', kind: 'ingest', entity_kind: 'document', entity_id: 'd4', title: 'Rerankers benchmark CSV', project: 'RAG Research', project_id: 'research-rag', at: ago(86400e3 * 2) },
-  { id: 'a9', kind: 'edit', entity_kind: 'document', entity_id: 'd5', title: 'Open Brain LLM Stack Decision', project: 'Open Brain 2.5', project_id: 'open-brain-25', at: ago(86400e3 * 2 + 14400e3) },
-  { id: 'a10', kind: 'ingest', entity_kind: 'document', entity_id: 'd6', title: 'podcast-aug-12.mp3 (transcribed)', project: 'RAG Research', project_id: 'research-rag', at: ago(86400e3 * 3) },
-];
-
-export const TAGS: TagRow[] = [
-  { name: 'architecture', total: 14, doc: 6, note: 5, todo: 3 },
-  { name: 'auth', total: 9, doc: 2, note: 4, todo: 3 },
-  { name: 'rag', total: 8, doc: 5, note: 2, todo: 1 },
-  { name: 'claude-code', total: 7, doc: 3, note: 3, todo: 1 },
-  { name: 'session-model', total: 6, doc: 1, note: 4, todo: 1 },
-  { name: 'mobile', total: 5, doc: 1, note: 2, todo: 2 },
-  { name: 'research', total: 5, doc: 4, note: 1, todo: 0 },
-  { name: 'tailscale', total: 4, doc: 2, note: 1, todo: 1 },
-  { name: 'security', total: 3, doc: 0, note: 2, todo: 1 },
-  { name: 'ingest', total: 3, doc: 1, note: 0, todo: 2 },
 ];
 
 export const DOCUMENTS: Record<string, DocumentItem[]> = {
@@ -109,13 +65,6 @@ export const COMMENTS: Record<string, TodoComment[]> = {
     { id: 'c3', todo_id: 't1', content: 'Heartbeat every 15s, reconnect with last-event-id. Patch in t1b.', at: ago(900e3) },
   ],
 };
-
-export const INBOX_TODOS: Todo[] = [
-  { id: 'i1', title: 'Reply to Sebastian about the dataset request', status: 'not_started', priority: 'p2', parent_id: null, project_id: null, tags: [], pinned: false, due_at: ago(-86400e3 * 1), created_at: ago(86400e3 * 2), comments: 0 },
-  { id: 'i2', title: 'Renew domain (openbrain.local) — expires in 12 days', status: 'not_started', priority: 'p1', parent_id: null, project_id: null, tags: ['chore'], pinned: false, due_at: ago(-86400e3 * 12), created_at: ago(86400e3), comments: 0 },
-  { id: 'i3', title: "Read 'On the Measure of Intelligence' (Chollet)", status: 'in_progress', priority: 'p3', parent_id: null, project_id: null, tags: ['reading'], pinned: false, due_at: null, created_at: ago(86400e3 * 6), comments: 0 },
-  { id: 'i4', title: 'Buy new mechanical keyboard', status: 'not_started', priority: 'p3', parent_id: null, project_id: null, tags: [], pinned: false, due_at: null, created_at: ago(86400e3 * 14), comments: 0 },
-];
 
 export const SEARCH_HITS: SearchHit[] = [
   { id: 'h1', entity_kind: 'note', entity_id: 'n-cp-2', title: 'Auth strategy — subscription cookies', project: 'ClaudePit', excerpt: 'We mint a session token bound to the <em>subscription cookie</em> and store it in the keychain. No <em>API keys</em> ever touch the wire because the official Claude Code subscription is what users already pay for…', retrieval_path: ['vector'], score: 0.94 },

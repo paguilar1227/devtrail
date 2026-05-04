@@ -11,6 +11,8 @@ Authoritative reference for the V2 codebase. Written for AI agents and humans wh
 >
 > If a memory or doc references a file/function/entity that no longer exists in the repo, **the code wins**. Update or remove the stale doc.
 
+> **Path convention.** This doc uses `src/`, `tests/`, `migrations/` etc. as if rooted at the repo top. As of April 2026 the repo is split into npm workspaces — backend code lives under `backend/`, frontend under `frontend/`, shared schemas under `shared/`. So `src/services/foo.ts` in this doc is `backend/src/services/foo.ts` on disk. The §17 File Map and tree diagrams in §13/§14 are pre-split snapshots; treat them as logical structure, not literal paths.
+
 ---
 
 ## 1. Purpose
@@ -47,12 +49,14 @@ All three surfaces run in a single Hono process on Node 20, deployed as a Docker
             +---------------------------------------------+
             |  Hono process on :3000                       |
             |                                              |
-            |  /                Static web UI from web/dist|
+            |  /                Static web UI from frontend/dist
             |  /health          {"ok":true,...}            |
             |  /api/v1/*        REST adapter (src/app.ts)  |
             |  /mcp             MCP adapter (per-request)  |
+            |  /api/docs        Swagger UI (Bearer-gated)  |
+            |  /api/openapi.json   OpenAPI 3.1 spec        |
             |                                              |
-            |  Auto-migrations on startup (001/002/003)    |
+            |  Auto-migrations on startup (001..007)       |
             +---------------------------------------------+
                 |              |              |
                 |              |              |
@@ -80,7 +84,7 @@ Direction of dependencies: **adapters → services → db/providers**. Adapters 
 | Layer | Tech |
 |-------|------|
 | API | Hono on Node 20, served by `@hono/node-server` |
-| Web UI | Vite + React + Tailwind, built into `web/dist`, served statically by Hono |
+| Web UI | Vite + React (hand-rolled CSS in `frontend/src/styles.css`), built into `frontend/dist`, served statically by Hono |
 | MCP | `@modelcontextprotocol/sdk` over `WebStandardStreamableHTTPServerTransport` (stateless, fresh server + transport per request) |
 | Database | PostgreSQL Flexible Server (B1ms) + pgvector (3072-dim, sequential scan — no HNSW) |
 | Blob storage | Azure Blob Storage (`Allow Blob Public Access = false`; SAS read URLs at API response time) |
@@ -662,13 +666,17 @@ open-brain-v2/
 │   │   ├── xai.ts                      X/Twitter live-search via Grok
 │   │   └── json-utils.ts               extractJson() — strips markdown fences from LLM output
 │   ├── mcp/
-│   │   └── server.ts                   8 MCP tools + INSTRUCTIONS string
+│   │   └── server.ts                   21 MCP tools + INSTRUCTIONS string
 │   └── storage/
 │       └── blob.ts                     Azure Blob upload/download + getReadSasUrl
 ├── migrations/
 │   ├── 001_schema.sql                  projects, content_items, chunks, todos, todo_comments
 │   ├── 002_source_url.sql              source_url column on content_items
-│   └── 003_entities_graph.sql          entities, chunk_entities, published_at
+│   ├── 003_entities_graph.sql          entities, chunk_entities, published_at
+│   ├── 004_processing_status.sql       processing_status + processing_error (async ingest)
+│   ├── 005_backfill_control_chars.sql  strip C0/DEL bytes from old content rows
+│   ├── 006_ingest_completed_at.sql     ingest_completed_at for the polling endpoint
+│   └── 007_pinned.sql                  pinned_at on projects/content/todos + partial indexes
 ├── infra/
 │   ├── main.bicep                      Top-level template
 │   ├── parameters.json                 Non-secret values
@@ -687,7 +695,7 @@ open-brain-v2/
 │   ├── backfill-entities.ts            Bulk re-run entity extraction
 │   ├── cleanup-stale-ingests.ts
 │   └── rag-profile.sh                  Reproducible RAG latency/quality profile
-├── web/                                Vite + React + Tailwind UI (built into web/dist, served by Hono)
+├── frontend/                           Vite + React UI (hand-rolled CSS in src/styles.css; built into frontend/dist, served by Hono)
 ├── tests/
 │   ├── helpers/
 │   │   └── mocks.ts                    Shared mock factories

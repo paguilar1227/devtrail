@@ -1,14 +1,31 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
-import { Drawer, EntityLink, Status, Tag } from '../primitives';
-import { PROJECTS } from '../../lib/mock';
+import { Drawer, Status, Tag } from '../primitives';
+import { MarkdownPreview } from '../MarkdownPreview';
+import { getContent, pinContent, unpinContent } from '../../lib/api';
 import { fmtRel } from '../../lib/util';
 import type { DocumentItem } from '../../types';
 
 export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: () => void }) {
+  const qc = useQueryClient();
+  const fullQ = useQuery({
+    queryKey: ['content', doc.id, 'full'],
+    queryFn: () => getContent(doc.id),
+  });
+  const pinMut = useMutation({
+    mutationFn: () => (doc.pinned ? unpinContent(doc.id) : pinContent(doc.id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['content'] });
+    },
+  });
+
+  const item = fullQ.data;
+  const body = item?.content ?? '';
+
   return (
     <Drawer title={doc.title} onClose={onClose}>
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-        <Status status={doc.processing_status} />
+        <Status status={doc.processing_status} error={doc.processing_error} />
         <Tag>{doc.type}</Tag>
         <span className="subtle mono" style={{ fontSize: 10.5 }}>
           {doc.size}
@@ -43,32 +60,26 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
         <span className="subtle mono">projects</span>
         <span className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
           {doc.project_ids.map(id => (
-            <Tag key={id}>{PROJECTS.find(p => p.id === id)?.name || id}</Tag>
+            <Tag key={id}>{id.slice(0, 8)}</Tag>
           ))}
         </span>
       </div>
 
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-        <a className="btn btn-sm btn-primary" href={doc.source_url || '#'} target="_blank" rel="noreferrer">
-          <Icons.ExternalLink size={12} /> Open original
-        </a>
-        <button className="btn btn-sm">
-          <Icons.Upload size={12} /> Replace
-        </button>
-        <button className="btn btn-sm">
-          <Icons.Tag size={12} /> Edit tags
-        </button>
-        <button className="btn btn-sm">
+        {doc.source_url ? (
+          <a className="btn btn-sm btn-primary" href={doc.source_url} target="_blank" rel="noreferrer">
+            <Icons.ExternalLink size={12} /> Open original
+          </a>
+        ) : null}
+        <button
+          className="btn btn-sm"
+          onClick={() => pinMut.mutate()}
+          disabled={pinMut.isPending}
+        >
           <Icons.Pin size={12} /> {doc.pinned ? 'Unpin' : 'Pin'}
         </button>
         <span className="subtle mono" style={{ marginLeft: 'auto', fontSize: 10.5 }}>
-          {doc.type === 'binary'
-            ? doc.file_hash
-              ? `cached locally · ${doc.size}`
-              : doc.size
-            : doc.type === 'url'
-              ? 'fetched · cached'
-              : 'note-as-doc'}
+          {doc.size}
         </span>
       </div>
       <div
@@ -78,32 +89,26 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
           background: 'var(--glass-bg-soft)',
           borderRadius: 10,
           border: '0.5px solid var(--hairline)',
+          maxHeight: 480,
+          overflowY: 'auto',
         }}
       >
-        <h2>Extracted text · first chunk</h2>
-        <p>
-          The Claude Code <b>headless mode</b> exposes the full session lifecycle through a stable JSON-over-stdio protocol. This makes
-          it suitable for embedding inside agent runtimes, IDE plugins, or — as in ClaudePit — a long-lived web supervisor.
-        </p>
-        <p>
-          Authentication is handled via either <code>--auth-mode=cookie</code> (subscription cookie read from the OS keychain) or{' '}
-          <code>--auth-mode=key</code> (API key from environment). Cookie mode is preferred for desktop use because it inherits the
-          user's existing subscription and avoids creating a separate billing path.
-        </p>
-        <h3>Session protocol</h3>
-        <pre>{`> { "type": "input", "content": "..." }
-< { "type": "delta", "content": "..." }
-< { "type": "tool_use", "name": "...", "args": {...} }
-< { "type": "complete", "tokens": { "in": 123, "out": 456 } }`}</pre>
-        <p style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>
-          Showing chunk 1 of 7 · <a href="#">show more</a>
-        </p>
+        {fullQ.isLoading ? (
+          <div className="page-subtle">Loading content…</div>
+        ) : fullQ.error ? (
+          <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+            Failed to load content: {fullQ.error instanceof Error ? fullQ.error.message : String(fullQ.error)}
+          </div>
+        ) : !body ? (
+          <div className="page-subtle">No extracted text available.</div>
+        ) : (
+          <MarkdownPreview src={body} />
+        )}
       </div>
       <div className="divider" />
       <label className="field-label">Backlinks</label>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <EntityLink kind="note">ClaudePit — High-Level Concept</EntityLink>
-        <EntityLink kind="todo">Document headless mode quirks</EntityLink>
+      <div className="page-subtle" style={{ fontSize: 11 }}>
+        Backlink graph not yet wired.
       </div>
     </Drawer>
   );

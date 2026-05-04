@@ -55,7 +55,9 @@ export function CommandPalette({ onClose, onRoute }: Props) {
       { kind: 'action', id: 'new-project', title: 'Create new project', sub: 'shortcut · ⌘P', icon: <Icons.Plus size={13} />, action: () => {} },
       { kind: 'action', id: 'upload', title: 'Upload file…', sub: 'to current project', icon: <Icons.Upload size={13} />, action: () => {} },
       { kind: 'action', id: 'new-note', title: 'New note', sub: 'in current project', icon: <Icons.Note size={13} />, action: () => {} },
+      { kind: 'action', id: 'go-search', title: 'Go to Search', sub: 'shortcut · G then S', icon: <Icons.Search />, action: () => onRoute({ route: 'search' }) },
       { kind: 'action', id: 'go-inbox', title: 'Go to Inbox', sub: 'shortcut · G then I', icon: <Icons.Inbox size={13} />, action: () => onRoute({ route: 'inbox' }) },
+      { kind: 'action', id: 'go-activity', title: 'Go to Activity', sub: 'shortcut · G then A', icon: <Icons.Activity size={13} />, action: () => onRoute({ route: 'activity' }) },
       { kind: 'action', id: 'go-tags', title: 'Go to Tags', sub: 'shortcut · G then T', icon: <Icons.Tag size={13} />, action: () => onRoute({ route: 'tags' }) },
       { kind: 'action', id: 'toggle-theme', title: 'Toggle theme', sub: 'shortcut · ⌘⇧L', icon: <Icons.Moon size={13} />, action: () => {} },
     ];

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.env.local
 *.log
 coverage/
 .DS_Store
@@ -13,3 +14,4 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
 frontend/tsconfig.tsbuildinfo
+.playwright-mcp/

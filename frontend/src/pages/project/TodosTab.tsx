@@ -1,7 +1,9 @@
 import { Fragment, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
 import { BulkCheckbox, Checkbox, FilterChip, Priority, Tag } from '../../components/primitives';
-import { TODOS } from '../../lib/mock';
+import { archiveTodo, createTodo, listTodos, updateTodo } from '../../lib/api';
+import { toUiTodo } from '../../lib/view';
 import { cls, fmtRel, isOverdue } from '../../lib/util';
 import type { ActionDispatch, Project, Todo } from '../../types';
 
@@ -13,16 +15,45 @@ interface Props {
 type HierMode = 'hierarchy' | 'flat';
 
 export function TodosTab({ project, onAction }: Props) {
-  const all = TODOS[project.id] || [];
+  const qc = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['todos', 'project', project.id],
+    queryFn: () => listTodos({ project_id: project.id }),
+  });
+  const all = useMemo(() => (data ?? []).map(toUiTodo), [data]);
+
   const [hierMode, setHierMode] = useState<HierMode>('hierarchy');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [draft, setDraft] = useState('');
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['todos'] });
+    qc.invalidateQueries({ queryKey: ['project-counts'] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+
+  const createMut = useMutation({
+    mutationFn: (content: string) => createTodo({ content, project_id: project.id }),
+    onSuccess: invalidate,
+  });
+  const toggleMut = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) => updateTodo(id, { status }),
+    onSuccess: invalidate,
+  });
+  const archiveMut = useMutation({
+    mutationFn: (id: string) => archiveTodo(id),
+    onSuccess: invalidate,
+  });
 
   const groups = useMemo(() => {
     const open = all.filter(t => t.status !== 'done');
     const done = all.filter(t => t.status === 'done');
     return { open, done };
   }, [all]);
+
+  const overdueCount = all.filter(t => t.status !== 'done' && t.due_at && isOverdue(t.due_at)).length;
 
   const toggleSel = (id: string) =>
     setSelected(s => {
@@ -67,7 +98,13 @@ export function TodosTab({ project, onAction }: Props) {
           <BulkCheckbox checked={false} />
         </span>
       )}
-      <Checkbox checked={t.status === 'done'} />
+      <Checkbox
+        checked={t.status === 'done'}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          toggleMut.mutate({ id: t.id, status: t.status === 'done' ? 'not_started' : 'done' });
+        }}
+      />
       <div onClick={() => onAction({ kind: 'todo-detail', payload: t })}>
         <div className="nm">{t.title}</div>
         <div className="nm-meta">
@@ -110,12 +147,32 @@ export function TodosTab({ project, onAction }: Props) {
     return todos.filter(t => !t.parent_id).map(top => walk(top, 0));
   };
 
+  if (error) {
+    return <div className="page-subtle" style={{ color: 'var(--danger)' }}>Failed to load todos: {String((error as Error).message)}</div>;
+  }
+  if (isLoading) {
+    return <div className="page-subtle">Loading todos…</div>;
+  }
+
   return (
     <div>
       <div className="todo-input-row">
         <div className="field">
           <Icons.Plus />
-          <input placeholder={`Add a todo to ${project.name} — Enter to save, Tab to nest`} />
+          <input
+            placeholder={`Add a todo to ${project.name} — Enter to save, Tab to nest`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && draft.trim() && !createMut.isPending) {
+                e.preventDefault();
+                const content = draft.trim();
+                setDraft('');
+                createMut.mutate(content);
+              }
+            }}
+            disabled={createMut.isPending}
+          />
           <span className="depth-pill">
             <button className="active">Top</button>
             <button>Sub</button>
@@ -123,6 +180,11 @@ export function TodosTab({ project, onAction }: Props) {
         </div>
         <button className="btn">Add details</button>
       </div>
+      {createMut.error ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 4 }}>
+          Failed to create todo: {createMut.error instanceof Error ? createMut.error.message : String(createMut.error)}
+        </div>
+      ) : null}
 
       <div className="filter-bar">
         <FilterChip active>
@@ -132,7 +194,7 @@ export function TodosTab({ project, onAction }: Props) {
           Open <span style={{ marginLeft: 4 }}>{groups.open.length}</span>
         </FilterChip>
         <FilterChip>
-          Overdue <span style={{ marginLeft: 4 }}>3</span>
+          Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
         </FilterChip>
         <FilterChip>Today</FilterChip>
         <FilterChip>P1</FilterChip>
@@ -146,23 +208,29 @@ export function TodosTab({ project, onAction }: Props) {
         </span>
       </div>
 
-      <div className="todo-group">
-        <div className="todo-group-h">
-          <Icons.ChevronDown size={11} className="chev" />
-          <span>Open</span>
-          <span className="ct">{groups.open.length}</span>
-        </div>
-        {hierMode === 'hierarchy' ? renderHierGroup(groups.open) : groups.open.map(t => renderTodo(t, 0))}
-      </div>
+      {all.length === 0 ? (
+        <div className="page-subtle">No todos in this project yet.</div>
+      ) : (
+        <>
+          <div className="todo-group">
+            <div className="todo-group-h">
+              <Icons.ChevronDown size={11} className="chev" />
+              <span>Open</span>
+              <span className="ct">{groups.open.length}</span>
+            </div>
+            {hierMode === 'hierarchy' ? renderHierGroup(groups.open) : groups.open.map(t => renderTodo(t, 0))}
+          </div>
 
-      <div className="todo-group">
-        <div className="todo-group-h">
-          <Icons.ChevronDown size={11} className="chev" />
-          <span>Done</span>
-          <span className="ct">{groups.done.length}</span>
-        </div>
-        {hierMode === 'hierarchy' ? renderHierGroup(groups.done) : groups.done.map(t => renderTodo(t, 0))}
-      </div>
+          <div className="todo-group">
+            <div className="todo-group-h">
+              <Icons.ChevronDown size={11} className="chev" />
+              <span>Done</span>
+              <span className="ct">{groups.done.length}</span>
+            </div>
+            {hierMode === 'hierarchy' ? renderHierGroup(groups.done) : groups.done.map(t => renderTodo(t, 0))}
+          </div>
+        </>
+      )}
 
       {selected.size > 0 ? (
         <div className="bulk-bar">
@@ -172,9 +240,29 @@ export function TodosTab({ project, onAction }: Props) {
           <button className="btn btn-sm">Set due date</button>
           <button className="btn btn-sm">Tag</button>
           <button className="btn btn-sm">Move</button>
-          <button className="btn btn-sm">Mark done</button>
+          <button
+            className="btn btn-sm"
+            disabled={toggleMut.isPending}
+            onClick={() => {
+              const ids = Array.from(selected);
+              setSelected(new Set());
+              ids.forEach((id) => toggleMut.mutate({ id, status: 'done' }));
+            }}
+          >
+            Mark done
+          </button>
           <span className="sep" />
-          <button className="btn btn-sm btn-danger">Archive</button>
+          <button
+            className="btn btn-sm btn-danger"
+            disabled={archiveMut.isPending}
+            onClick={() => {
+              const ids = Array.from(selected);
+              setSelected(new Set());
+              ids.forEach((id) => archiveMut.mutate(id));
+            }}
+          >
+            Archive
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>
             Clear
           </button>

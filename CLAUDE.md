@@ -32,7 +32,7 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | Layer | Tech |
 |------|------|
 | API | Hono on Node 20, served by `@hono/node-server` |
-| Web UI | Vite + React + Tailwind, built into `frontend/dist`, served statically by Hono |
+| Web UI | Vite + React, hand-rolled CSS in `frontend/src/styles.css`, built into `frontend/dist`, served statically by Hono |
 | MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
 | Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
 | Blob storage | Azure Blob Storage |
@@ -74,11 +74,19 @@ backend/                  # Hono API + MCP server (Node 20)
 ├── tsconfig.json
 └── vitest.config.ts
 
-frontend/                 # Vite + React + Tailwind web client
+frontend/                 # Vite + React web client (hand-rolled CSS in src/styles.css)
 ├── src/
+├── tests/e2e/             # Playwright workflow suite (workflows.spec.ts)
 ├── index.html
 ├── package.json
+├── playwright.config.ts
 └── vite.config.ts
+
+shared/                   # @open-brain/shared — Zod schemas + TS types on the wire
+├── src/schemas.ts         # Single source of truth for request/response shapes
+├── src/index.ts           # re-exports
+├── package.json
+└── tsconfig.json
 
 migrations/               # SQL migrations (applied at backend startup)
 scripts/                  # deploy.sh + live-e2e.sh + diagnostics
@@ -128,12 +136,13 @@ src/
 │   ├── azure-foundry-llm.ts        # Chat completions (gpt-5-4)
 │   ├── azure-foundry-responses.ts  # Responses API (gpt-5-4-pro)
 │   ├── pdf-extract.ts      # pdf-parse v2 PDFParse class
-│   ├── youtube-transcript.ts
-│   ├── firecrawl.ts        # HTML extraction fallback
+│   ├── supadata.ts         # YouTube transcript via Supadata (single-call, no fallback)
+│   ├── firecrawl.ts        # HTML extraction
 │   ├── xai.ts              # X/Twitter live-search via Grok
+│   ├── stub.ts             # Deterministic in-memory LLM/embedding fakes for stub mode
 │   └── json-utils.ts       # extractJson() — strips markdown fences from LLM output
 ├── mcp/
-│   └── server.ts           # 20 MCP tools (see "MCP tools" below)
+│   └── server.ts           # 21 MCP tools (see "MCP tools" below)
 └── storage/
     └── blob.ts             # Azure Blob upload/download
 ```
@@ -142,7 +151,7 @@ src/
 
 Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `backend/src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
 
-## MCP tools (20 total — defined in `backend/src/mcp/server.ts`)
+## MCP tools (21 total — defined in `backend/src/mcp/server.ts`)
 
 Read:
 1. `list_projects` — list all (filter by status optional)
@@ -159,14 +168,15 @@ Write:
 10. `create_project`
 11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`)
 12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags), project (name/description/status)
-13. `archive` — soft delete on content / todo / project
-14. `restore` — undo `archive`
-15. `add_comment` — add a comment to a todo
-16. `update_comment` — edit a comment body
-17. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
-18. `retry` — re-run a failed ingest (state must be `failed`)
-19. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
-20. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
+13. `replace` — archive an existing content item and create a v2 in its place; old row stamped `metadata.replaced_by`. Refuses pending rows. Text-only (REST handles binary replacement).
+14. `archive` — soft delete on content / todo / project
+15. `restore` — undo `archive`
+16. `add_comment` — add a comment to a todo
+17. `update_comment` — edit a comment body
+18. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
+19. `retry` — re-run a failed ingest (state must be `failed`)
+20. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
+21. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
 
 Hard delete is REST-only by design. Bulk ops, pin/unpin, and stats are REST-only — those are UI affordances rather than AI workflows. The MCP server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code) telling the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
 
@@ -214,7 +224,9 @@ cd frontend && npm run dev                   # frontend dev server (Vite, separa
 npm run build:all                            # full production build (backend dist/ + frontend dist/)
 ```
 
-There is **no separate e2e suite**. The integration tests in `backend/tests/integration/` already exercise the full app surface (REST + MCP) against mocked providers and an in-memory or test pg.
+Two test layers:
+- **Backend integration** (`backend/tests/integration/`): exercises the full REST + MCP surface against mocked providers and an in-memory/test pg. Fast, hermetic, no docker.
+- **Frontend workflow e2e** (`frontend/tests/e2e/workflows.spec.ts`): user-flow Playwright suite that round-trips through Vite → Hono → Postgres + Azurite via stub-mode providers, seeded with `seed-local.ts`. Shares the same stack as `npm run dev:up`.
 
 ### Plan-first
 
@@ -259,12 +271,18 @@ Confirm before:
 | Integration | `backend/tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
 | Integration | `backend/tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
 | Integration | `backend/tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
+| Workflow e2e | `frontend/tests/e2e/workflows.spec.ts` | ~12 happy-path user flows in Playwright against the seeded stub-mode stack (Postgres + Azurite + backend + Vite). globalSetup runs `docker compose up` + `seed-local.ts`. |
 
 Mocks live in `backend/tests/helpers/mocks.ts`. Add new tests at the appropriate layer when you change behavior. Bug fixes get a regression test.
 
-Run a single file (from `backend/`):
+Run a single backend file (from `backend/`):
 ```bash
 cd backend && npx vitest run tests/integration/rest-api.test.ts
+```
+
+Run the workflow e2e (from `frontend/`):
+```bash
+cd frontend && npx playwright test
 ```
 
 ## Known gotchas
@@ -295,7 +313,7 @@ cd backend && npx vitest run tests/integration/rest-api.test.ts
 
 ### URL ingestion
 
-- YouTube: tries direct scrape → Firecrawl → xAI as fallbacks. Only succeeds when one returns a transcript.
+- YouTube: Supadata single-call. Replaced the direct-scrape → Firecrawl → xAI fallback chain (commit `aab7f16`); failure surfaces as `YOUTUBE_TRANSCRIPT_MISS:` rather than retrying.
 - X/Twitter: xAI Grok live-search primary, Firecrawl stealth fallback.
 - PDFs: downloaded as bytes → text via `pdf-parse` v2 PDFParse class. Watch for the v2 API change — older docs reference a function import that no longer exists.
 - HTML: Firecrawl markdown extraction. Reject results shorter than 300 chars or matching error/placeholder titles.

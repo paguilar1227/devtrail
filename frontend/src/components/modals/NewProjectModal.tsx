@@ -1,37 +1,70 @@
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../primitives';
-import { cls } from '../../lib/util';
-import type { ProjectAccent } from '../../types';
-
-const ACCENTS: ProjectAccent[] = ['violet', 'magenta', 'indigo', 'cyan', 'neutral'];
+import { createProject } from '../../lib/api';
 
 export function NewProjectModal({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const mut = useMutation({
+    mutationFn: () => createProject({ name: name.trim(), description: description.trim() || undefined }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      qc.invalidateQueries({ queryKey: ['project-counts'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      onClose();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+  });
+
+  const submit = () => {
+    setError(null);
+    if (!name.trim()) {
+      setError('Name is required.');
+      return;
+    }
+    mut.mutate();
+  };
+
   return (
     <Modal
       title="New project"
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary">Create</button>
+          <button className="btn" onClick={onClose} disabled={mut.isPending}>Cancel</button>
+          <button className="btn btn-primary" onClick={submit} disabled={mut.isPending || !name.trim()}>
+            {mut.isPending ? 'Creating…' : 'Create'}
+          </button>
         </>
       }
     >
       <label className="field-label">Name</label>
-      <input className="input" placeholder="e.g. Mobile Companion" autoFocus />
+      <input
+        className="input"
+        placeholder="e.g. Mobile Companion"
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+      />
       <div style={{ height: 12 }} />
       <label className="field-label">Description</label>
-      <textarea className="input" rows={3} placeholder="One line about what this project is for…" />
-      <div style={{ height: 12 }} />
-      <label className="field-label">Accent color</label>
-      <div className="row-flex gap-2">
-        {ACCENTS.map(c => (
-          <span
-            key={c}
-            className={cls('sb-proj-dot', c)}
-            style={{ width: 22, height: 22, borderRadius: 6, cursor: 'default' }}
-          />
-        ))}
-      </div>
+      <textarea
+        className="input"
+        rows={3}
+        placeholder="One line about what this project is for…"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      {error ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 8 }}>
+          {error}
+        </div>
+      ) : null}
     </Modal>
   );
 }

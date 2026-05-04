@@ -1,7 +1,9 @@
 import { Fragment, useMemo, useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { FilterChip } from '../components/primitives';
-import { ACTIVITY } from '../lib/mock';
+import { listActivity, listProjects } from '../lib/api';
+import { toUiActivity } from '../lib/view';
 import { cls, fmtRel } from '../lib/util';
 import type { ActivityEvent, ActivityKind } from '../types';
 
@@ -9,7 +11,22 @@ type FilterKind = 'all' | ActivityKind;
 
 export function ActivityPage() {
   const [kind, setKind] = useState<FilterKind>('all');
-  const all = ACTIVITY;
+  const [activityQ, projectsQ] = useQueries({
+    queries: [
+      { queryKey: ['activity', 'page', 200], queryFn: () => listActivity({ limit: 200 }) },
+      { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
+    ],
+  });
+
+  const projectsById = useMemo(
+    () => new Map((projectsQ.data ?? []).map((p) => [p.id, p])),
+    [projectsQ.data],
+  );
+  const all = useMemo(
+    () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
+    [activityQ.data, projectsById],
+  );
+
   const filtered = kind === 'all' ? all : all.filter(a => a.kind === kind);
   const grouped = useMemo(() => {
     const groups: Record<string, ActivityEvent[]> = {};
@@ -21,6 +38,17 @@ export function ActivityPage() {
     });
     return groups;
   }, [filtered]);
+
+  if (activityQ.error || projectsQ.error) {
+    const err = activityQ.error || projectsQ.error;
+    return (
+      <div className="page">
+        <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+          Failed to load activity: {err instanceof Error ? err.message : String(err)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page page-narrow">
@@ -47,28 +75,34 @@ export function ActivityPage() {
           Comments
         </FilterChip>
       </div>
-      <div className="row-list" style={{ background: 'transparent', border: 'none' }}>
-        {Object.entries(grouped).map(([day, items]) => (
-          <Fragment key={day}>
-            <div className="activity-day">{day}</div>
-            {items.map(a => (
-              <div key={a.id} className="activity-row">
-                <div className={cls('activity-icon', a.kind)}>
-                  {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
+      {activityQ.isLoading ? (
+        <div className="page-subtle">Loading activity…</div>
+      ) : all.length === 0 ? (
+        <div className="page-subtle">No activity yet.</div>
+      ) : (
+        <div className="row-list" style={{ background: 'transparent', border: 'none' }}>
+          {Object.entries(grouped).map(([day, items]) => (
+            <Fragment key={day}>
+              <div className="activity-day">{day}</div>
+              {items.map(a => (
+                <div key={a.id} className="activity-row">
+                  <div className={cls('activity-icon', a.kind)}>
+                    {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
+                  </div>
+                  <div className="text">
+                    {a.kind === 'ingest' ? 'Ingested ' : a.kind === 'edit' ? 'Edited ' : 'Commented on '}
+                    <b>{a.title}</b>
+                    <span className="subtle mono" style={{ fontSize: 10, marginLeft: 8 }}>
+                      {a.entity_kind} · {a.project}
+                    </span>
+                  </div>
+                  <span className="ts">{fmtRel(a.at)}</span>
                 </div>
-                <div className="text">
-                  {a.kind === 'ingest' ? 'Ingested ' : a.kind === 'edit' ? 'Edited ' : 'Commented on '}
-                  <b>{a.title}</b>
-                  <span className="subtle mono" style={{ fontSize: 10, marginLeft: 8 }}>
-                    {a.entity_kind} · {a.project}
-                  </span>
-                </div>
-                <span className="ts">{fmtRel(a.at)}</span>
-              </div>
-            ))}
-          </Fragment>
-        ))}
-      </div>
+              ))}
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

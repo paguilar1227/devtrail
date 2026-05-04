@@ -1,13 +1,39 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { FilterChip } from '../components/primitives';
 import { SearchResultsList } from '../components/SearchResultsList';
-import { SEARCH_HITS } from '../lib/mock';
+import { listProjects, search } from '../lib/api';
+import { toUiSearchHit } from '../lib/view';
 
-export function SearchPage({ initialQuery = 'subscription cookies' }: { initialQuery?: string }) {
+export function SearchPage({ initialQuery = '' }: { initialQuery?: string }) {
   const [q, setQ] = useState(initialQuery);
-  const hits = SEARCH_HITS;
-  const [scope, setScope] = useState<'all' | 'claudepit'>('all');
+  const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
+  const [scope, setScope] = useState<string>('all');
+
+  const { data: projects } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
+  const projectsById = useMemo(
+    () => new Map((projects ?? []).map((p) => [p.id, p])),
+    [projects],
+  );
+
+  const { data: hitsApi, isFetching, error } = useQuery({
+    queryKey: ['search', submittedQuery, scope],
+    queryFn: () =>
+      search({
+        query: submittedQuery,
+        project_id: scope === 'all' ? undefined : scope,
+        limit: 20,
+      }),
+    enabled: submittedQuery.trim().length > 0,
+  });
+  const hits = useMemo(
+    () => (hitsApi ?? []).map((h) => toUiSearchHit(h, projectsById)),
+    [hitsApi, projectsById],
+  );
+
+  const onSubmit = () => setSubmittedQuery(q);
+
   return (
     <div className="page page-narrow">
       <div className="proj-hero">
@@ -21,27 +47,48 @@ export function SearchPage({ initialQuery = 'subscription cookies' }: { initialQ
       <div className="todo-input-row">
         <div className="field">
           <Icons.Search />
-          <input value={q} onChange={e => setQ(e.target.value)} />
+          <input
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && onSubmit()}
+            placeholder="Search across notes, documents, and todos…"
+          />
         </div>
-        <button className="btn">Search</button>
+        <button className="btn" onClick={onSubmit}>Search</button>
       </div>
       <div className="filter-bar">
         <FilterChip active={scope === 'all'} onClick={() => setScope('all')}>
           All projects
         </FilterChip>
-        <FilterChip active={scope === 'claudepit'} onClick={() => setScope('claudepit')}>
-          ClaudePit
-        </FilterChip>
+        {(projects ?? []).filter(p => p.status === 'active').map(p => (
+          <FilterChip key={p.id} active={scope === p.id} onClick={() => setScope(p.id)}>
+            {p.name}
+          </FilterChip>
+        ))}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
           <FilterChip active>vector</FilterChip>
           <FilterChip active>graph</FilterChip>
           <FilterChip>fts</FilterChip>
         </span>
       </div>
-      <div className="subtle mono" style={{ fontSize: 11, marginBottom: 10 }}>
-        {hits.length} results · 184ms
-      </div>
-      <SearchResultsList hits={hits} />
+      {error ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+          Search failed: {error instanceof Error ? error.message : String(error)}
+        </div>
+      ) : !submittedQuery.trim() ? (
+        <div className="page-subtle">Type a query and press Enter.</div>
+      ) : isFetching ? (
+        <div className="page-subtle">Searching…</div>
+      ) : hits.length === 0 ? (
+        <div className="page-subtle">No results for "{submittedQuery}".</div>
+      ) : (
+        <>
+          <div className="subtle mono" style={{ fontSize: 11, marginBottom: 10 }}>
+            {hits.length} results
+          </div>
+          <SearchResultsList hits={hits} />
+        </>
+      )}
     </div>
   );
 }

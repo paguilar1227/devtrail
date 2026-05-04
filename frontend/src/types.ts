@@ -73,9 +73,7 @@ export interface TodoComment {
 export interface TagRow {
   name: string;
   total: number;
-  doc: number;
-  note: number;
-  todo: number;
+  by_type: { document: number; note: number; todo: number };
 }
 
 export type ActivityKind = 'ingest' | 'edit' | 'comment';
@@ -149,7 +147,7 @@ export type RouteName = Route['route'];
 
 export type ModalKind =
   | { kind: 'upload'; payload: Project | null }
-  | { kind: 'note-edit'; payload: Note | null }
+  | { kind: 'note-edit'; payload: Note | null; projectId?: string }
   | { kind: 'doc-read'; payload: DocumentItem }
   | { kind: 'todo-detail'; payload: Todo }
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }

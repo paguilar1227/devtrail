@@ -1,4 +1,66 @@
 import { Hono } from 'hono';
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import {
+  ActivityListQuerySchema,
+  ActivityListResponseSchema,
+  BulkResponseSchema,
+  ContentBulkRequestSchema,
+  ContentCreateRequestSchema,
+  ContentTypeSchema,
+  ContentEditBodyRequestSchema,
+  ContentGetResponseSchema,
+  ContentIngestAckSchema,
+  ContentItemSchema,
+  ContentListQuerySchema,
+  ContentListResponseSchema,
+  ContentReplaceAckSchema,
+  ContentReplaceRequestSchema,
+  ContentStatusResponseSchema,
+  ContentUpdateRequestSchema,
+  DiagnosticsBackfillRequestSchema,
+  DiagnosticsBackfillResponseSchema,
+  DiagnosticsEdgesResponseSchema,
+  DiagnosticsEntitiesQuerySchema,
+  DiagnosticsEntitiesResponseSchema,
+  ErrorResponseSchema,
+  FindMentionsRequestSchema,
+  FindMentionsResponseSchema,
+  HardDeleteQuerySchema,
+  IdParamSchema,
+  CommentIdParamSchema,
+  OkResponseSchema,
+  ProjectCountsListResponseSchema,
+  ProjectCreateRequestSchema,
+  ProjectGetResponseSchema,
+  ProjectListQuerySchema,
+  ProjectListResponseSchema,
+  ProjectResponseSchema,
+  ProjectUpdateRequestSchema,
+  RagRequestSchema,
+  RagResponseSchema,
+  SearchRequestSchema,
+  SearchResponseSchema,
+  StatsQuerySchema,
+  StatsSchema,
+  TagDeleteResponseSchema,
+  TagListQuerySchema,
+  TagListResponseSchema,
+  TagNameParamSchema,
+  TagRenameRequestSchema,
+  TagRenameResponseSchema,
+  TodoBulkRequestSchema,
+  TodoCommentCreateRequestSchema,
+  TodoCommentListResponseSchema,
+  TodoCommentResponseSchema,
+  TodoCreateRequestSchema,
+  TodoGetResponseSchema,
+  TodoListQuerySchema,
+  TodoListResponseSchema,
+  TodoResponseSchema,
+  TodoUpdateRequestSchema,
+  UrlIngestAckSchema,
+  UrlIngestRequestSchema,
+} from '@open-brain/shared';
 import { cors } from 'hono/cors';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -18,10 +80,24 @@ import type { ActivityKind } from './services/activity.js';
 import * as statsSvc from './services/stats.js';
 import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
-import { openapiHandler, swaggerUiHandler } from './openapi.js';
+import { swaggerUiHandler } from './openapi.js';
 
 export function createApp(deps: ServiceDeps) {
-  const app = new Hono();
+  // defaultHook: any Zod failure (request body, query, params) emits a flat
+  // `{error: string}` so it matches the shape every other 400 in this app
+  // returns. Without this, OpenAPIHono returns a verbose ZodError object
+  // that breaks ad-hoc clients and the integration tests.
+  const app = new OpenAPIHono({
+    defaultHook: (result, c) => {
+      if (!result.success) {
+        const issues = result.error.issues;
+        const first = issues[0];
+        const path = first?.path?.length ? first.path.join('.') : 'request';
+        const message = first?.message ?? 'Invalid request';
+        return c.json({ error: `Invalid ${path}: ${message}` }, 400);
+      }
+    },
+  });
 
   app.use('*', cors({ origin: '*' }));
 
@@ -38,969 +114,1570 @@ export function createApp(deps: ServiceDeps) {
   app.get('/health', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
 
   // ----- OpenAPI spec + Swagger UI (auth-gated by /api/* middleware above) -----
-  app.get('/api/openapi.json', () => openapiHandler());
+  // The spec is auto-generated from each `app.openapi(...)` route's Zod
+  // schemas — no hand-rolled JSON to drift from the actual handlers.
+  app.doc31('/api/openapi.json', {
+    openapi: '3.1.0',
+    info: {
+      title: 'Open Brain API',
+      version: '2.0.0',
+      description:
+        'Personal knowledge base + productivity tool. Single user. ' +
+        'Hybrid semantic + entity-graph search across documents, notes, and todos. ' +
+        'Auth: `Authorization: Bearer <key>` or `?key=<key>` query param.',
+    },
+    servers: [
+      { url: '/', description: 'Current host' },
+    ],
+  });
   app.get('/api/docs', () => swaggerUiHandler());
 
   // ==========================================================================
   // PROJECTS
   // ==========================================================================
-  app.get('/api/v1/projects', async (c) => {
-    const status = c.req.query('status') ?? undefined;
-    const pinned = parsePinned(c.req.query('pinned'));
-    if (pinned === 'invalid') {
-      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
-    }
-    const projects = await projectsSvc.listProjects(deps, status, pinned);
-    return c.json({ projects });
-  });
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/projects',
+      tags: ['Projects'],
+      summary: 'List projects (optional status / pinned filters)',
+      request: { query: ProjectListQuerySchema },
+      responses: {
+        200: {
+          description: 'Project list',
+          content: { 'application/json': { schema: ProjectListResponseSchema } },
+        },
+        400: {
+          description: 'Invalid query parameter',
+          content: { 'application/json': { schema: ErrorResponseSchema } },
+        },
+        401: {
+          description: 'Unauthorized',
+          content: { 'application/json': { schema: ErrorResponseSchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const { status, pinned } = c.req.valid('query');
+      const rows = await projectsSvc.listProjects(deps, status, pinned);
+      // Coerce Date columns to ISO strings so the response matches the wire
+      // schema (Postgres returns JS Date objects; JSON.stringify would do this
+      // anyway, but doing it explicitly keeps the openapi parser happy).
+      const projects = rows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        status: p.status,
+        pinned_at: p.pinned_at ? p.pinned_at.toISOString() : null,
+        created_at: p.created_at.toISOString(),
+        updated_at: p.updated_at.toISOString(),
+      }));
+      return c.json({ projects }, 200);
+    },
+  );
 
-  app.post('/api/v1/projects', async (c) => {
-    const body = await c.req.json<{ name: string; description?: string }>();
-    if (!body.name) return c.json({ error: 'name is required' }, 400);
-    const project = await projectsSvc.createProject(deps, body.name, body.description ?? null);
-    return c.json({ project }, 201);
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/projects',
+      tags: ['Projects'],
+      summary: 'Create a project',
+      request: {
+        body: { content: { 'application/json': { schema: ProjectCreateRequestSchema } } },
+      },
+      responses: {
+        201: {
+          description: 'Project created',
+          content: { 'application/json': { schema: ProjectResponseSchema } },
+        },
+        400: { description: 'Invalid body', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      const project = await projectsSvc.createProject(deps, body.name, body.description ?? null);
+      return c.json({ project: serializeProject(project) }, 201);
+    },
+  );
 
-  app.get('/api/v1/projects/:id', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const project = await projectsSvc.getProject(deps, id);
-    if (!project) return c.json({ error: 'Not found' }, 404);
-    return c.json({ project });
-  });
+  // /projects/counts must come BEFORE /projects/:id so the param route
+  // doesn't shadow the static "counts" path. First route written in the
+  // OpenAPIHono+Zod style — input/output validation + auto-OpenAPI emission.
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/projects/counts',
+      tags: ['Projects'],
+      summary: 'Per-project doc/note/todo counts (one row per project)',
+      responses: {
+        200: {
+          description: 'Project counts',
+          content: { 'application/json': { schema: ProjectCountsListResponseSchema } },
+        },
+        401: {
+          description: 'Unauthorized',
+          content: { 'application/json': { schema: ErrorResponseSchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const counts = await projectsSvc.listProjectCounts(deps);
+      return c.json({ counts }, 200);
+    },
+  );
 
-  app.put('/api/v1/projects/:id', async (c) => {
-    const body = await c.req.json<{ name?: string; description?: string; status?: string }>();
-    const project = await projectsSvc.updateProject(deps, c.req.param('id'), body);
-    if (!project) return c.json({ error: 'Not found' }, 404);
-    return c.json({ project });
-  });
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/projects/{id}',
+      tags: ['Projects'],
+      summary: 'Get a project by id',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Project', content: { 'application/json': { schema: ProjectGetResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const project = await projectsSvc.getProject(deps, id);
+      if (!project) return c.json({ error: 'Not found' }, 404);
+      return c.json({ project: serializeProject(project) }, 200);
+    },
+  );
 
-  app.delete('/api/v1/projects/:id', async (c) => {
-    const hard = c.req.query('hard') === 'true';
-    if (hard) {
-      await projectsSvc.deleteProjectHard(deps, c.req.param('id'));
-      return c.json({ ok: true, mode: 'hard' });
-    }
-    await projectsSvc.archiveProject(deps, c.req.param('id'));
-    return c.json({ ok: true, mode: 'archived' });
-  });
+  app.openapi(
+    createRoute({
+      method: 'put',
+      path: '/api/v1/projects/{id}',
+      tags: ['Projects'],
+      summary: 'Update a project',
+      request: {
+        params: IdParamSchema,
+        body: { content: { 'application/json': { schema: ProjectUpdateRequestSchema } } },
+      },
+      responses: {
+        200: { description: 'Updated project', content: { 'application/json': { schema: ProjectGetResponseSchema } } },
+        400: { description: 'Invalid body', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const body = c.req.valid('json');
+      const project = await projectsSvc.updateProject(deps, id, body);
+      if (!project) return c.json({ error: 'Not found' }, 404);
+      return c.json({ project: serializeProject(project) }, 200);
+    },
+  );
 
-  app.post('/api/v1/projects/:id/restore', async (c) => {
-    await projectsSvc.unarchiveProject(deps, c.req.param('id'));
-    return c.json({ ok: true });
-  });
+  app.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/api/v1/projects/{id}',
+      tags: ['Projects'],
+      summary: 'Archive (default) or hard-delete a project',
+      request: { params: IdParamSchema, query: HardDeleteQuerySchema },
+      responses: {
+        200: { description: 'Deleted', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const { hard } = c.req.valid('query');
+      if (hard) {
+        await projectsSvc.deleteProjectHard(deps, id);
+        return c.json({ ok: true, mode: 'hard' as const }, 200);
+      }
+      await projectsSvc.archiveProject(deps, id);
+      return c.json({ ok: true, mode: 'archived' as const }, 200);
+    },
+  );
 
-  app.post('/api/v1/projects/:id/pin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await projectsSvc.pinProject(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: true });
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/projects/{id}/restore',
+      tags: ['Projects'],
+      summary: 'Restore an archived project',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Restored', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      await projectsSvc.unarchiveProject(deps, id);
+      return c.json({ ok: true }, 200);
+    },
+  );
 
-  app.post('/api/v1/projects/:id/unpin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await projectsSvc.unpinProject(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: false });
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/projects/{id}/pin',
+      tags: ['Projects'],
+      summary: 'Pin a project',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Pinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await projectsSvc.pinProject(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/projects/{id}/unpin',
+      tags: ['Projects'],
+      summary: 'Unpin a project',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Unpinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await projectsSvc.unpinProject(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true }, 200);
+    },
+  );
 
   // ==========================================================================
   // CONTENT ITEMS (documents + notes)
   // ==========================================================================
-  app.get('/api/v1/content', async (c) => {
-    const type = c.req.query('type') as 'document' | 'note' | undefined;
-    const project_id = c.req.query('project_id') ?? undefined;
-    const tags = c.req.query('tags')?.split(',').filter(Boolean);
-    const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
-    const include_archived = c.req.query('include_archived') === 'true';
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/content',
+      tags: ['Content'],
+      summary: 'List content items',
+      request: { query: ContentListQuerySchema },
+      responses: {
+        200: { description: 'Content items', content: { 'application/json': { schema: ContentListResponseSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const q = c.req.valid('query');
+      const tags = q.tags?.split(',').filter(Boolean);
 
-    // ?processing_status=pending,failed → ['pending','failed']. Validates
-    // against the enum so a typo returns 400 instead of an SQL error.
-    let processing_status: Array<'pending' | 'ready' | 'failed'> | undefined;
-    const psRaw = c.req.query('processing_status');
-    if (psRaw) {
-      const values = psRaw.split(',').map((s) => s.trim()).filter(Boolean);
-      const allowed = new Set(['pending', 'ready', 'failed']);
-      const bad = values.filter((v) => !allowed.has(v));
-      if (bad.length > 0) {
+      let processing_status: Array<'pending' | 'ready' | 'failed'> | undefined;
+      if (q.processing_status) {
+        const values = q.processing_status.split(',').map((s) => s.trim()).filter(Boolean);
+        const allowed = new Set(['pending', 'ready', 'failed']);
+        const bad = values.filter((v) => !allowed.has(v));
+        if (bad.length > 0) {
+          return c.json({
+            error: `Invalid processing_status value(s): ${bad.join(', ')}. Allowed: pending, ready, failed.`,
+          }, 400);
+        }
+        processing_status = values as Array<'pending' | 'ready' | 'failed'>;
+      }
+
+      const pinned = parsePinned(q.pinned);
+      if (pinned === 'invalid') {
+        return c.json({ error: `Invalid pinned: "${q.pinned}". Expected true/false.` }, 400);
+      }
+
+      const items = await contentSvc.listContentItems(deps, {
+        type: q.type,
+        project_id: q.project_id,
+        tags,
+        processing_status,
+        pinned,
+        limit: q.limit,
+        include_archived: q.include_archived,
+      });
+      return c.json({ items: items.map((it) => serializeContentItem(it as never, deps.blobStorage)) }, 200);
+    },
+  );
+
+  // POST /content accepts both JSON and multipart/form-data. The multipart
+  // shape is documented for OpenAPI consumers; the handler does its own
+  // dual-mode parsing because Zod can't validate File objects from parseBody.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content',
+      tags: ['Content'],
+      summary: 'Create a content item (JSON note or multipart upload)',
+      request: {
+        body: {
+          content: {
+            'application/json': { schema: ContentCreateRequestSchema },
+            'multipart/form-data': {
+              schema: z.object({
+                type: ContentTypeSchema,
+                content: z.string().optional(),
+                title: z.string().optional(),
+                project_ids: z.string().optional(),
+                tags: z.string().optional(),
+                file: z.unknown().optional(),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: 'Created (already ready)', content: { 'application/json': { schema: ContentIngestAckSchema } } },
+        202: { description: 'Accepted (processing)', content: { 'application/json': { schema: ContentIngestAckSchema } } },
+        400: { description: 'Invalid body', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const contentType = c.req.header('Content-Type') ?? '';
+      let type: 'document' | 'note';
+      let content: string | undefined;
+      let title: string | undefined;
+      let projectIds: string[] | undefined;
+      let tags: string[] | undefined;
+      let file: { data: Buffer; mimeType: string; filename: string } | undefined;
+
+      if (contentType.includes('multipart/form-data')) {
+        const body = await c.req.parseBody();
+        type = body.type as 'document' | 'note';
+        content = typeof body.content === 'string' ? body.content : undefined;
+        title = typeof body.title === 'string' ? body.title : undefined;
+        const pids = typeof body.project_ids === 'string' ? body.project_ids : undefined;
+        projectIds = pids ? pids.split(',').filter(Boolean) : undefined;
+        const tgs = typeof body.tags === 'string' ? body.tags : undefined;
+        tags = tgs ? tgs.split(',').filter(Boolean) : undefined;
+        const uploaded = body.file as File | undefined;
+        if (uploaded && uploaded.size > 0) {
+          file = {
+            data: Buffer.from(await uploaded.arrayBuffer()),
+            mimeType: resolveUploadMime(uploaded.type, uploaded.name),
+            filename: uploaded.name,
+          };
+        }
+      } else {
+        const body = await c.req.json<{
+          type: 'document' | 'note';
+          content?: string;
+          title?: string;
+          project_ids?: string[];
+          tags?: string[];
+        }>();
+        type = body.type;
+        content = body.content;
+        title = body.title;
+        projectIds = body.project_ids;
+        tags = body.tags;
+      }
+
+      if (!type || (type !== 'document' && type !== 'note')) {
+        return c.json({ error: 'type must be "document" or "note"' }, 400);
+      }
+      if (!content && !file) {
+        return c.json({ error: 'Must provide content or file' }, 400);
+      }
+
+      const started = await contentSvc.createContentItem(deps, {
+        type, content, title, projectIds, tags, file,
+      });
+      return c.json(
+        { id: started.id, status: started.status },
+        started.status === 'ready' ? 200 : 202,
+      );
+    },
+  );
+
+  // Ingest from URL — fetches & chunks a URL (YouTube, X, PDF, HTML, media).
+  // Mounted before /content/:id so routing doesn't treat "from-url" as an id.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/from-url',
+      tags: ['Content'],
+      summary: 'Ingest content from a URL',
+      request: { body: { content: { 'application/json': { schema: UrlIngestRequestSchema } } } },
+      responses: {
+        200: { description: 'Deduped or already ready', content: { 'application/json': { schema: UrlIngestAckSchema } } },
+        202: { description: 'Accepted', content: { 'application/json': { schema: UrlIngestAckSchema } } },
+        400: { description: 'Invalid URL or unfetchable', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      try {
+        const result = await urlIngestSvc.ingestFromUrl(deps, body.url, {
+          projectIds: body.project_ids,
+          tags: body.tags,
+          title: body.title,
+        });
+        const httpStatus = result.deduped || result.status === 'ready' ? 200 : 202;
         return c.json({
-          error: `Invalid processing_status value(s): ${bad.join(', ')}. Allowed: pending, ready, failed.`,
-        }, 400);
+          id: result.id,
+          title: result.title,
+          type: result.type,
+          source_url: result.source_url,
+          deduped: result.deduped,
+          url_type: result.url_type,
+          status: result.status,
+        }, httpStatus);
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
       }
-      processing_status = values as Array<'pending' | 'ready' | 'failed'>;
-    }
+    },
+  );
 
-    const pinned = parsePinned(c.req.query('pinned'));
-    if (pinned === 'invalid') {
-      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
-    }
+  // Slim polling endpoint for async ingest. Returns just the status fields
+  // and a chunk count — no content body, metadata, or embeddings.
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/content/{id}/status',
+      tags: ['Content'],
+      summary: 'Get ingest status (poll until ready/failed)',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Status', content: { 'application/json': { schema: ContentStatusResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const status = await contentSvc.getContentItemStatus(deps, id);
+      if (!status) return c.json({ error: 'Not found' }, 404);
+      return c.json(status, 200);
+    },
+  );
 
-    const items = await contentSvc.listContentItems(deps, {
-      type, project_id, tags, processing_status, pinned, limit, include_archived,
-    });
-    return c.json({ items: items.map((it) => stripAndSignContent(deps.blobStorage, it)) });
-  });
-
-  app.post('/api/v1/content', async (c) => {
-    // Accepts either JSON or multipart/form-data
-    const contentType = c.req.header('Content-Type') ?? '';
-    let type: 'document' | 'note';
-    let content: string | undefined;
-    let title: string | undefined;
-    let projectIds: string[] | undefined;
-    let tags: string[] | undefined;
-    let file: { data: Buffer; mimeType: string; filename: string } | undefined;
-
-    if (contentType.includes('multipart/form-data')) {
-      const body = await c.req.parseBody();
-      // Read type as-is and let the shared validator below catch missing/invalid.
-      // Older code silently defaulted to 'note', which masked client mistakes
-      // (a UI that forgot to send the form field would save documents as notes).
-      type = body.type as 'document' | 'note';
-      content = typeof body.content === 'string' ? body.content : undefined;
-      title = typeof body.title === 'string' ? body.title : undefined;
-      const pids = typeof body.project_ids === 'string' ? body.project_ids : undefined;
-      projectIds = pids ? pids.split(',').filter(Boolean) : undefined;
-      const tgs = typeof body.tags === 'string' ? body.tags : undefined;
-      tags = tgs ? tgs.split(',').filter(Boolean) : undefined;
-      const uploaded = body.file as File | undefined;
-      if (uploaded && uploaded.size > 0) {
-        file = {
-          data: Buffer.from(await uploaded.arrayBuffer()),
-          mimeType: resolveUploadMime(uploaded.type, uploaded.name),
-          filename: uploaded.name,
-        };
+  // Retry a failed ingest in place. State conflicts (ready/pending) → 409.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/retry',
+      tags: ['Content'],
+      summary: 'Retry a failed ingest',
+      request: { params: IdParamSchema },
+      responses: {
+        202: { description: 'Retrying', content: { 'application/json': { schema: ContentIngestAckSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        409: { description: 'State conflict (ready/pending)', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      try {
+        const result = await contentSvc.retryContentIngest(deps, id);
+        return c.json({ id: result.id, status: result.status }, 202);
+      } catch (err) {
+        if (err instanceof contentSvc.RetryStateError) {
+          if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+          return c.json({ error: err.message, code: err.code }, 409);
+        }
+        throw err;
       }
-    } else {
+    },
+  );
+
+  // Reprocess a healthy or previously failed content item.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/reprocess',
+      tags: ['Content'],
+      summary: 'Regenerate chunks/embeddings/metadata',
+      request: { params: IdParamSchema },
+      responses: {
+        202: { description: 'Reprocessing', content: { 'application/json': { schema: ContentIngestAckSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        409: { description: 'State conflict (pending)', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      try {
+        const result = await contentSvc.reprocessContent(deps, id);
+        return c.json({ id: result.id, status: result.status }, 202);
+      } catch (err) {
+        if (err instanceof contentSvc.ReprocessStateError) {
+          if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+          return c.json({ error: err.message, code: err.code }, 409);
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/content/{id}',
+      tags: ['Content'],
+      summary: 'Get a content item',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Content item', content: { 'application/json': { schema: ContentGetResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const item = await contentSvc.getContentItem(deps, id);
+      if (!item) return c.json({ error: 'Not found' }, 404);
+      return c.json({ item: serializeContentItem(item as never, deps.blobStorage) }, 200);
+    },
+  );
+
+  // Metadata-only update. Body edits live at POST /content/:id/edit-body.
+  app.openapi(
+    createRoute({
+      method: 'put',
+      path: '/api/v1/content/{id}',
+      tags: ['Content'],
+      summary: 'Update content metadata (title, projects, tags)',
+      request: {
+        params: IdParamSchema,
+        body: { content: { 'application/json': { schema: ContentUpdateRequestSchema } } },
+      },
+      responses: {
+        200: { description: 'Updated', content: { 'application/json': { schema: ContentGetResponseSchema } } },
+        400: { description: 'Invalid body', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
       const body = await c.req.json<{
-        type: 'document' | 'note';
-        content?: string;
         title?: string;
+        content?: string;
         project_ids?: string[];
         tags?: string[];
       }>();
-      type = body.type;
-      content = body.content;
-      title = body.title;
-      projectIds = body.project_ids;
-      tags = body.tags;
-    }
-
-    if (!type || (type !== 'document' && type !== 'note')) {
-      return c.json({ error: 'type must be "document" or "note"' }, 400);
-    }
-    if (!content && !file) {
-      return c.json({ error: 'Must provide content or file' }, 400);
-    }
-
-    const started = await contentSvc.createContentItem(deps, {
-      type, content, title, projectIds, tags, file,
-    });
-    // Async contract: return id + status immediately. Background pipeline
-    // updates the row (and flips processing_status to 'ready' or 'failed')
-    // when it lands. Text-only notes typically reach 'ready' before the
-    // client even receives the response, so we re-fetch and report the
-    // current status to keep dedup hits and trivial cases honest.
-    return c.json({
-      id: started.id,
-      status: started.status,
-    }, started.status === 'ready' ? 200 : 202);
-  });
-
-  // Ingest from URL — fetches & chunks a URL (YouTube, X, PDF, HTML, media)
-  // Lives before /content/:id so routing doesn't treat "from-url" as an id.
-  app.post('/api/v1/content/from-url', async (c) => {
-    const body = await c.req.json<{
-      url: string;
-      project_ids?: string[];
-      tags?: string[];
-      title?: string;
-    }>();
-    if (!body.url) return c.json({ error: 'url is required' }, 400);
-    try {
-      const result = await urlIngestSvc.ingestFromUrl(deps, body.url, {
+      if (body.content !== undefined) {
+        return c.json({
+          error: 'Body edits are not allowed on PUT /content/:id. Use POST /content/:id/edit-body instead (async, gated by body-immutability rule).',
+        }, 400);
+      }
+      const item = await contentSvc.updateContentItem(deps, id, {
+        title: body.title,
         projectIds: body.project_ids,
         tags: body.tags,
-        title: body.title,
       });
-      // Async contract: return id immediately. The completion promise runs
-      // in the background. Status code:
-      //   200 — dedup hit OR row already 'ready' (text-only that finished fast)
-      //   202 — accepted, processing in background
-      const httpStatus = result.deduped || result.status === 'ready' ? 200 : 202;
-      return c.json({
-        id: result.id,
-        title: result.title,
-        type: result.type,
-        source_url: result.source_url,
-        deduped: result.deduped,
-        url_type: result.url_type,
-        status: result.status,
-      }, httpStatus);
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
-    }
-  });
+      if (!item) return c.json({ error: 'Not found' }, 404);
+      return c.json({ item: serializeContentItem(item as never, deps.blobStorage) }, 200);
+    },
+  );
 
-  // Slim polling endpoint for async ingest. Returns just the status fields
-  // and a chunk count — no content body, metadata, or embeddings — so a UI
-  // polling every second on a multi-MB PDF doesn't burn bandwidth refetching
-  // the full row each tick. Mounted before /content/:id so :id doesn't
-  // capture "status" as the literal id "status".
-  app.get('/api/v1/content/:id/status', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const status = await contentSvc.getContentItemStatus(deps, id);
-    if (!status) return c.json({ error: 'Not found' }, 404);
-    return c.json(status);
-  });
-
-  // Retry a failed ingest in place. 202 + {id, status:'pending'}. The
-  // background pipeline flips status to 'ready' or 'failed' the same way
-  // create does. State conflicts (ready/pending) → 409 so the client knows
-  // the row is healthy or already running, not just "ok done."
-  app.post('/api/v1/content/:id/retry', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    try {
-      const result = await contentSvc.retryContentIngest(deps, id);
-      return c.json({ id: result.id, status: result.status }, 202);
-    } catch (err) {
-      if (err instanceof contentSvc.RetryStateError) {
-        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
-        return c.json({ error: err.message, code: err.code }, 409);
-      }
-      throw err;
-    }
-  });
-
-  // Reprocess a healthy (or previously failed) content item: regenerate
-  // chunks, embeddings, metadata, and entity edges from the row's existing
-  // text/blob content. Differs from /retry in the precondition only — retry
-  // is for failed rows; reprocess accepts ready or failed. 409 if pending.
-  app.post('/api/v1/content/:id/reprocess', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    try {
-      const result = await contentSvc.reprocessContent(deps, id);
-      return c.json({ id: result.id, status: result.status }, 202);
-    } catch (err) {
-      if (err instanceof contentSvc.ReprocessStateError) {
-        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
-        return c.json({ error: err.message, code: err.code }, 409);
-      }
-      throw err;
-    }
-  });
-
-  app.get('/api/v1/content/:id', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const item = await contentSvc.getContentItem(deps, id);
-    if (!item) return c.json({ error: 'Not found' }, 404);
-    return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
-  });
-
-  // Metadata-only update. Body edits live at POST /content/:id/edit-body
-  // because they're async (re-chunk + re-embed) and have a body-immutability
-  // guard that PUT shouldn't enforce silently.
-  app.put('/api/v1/content/:id', async (c) => {
-    const body = await c.req.json<{
-      title?: string;
-      content?: string;
-      project_ids?: string[];
-      tags?: string[];
-    }>();
-    if (body.content !== undefined) {
-      return c.json({
-        error: 'Body edits are not allowed on PUT /content/:id. Use POST /content/:id/edit-body instead (async, gated by body-immutability rule).',
-      }, 400);
-    }
-    const item = await contentSvc.updateContentItem(deps, c.req.param('id'), {
-      title: body.title,
-      projectIds: body.project_ids,
-      tags: body.tags,
-    });
-    if (!item) return c.json({ error: 'Not found' }, 404);
-    return c.json({ item: stripAndSignContent(deps.blobStorage, item) });
-  });
-
-  // Async body edit. Returns 202 + {id, processing_status:'pending'}; poll
-  // /status until 'ready' or 'failed'. Refuses rows with blob_url set
-  // (PDF/audio/video/image) — those need archive-and-reupload to swap the
-  // canonical file in Azure.
   // Archive-and-reupload: the canonical "v2" path for blob-backed content.
-  // Old row gets archived + stamped with metadata.replaced_by; new row goes
-  // through the normal ingest pipeline with project_ids/tags carried over.
-  // Accepts JSON {content} or multipart {file}. Type is preserved from old.
-  app.post('/api/v1/content/:id/replace', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const contentType = c.req.header('Content-Type') ?? '';
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/replace',
+      tags: ['Content'],
+      summary: 'Replace content body via archive-and-reupload',
+      request: {
+        params: IdParamSchema,
+        body: {
+          content: {
+            'application/json': { schema: ContentReplaceRequestSchema.extend({ title: z.string().optional() }) },
+            'multipart/form-data': {
+              schema: z.object({
+                title: z.string().optional(),
+                content: z.string().optional(),
+                file: z.unknown().optional(),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        202: { description: 'Replacement queued', content: { 'application/json': { schema: ContentReplaceAckSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        409: { description: 'State conflict', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const contentType = c.req.header('Content-Type') ?? '';
 
-    let file: { data: Buffer; mimeType: string; filename: string } | undefined;
-    let textContent: string | undefined;
-    let title: string | undefined;
+      let file: { data: Buffer; mimeType: string; filename: string } | undefined;
+      let textContent: string | undefined;
+      let title: string | undefined;
 
-    if (contentType.includes('multipart/form-data')) {
-      const body = await c.req.parseBody();
-      title = typeof body.title === 'string' ? body.title : undefined;
-      textContent = typeof body.content === 'string' ? body.content : undefined;
-      const uploaded = body.file as File | undefined;
-      if (uploaded && uploaded.size > 0) {
-        file = {
-          data: Buffer.from(await uploaded.arrayBuffer()),
-          mimeType: resolveUploadMime(uploaded.type, uploaded.name),
-          filename: uploaded.name,
-        };
+      if (contentType.includes('multipart/form-data')) {
+        const body = await c.req.parseBody();
+        title = typeof body.title === 'string' ? body.title : undefined;
+        textContent = typeof body.content === 'string' ? body.content : undefined;
+        const uploaded = body.file as File | undefined;
+        if (uploaded && uploaded.size > 0) {
+          file = {
+            data: Buffer.from(await uploaded.arrayBuffer()),
+            mimeType: resolveUploadMime(uploaded.type, uploaded.name),
+            filename: uploaded.name,
+          };
+        }
+      } else {
+        const body = await c.req
+          .json<{ content?: string; title?: string }>()
+          .catch(() => ({} as { content?: string; title?: string }));
+        textContent = body.content;
+        title = body.title;
       }
-    } else {
-      const body = await c.req.json<{ content?: string; title?: string }>().catch(() => ({} as { content?: string; title?: string }));
-      textContent = body.content;
-      title = body.title;
-    }
 
-    try {
-      const result = await contentSvc.replaceContent(deps, id, { file, content: textContent, title });
-      return c.json({
-        old_id: result.oldId,
-        new_id: result.newId,
-        status: result.status,
-      }, 202);
-    } catch (err) {
-      if (err instanceof contentSvc.ReplaceContentError) {
-        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
-        if (err.code === 'BAD_INPUT') return c.json({ error: err.message }, 400);
-        return c.json({ error: err.message, code: err.code }, 409);
+      try {
+        const result = await contentSvc.replaceContent(deps, id, { file, content: textContent, title });
+        return c.json({ old_id: result.oldId, new_id: result.newId, status: result.status }, 202);
+      } catch (err) {
+        if (err instanceof contentSvc.ReplaceContentError) {
+          if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+          if (err.code === 'BAD_INPUT') return c.json({ error: err.message }, 400);
+          return c.json({ error: err.message, code: err.code }, 409);
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+  );
 
-  app.post('/api/v1/content/:id/edit-body', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const body = await c.req.json<{ content?: string }>().catch(() => ({} as { content?: string }));
-    const content = body.content;
-    if (typeof content !== 'string' || content.length === 0) {
-      return c.json({ error: 'content is required and must be a non-empty string' }, 400);
-    }
-    try {
-      const result = await contentSvc.editContentBody(deps, id, content);
-      return c.json({ id: result.id, status: result.status }, 202);
-    } catch (err) {
-      if (err instanceof contentSvc.EditBodyError) {
-        if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
-        return c.json({ error: err.message, code: err.code }, 409);
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/edit-body',
+      tags: ['Content'],
+      summary: 'Async edit a note body (re-chunk + re-embed)',
+      request: {
+        params: IdParamSchema,
+        body: { content: { 'application/json': { schema: ContentEditBodyRequestSchema } } },
+      },
+      responses: {
+        202: { description: 'Edit queued', content: { 'application/json': { schema: ContentIngestAckSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        409: { description: 'State conflict (blob-backed row)', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const body = c.req.valid('json');
+      try {
+        const result = await contentSvc.editContentBody(deps, id, body.content);
+        return c.json({ id: result.id, status: result.status }, 202);
+      } catch (err) {
+        if (err instanceof contentSvc.EditBodyError) {
+          if (err.code === 'NOT_FOUND') return c.json({ error: err.message }, 404);
+          return c.json({ error: err.message, code: err.code }, 409);
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+  );
 
-  app.delete('/api/v1/content/:id', async (c) => {
-    const hard = c.req.query('hard') === 'true';
-    if (hard) {
-      await contentSvc.deleteContentItemHardById(deps, c.req.param('id'));
-      return c.json({ ok: true, mode: 'hard' });
-    }
-    await contentSvc.archiveContentItemById(deps, c.req.param('id'));
-    return c.json({ ok: true, mode: 'archived' });
-  });
-
-  app.post('/api/v1/content/:id/restore', async (c) => {
-    await contentSvc.unarchiveContentItemById(deps, c.req.param('id'));
-    return c.json({ ok: true });
-  });
-
-  app.post('/api/v1/content/:id/pin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await contentSvc.pinContentItem(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: true });
-  });
-
-  app.post('/api/v1/content/:id/unpin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await contentSvc.unpinContentItem(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: false });
-  });
-
-  // Bulk ops on content_items. Single SQL per request, returns
-  // { requested, affected, missing_ids } so the UI can flag rows that
-  // didn't apply (typically already-deleted ids in a stale selection).
-  app.post('/api/v1/content/bulk', async (c) => {
-    const body = await c.req.json<{
-      ids?: string[];
-      action?: contentSvc.BulkContentAction;
-      tags?: string[];
-      project_ids?: string[];
-    }>();
-
-    if (!Array.isArray(body.ids) || body.ids.length === 0) {
-      return c.json({ error: 'ids must be a non-empty array of UUIDs' }, 400);
-    }
-    if (body.ids.length > 100) {
-      return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
-    }
-    const badId = body.ids.find((id) => !isValidUuid(id));
-    if (badId) return c.json({ error: `Invalid UUID in ids: "${badId}"` }, 400);
-
-    const allowedActions = new Set([
-      'archive', 'restore', 'delete', 'add_tags', 'remove_tags', 'set_project_ids',
-    ]);
-    if (!body.action || !allowedActions.has(body.action)) {
-      return c.json({
-        error: `Invalid action: "${body.action}". Allowed: ${[...allowedActions].join(', ')}.`,
-      }, 400);
-    }
-
-    if (body.project_ids !== undefined) {
-      if (!Array.isArray(body.project_ids)) {
-        return c.json({ error: 'project_ids must be an array of UUIDs' }, 400);
+  app.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/api/v1/content/{id}',
+      tags: ['Content'],
+      summary: 'Archive (default) or hard-delete a content item',
+      request: { params: IdParamSchema, query: HardDeleteQuerySchema },
+      responses: {
+        200: { description: 'Deleted', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const { hard } = c.req.valid('query');
+      if (hard) {
+        await contentSvc.deleteContentItemHardById(deps, id);
+        return c.json({ ok: true, mode: 'hard' as const }, 200);
       }
-      const badPid = body.project_ids.find((p) => !isValidUuid(p));
-      if (badPid) return c.json({ error: `Invalid UUID in project_ids: "${badPid}"` }, 400);
-    }
+      await contentSvc.archiveContentItemById(deps, id);
+      return c.json({ ok: true, mode: 'archived' as const }, 200);
+    },
+  );
 
-    if (body.tags !== undefined && !Array.isArray(body.tags)) {
-      return c.json({ error: 'tags must be an array of strings' }, 400);
-    }
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/restore',
+      tags: ['Content'],
+      summary: 'Unarchive a content item',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Restored', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      await contentSvc.unarchiveContentItemById(deps, id);
+      return c.json({ ok: true }, 200);
+    },
+  );
 
-    try {
-      const result = await contentSvc.bulkContent(deps, {
-        ids: body.ids,
-        action: body.action,
-        tags: body.tags,
-        project_ids: body.project_ids,
-      });
-      return c.json(result);
-    } catch (err) {
-      if (err instanceof contentSvc.BulkContentValidationError) {
-        return c.json({ error: err.message }, 400);
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/pin',
+      tags: ['Content'],
+      summary: 'Pin a content item',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Pinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await contentSvc.pinContentItem(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true, pinned: true }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/{id}/unpin',
+      tags: ['Content'],
+      summary: 'Unpin a content item',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Unpinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await contentSvc.unpinContentItem(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true, pinned: false }, 200);
+    },
+  );
+
+  // Bulk ops on content_items. Schema-level validation handles the easy
+  // cases; the handler keeps the action-aware checks (set_project_ids needs
+  // a project_ids array; size cap; UUID-in-array validation).
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/content/bulk',
+      tags: ['Content'],
+      summary: 'Bulk operations on content items',
+      request: { body: { content: { 'application/json': { schema: ContentBulkRequestSchema } } } },
+      responses: {
+        200: { description: 'Bulk result', content: { 'application/json': { schema: BulkResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      if (body.ids.length > 100) {
+        return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
       }
-      throw err;
-    }
-  });
+      try {
+        const result = await contentSvc.bulkContent(deps, {
+          ids: body.ids,
+          action: body.action,
+          tags: body.tags,
+          project_ids: body.project_ids,
+        });
+        return c.json(result, 200);
+      } catch (err) {
+        if (err instanceof contentSvc.BulkContentValidationError) {
+          return c.json({ error: err.message }, 400);
+        }
+        throw err;
+      }
+    },
+  );
 
   // ==========================================================================
   // TODOS
   // ==========================================================================
-  app.get('/api/v1/todos', async (c) => {
-    const projectId = c.req.query('project_id');
-    const parentIdRaw = c.req.query('parent_id');
-    const status = c.req.query('status');
-    const priority = c.req.query('priority');
-    const tagsRaw = c.req.query('tags');
-    const dueBeforeRaw = c.req.query('due_before');
-    const dueAfterRaw = c.req.query('due_after');
-    const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined;
-    const include_archived = c.req.query('include_archived') === 'true';
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/todos',
+      tags: ['Todos'],
+      summary: 'List todos',
+      request: { query: TodoListQuerySchema },
+      responses: {
+        200: { description: 'Todos', content: { 'application/json': { schema: TodoListResponseSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const q = c.req.valid('query');
 
-    const pinned = parsePinned(c.req.query('pinned'));
-    if (pinned === 'invalid') {
-      return c.json({ error: `Invalid pinned: "${c.req.query('pinned')}". Expected true/false.` }, 400);
-    }
-
-    // parent_id null filter is meaningful (= top-level todos only) and distinct
-    // from "no filter at all" — match the project_id pattern.
-    let parent_id: string | null | undefined;
-    if (parentIdRaw === 'null') parent_id = null;
-    else if (parentIdRaw !== undefined) {
-      if (!isValidUuid(parentIdRaw)) {
-        return c.json({ error: `Invalid parent_id: "${parentIdRaw}". Expected UUID or "null".` }, 400);
+      const pinned = parsePinned(q.pinned);
+      if (pinned === 'invalid') {
+        return c.json({ error: `Invalid pinned: "${q.pinned}". Expected true/false.` }, 400);
       }
-      parent_id = parentIdRaw;
-    }
 
-    const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
-
-    let due_before: Date | undefined;
-    let due_after: Date | undefined;
-    if (dueBeforeRaw) {
-      const d = new Date(dueBeforeRaw);
-      if (isNaN(d.getTime())) return c.json({ error: `Invalid due_before: "${dueBeforeRaw}". Expected ISO 8601.` }, 400);
-      due_before = d;
-    }
-    if (dueAfterRaw) {
-      const d = new Date(dueAfterRaw);
-      if (isNaN(d.getTime())) return c.json({ error: `Invalid due_after: "${dueAfterRaw}". Expected ISO 8601.` }, 400);
-      due_after = d;
-    }
-
-    const todos = await todosSvc.listTodos(deps, {
-      project_id: projectId === 'null' ? null : projectId ?? undefined,
-      parent_id,
-      status: status ?? undefined,
-      priority: priority ?? undefined,
-      tags,
-      due_before,
-      due_after,
-      pinned,
-      limit,
-      include_archived,
-    });
-    return c.json({ todos: todos.map(stripEmbedding) });
-  });
-
-  app.post('/api/v1/todos', async (c) => {
-    const body = await c.req.json<{
-      content: string;
-      project_id?: string;
-      section?: string;
-      parent_id?: string;
-      priority?: 'P1' | 'P2' | 'P3';
-      due_date?: string;
-      tags?: string[];
-    }>();
-    if (!body.content) return c.json({ error: 'content is required' }, 400);
-    const todo = await todosSvc.createTodo(deps, {
-      content: body.content,
-      projectId: body.project_id ?? null,
-      section: body.section ?? null,
-      parentId: body.parent_id ?? null,
-      priority: body.priority ?? null,
-      dueDate: body.due_date ? new Date(body.due_date) : null,
-      tags: body.tags,
-    });
-    return c.json({ todo: stripEmbedding(todo) }, 201);
-  });
-
-  app.get('/api/v1/todos/:id', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const todo = await todosSvc.getTodo(deps, id);
-    if (!todo) return c.json({ error: 'Not found' }, 404);
-    return c.json({ todo: stripEmbedding(todo) });
-  });
-
-  app.put('/api/v1/todos/:id', async (c) => {
-    const body = await c.req.json<Record<string, unknown>>();
-    const todo = await todosSvc.updateTodo(deps, c.req.param('id'), {
-      content: body.content as string | undefined,
-      projectId: body.project_id === null ? null : (body.project_id as string | undefined),
-      section: body.section as string | undefined,
-      parentId: body.parent_id === null ? null : (body.parent_id as string | undefined),
-      status: body.status as string | undefined,
-      priority: body.priority as 'P1' | 'P2' | 'P3' | null | undefined,
-      dueDate: body.due_date ? new Date(body.due_date as string) : undefined,
-      tags: body.tags as string[] | undefined,
-    });
-    if (!todo) return c.json({ error: 'Not found' }, 404);
-    return c.json({ todo: stripEmbedding(todo) });
-  });
-
-  app.delete('/api/v1/todos/:id', async (c) => {
-    const hard = c.req.query('hard') === 'true';
-    if (hard) {
-      await todosSvc.deleteTodoHardById(deps, c.req.param('id'));
-      return c.json({ ok: true, mode: 'hard' });
-    }
-    await todosSvc.archiveTodoById(deps, c.req.param('id'));
-    return c.json({ ok: true, mode: 'archived' });
-  });
-
-  app.post('/api/v1/todos/:id/restore', async (c) => {
-    await todosSvc.unarchiveTodoById(deps, c.req.param('id'));
-    return c.json({ ok: true });
-  });
-
-  app.post('/api/v1/todos/:id/pin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await todosSvc.pinTodo(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: true });
-  });
-
-  app.post('/api/v1/todos/:id/unpin', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const r = await todosSvc.unpinTodo(deps, id);
-    if (!r.found) return c.json({ error: 'Not found' }, 404);
-    return c.json({ ok: true, pinned: false });
-  });
-
-  // Bulk ops on todos. Mirrors POST /content/bulk but with todo-specific
-  // actions (set_status, set_priority, set_due_date, set_project_id) since
-  // those are the most common multi-select workflows in a task UI.
-  app.post('/api/v1/todos/bulk', async (c) => {
-    const raw = await c.req.json<{
-      ids?: string[];
-      action?: todosSvc.BulkTodoAction;
-      tags?: string[];
-      status?: string;
-      priority?: 'P1' | 'P2' | 'P3' | null;
-      project_id?: string | null;
-      due_date?: string | null;
-    }>();
-
-    if (!Array.isArray(raw.ids) || raw.ids.length === 0) {
-      return c.json({ error: 'ids must be a non-empty array of UUIDs' }, 400);
-    }
-    if (raw.ids.length > 100) {
-      return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
-    }
-    const badId = raw.ids.find((id) => !isValidUuid(id));
-    if (badId) return c.json({ error: `Invalid UUID in ids: "${badId}"` }, 400);
-
-    const allowedActions = new Set([
-      'archive', 'restore', 'delete', 'add_tags', 'remove_tags',
-      'set_status', 'set_priority', 'set_project_id', 'set_due_date',
-    ]);
-    if (!raw.action || !allowedActions.has(raw.action)) {
-      return c.json({
-        error: `Invalid action: "${raw.action}". Allowed: ${[...allowedActions].join(', ')}.`,
-      }, 400);
-    }
-
-    if (raw.tags !== undefined && !Array.isArray(raw.tags)) {
-      return c.json({ error: 'tags must be an array of strings' }, 400);
-    }
-
-    const allowedStatus = new Set(['not_started', 'in_progress', 'paused', 'done']);
-    if (raw.status !== undefined && !allowedStatus.has(raw.status)) {
-      return c.json({
-        error: `Invalid status: "${raw.status}". Allowed: ${[...allowedStatus].join(', ')}.`,
-      }, 400);
-    }
-
-    if (raw.priority !== undefined && raw.priority !== null
-        && !['P1', 'P2', 'P3'].includes(raw.priority)) {
-      return c.json({ error: `Invalid priority: "${raw.priority}". Allowed: P1, P2, P3 or null.` }, 400);
-    }
-
-    if (raw.project_id !== undefined && raw.project_id !== null && !isValidUuid(raw.project_id)) {
-      return c.json({ error: `Invalid project_id: "${raw.project_id}". Must be UUID or null.` }, 400);
-    }
-
-    let dueDate: Date | null | undefined = undefined;
-    let hasDueDate = false;
-    if (raw.due_date !== undefined) {
-      hasDueDate = true;
-      if (raw.due_date === null) {
-        dueDate = null;
-      } else {
-        const d = new Date(raw.due_date);
-        if (isNaN(d.getTime())) {
-          return c.json({ error: `Invalid due_date: "${raw.due_date}". Expected ISO 8601 or null.` }, 400);
+      // parent_id "null" means top-level only, distinct from "no filter".
+      let parent_id: string | null | undefined;
+      if (q.parent_id === 'null') parent_id = null;
+      else if (q.parent_id !== undefined) {
+        if (!isValidUuid(q.parent_id)) {
+          return c.json({ error: `Invalid parent_id: "${q.parent_id}". Expected UUID or "null".` }, 400);
         }
-        dueDate = d;
+        parent_id = q.parent_id;
       }
-    }
 
-    try {
-      const result = await todosSvc.bulkTodos(deps, {
-        ids: raw.ids,
-        action: raw.action,
-        tags: raw.tags,
-        status: raw.status as todosSvc.BulkTodoRequest['status'],
-        priority: raw.priority ?? null,
-        has_priority: 'priority' in raw,
-        project_id: raw.project_id ?? null,
-        has_project_id: 'project_id' in raw,
-        due_date: dueDate ?? null,
-        has_due_date: hasDueDate,
+      const tags = q.tags?.split(',').map((t) => t.trim()).filter(Boolean);
+
+      let due_before: Date | undefined;
+      let due_after: Date | undefined;
+      if (q.due_before) {
+        const d = new Date(q.due_before);
+        if (isNaN(d.getTime())) return c.json({ error: `Invalid due_before: "${q.due_before}". Expected ISO 8601.` }, 400);
+        due_before = d;
+      }
+      if (q.due_after) {
+        const d = new Date(q.due_after);
+        if (isNaN(d.getTime())) return c.json({ error: `Invalid due_after: "${q.due_after}". Expected ISO 8601.` }, 400);
+        due_after = d;
+      }
+
+      const todos = await todosSvc.listTodos(deps, {
+        project_id: q.project_id === 'null' ? null : q.project_id ?? undefined,
+        parent_id,
+        status: q.status,
+        priority: q.priority,
+        tags,
+        due_before,
+        due_after,
+        pinned,
+        limit: q.limit,
+        include_archived: q.include_archived,
       });
-      return c.json(result);
-    } catch (err) {
-      if (err instanceof todosSvc.BulkTodoValidationError) {
-        return c.json({ error: err.message }, 400);
+      return c.json({ todos: todos.map((t) => serializeTodo(t)) }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos',
+      tags: ['Todos'],
+      summary: 'Create a todo',
+      request: { body: { content: { 'application/json': { schema: TodoCreateRequestSchema } } } },
+      responses: {
+        201: { description: 'Created', content: { 'application/json': { schema: TodoGetResponseSchema } } },
+        400: { description: 'Invalid body', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      const todo = await todosSvc.createTodo(deps, {
+        content: body.content,
+        projectId: body.project_id ?? null,
+        section: body.section ?? null,
+        parentId: body.parent_id ?? null,
+        priority: body.priority ?? null,
+        dueDate: body.due_date ? new Date(body.due_date) : null,
+        tags: body.tags,
+      });
+      return c.json({ todo: serializeTodo(todo) }, 201);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/todos/{id}',
+      tags: ['Todos'],
+      summary: 'Get a todo',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Todo', content: { 'application/json': { schema: TodoGetResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const todo = await todosSvc.getTodo(deps, id);
+      if (!todo) return c.json({ error: 'Not found' }, 404);
+      return c.json({ todo: serializeTodo(todo) }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'put',
+      path: '/api/v1/todos/{id}',
+      tags: ['Todos'],
+      summary: 'Update a todo',
+      request: {
+        params: IdParamSchema,
+        body: { content: { 'application/json': { schema: TodoUpdateRequestSchema } } },
+      },
+      responses: {
+        200: { description: 'Updated', content: { 'application/json': { schema: TodoGetResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const body = c.req.valid('json');
+      const todo = await todosSvc.updateTodo(deps, id, {
+        content: body.content,
+        projectId: body.project_id === null ? null : body.project_id,
+        section: body.section ?? undefined,
+        parentId: body.parent_id === null ? null : body.parent_id,
+        status: body.status,
+        priority: body.priority,
+        dueDate: body.due_date ? new Date(body.due_date) : undefined,
+        tags: body.tags,
+      });
+      if (!todo) return c.json({ error: 'Not found' }, 404);
+      return c.json({ todo: serializeTodo(todo) }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/api/v1/todos/{id}',
+      tags: ['Todos'],
+      summary: 'Archive (default) or hard-delete a todo',
+      request: { params: IdParamSchema, query: HardDeleteQuerySchema },
+      responses: {
+        200: { description: 'Deleted', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const { hard } = c.req.valid('query');
+      if (hard) {
+        await todosSvc.deleteTodoHardById(deps, id);
+        return c.json({ ok: true, mode: 'hard' as const }, 200);
       }
-      throw err;
-    }
-  });
+      await todosSvc.archiveTodoById(deps, id);
+      return c.json({ ok: true, mode: 'archived' as const }, 200);
+    },
+  );
 
-  // Todo comments
-  app.get('/api/v1/todos/:id/comments', async (c) => {
-    const comments = await commentsSvc.listComments(deps, c.req.param('id'));
-    return c.json({ comments });
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/{id}/restore',
+      tags: ['Todos'],
+      summary: 'Unarchive a todo',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Restored', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      await todosSvc.unarchiveTodoById(deps, id);
+      return c.json({ ok: true }, 200);
+    },
+  );
 
-  app.post('/api/v1/todos/:id/comments', async (c) => {
-    const body = await c.req.json<{ content: string }>();
-    const comment = await commentsSvc.createComment(deps, c.req.param('id'), body.content);
-    return c.json({ comment }, 201);
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/{id}/pin',
+      tags: ['Todos'],
+      summary: 'Pin a todo',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Pinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await todosSvc.pinTodo(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true, pinned: true }, 200);
+    },
+  );
 
-  app.put('/api/v1/todos/:id/comments/:cid', async (c) => {
-    const body = await c.req.json<{ content: string }>();
-    await commentsSvc.updateComment(deps, c.req.param('cid'), body.content);
-    return c.json({ ok: true });
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/{id}/unpin',
+      tags: ['Todos'],
+      summary: 'Unpin a todo',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Unpinned', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const r = await todosSvc.unpinTodo(deps, id);
+      if (!r.found) return c.json({ error: 'Not found' }, 404);
+      return c.json({ ok: true, pinned: false }, 200);
+    },
+  );
 
-  app.delete('/api/v1/todos/:id/comments/:cid', async (c) => {
-    await commentsSvc.deleteComment(deps, c.req.param('cid'));
-    return c.json({ ok: true });
-  });
+  // Bulk ops on todos. Schema covers shape + action enum; handler keeps the
+  // size cap and the due_date precondition (set_due_date with no due_date
+  // field is a different signal than due_date=null).
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/bulk',
+      tags: ['Todos'],
+      summary: 'Bulk operations on todos',
+      request: { body: { content: { 'application/json': { schema: TodoBulkRequestSchema } } } },
+      responses: {
+        200: { description: 'Bulk result', content: { 'application/json': { schema: BulkResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      if (body.ids.length > 100) {
+        return c.json({ error: 'bulk batch capped at 100 ids per request' }, 400);
+      }
+
+      let dueDate: Date | null | undefined = undefined;
+      let hasDueDate = false;
+      if (body.due_date !== undefined) {
+        hasDueDate = true;
+        if (body.due_date === null) {
+          dueDate = null;
+        } else {
+          const d = new Date(body.due_date);
+          if (isNaN(d.getTime())) {
+            return c.json({ error: `Invalid due_date: "${body.due_date}". Expected ISO 8601 or null.` }, 400);
+          }
+          dueDate = d;
+        }
+      }
+
+      try {
+        const result = await todosSvc.bulkTodos(deps, {
+          ids: body.ids,
+          action: body.action,
+          tags: body.tags,
+          status: body.status,
+          priority: body.priority ?? null,
+          has_priority: body.priority !== undefined,
+          project_id: body.project_id ?? null,
+          has_project_id: body.project_id !== undefined,
+          due_date: dueDate ?? null,
+          has_due_date: hasDueDate,
+        });
+        return c.json(result, 200);
+      } catch (err) {
+        if (err instanceof todosSvc.BulkTodoValidationError) {
+          return c.json({ error: err.message }, 400);
+        }
+        throw err;
+      }
+    },
+  );
+
+  // ==========================================================================
+  // TODO COMMENTS
+  // ==========================================================================
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/todos/{id}/comments',
+      tags: ['Comments'],
+      summary: 'List comments on a todo',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Comments', content: { 'application/json': { schema: TodoCommentListResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const comments = await commentsSvc.listComments(deps, id);
+      return c.json({ comments: comments.map(serializeComment) }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/{id}/comments',
+      tags: ['Comments'],
+      summary: 'Add a comment to a todo',
+      request: {
+        params: IdParamSchema,
+        body: { content: { 'application/json': { schema: TodoCommentCreateRequestSchema } } },
+      },
+      responses: {
+        201: { description: 'Created', content: { 'application/json': { schema: TodoCommentResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const body = c.req.valid('json');
+      const comment = await commentsSvc.createComment(deps, id, body.content);
+      return c.json({ comment: serializeComment(comment) }, 201);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'put',
+      path: '/api/v1/todos/{id}/comments/{cid}',
+      tags: ['Comments'],
+      summary: 'Update a comment',
+      request: {
+        params: CommentIdParamSchema,
+        body: { content: { 'application/json': { schema: TodoCommentCreateRequestSchema } } },
+      },
+      responses: {
+        200: { description: 'Updated', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { cid } = c.req.valid('param');
+      const body = c.req.valid('json');
+      await commentsSvc.updateComment(deps, cid, body.content);
+      return c.json({ ok: true }, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/api/v1/todos/{id}/comments/{cid}',
+      tags: ['Comments'],
+      summary: 'Delete a comment',
+      request: { params: CommentIdParamSchema },
+      responses: {
+        200: { description: 'Deleted', content: { 'application/json': { schema: OkResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { cid } = c.req.valid('param');
+      await commentsSvc.deleteComment(deps, cid);
+      return c.json({ ok: true }, 200);
+    },
+  );
 
   // ==========================================================================
   // SEARCH + RAG
   // ==========================================================================
-  app.post('/api/v1/search', async (c) => {
-    const body = await c.req.json<{
-      query: string;
-      project_id?: string;
-      entity_types?: Array<'document' | 'note' | 'todo'>;
-      tags?: string[];
-      limit?: number;
-      threshold?: number;
-      graph?: boolean;
-    }>();
-    if (!body.query) return c.json({ error: 'query is required' }, 400);
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/search',
+      tags: ['Search'],
+      summary: 'Hybrid vector + graph search',
+      request: { body: { content: { 'application/json': { schema: SearchRequestSchema } } } },
+      responses: {
+        200: { description: 'Search hits', content: { 'application/json': { schema: SearchResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
 
-    // Default graph:true. When on, extract named entities from the query
-    // via the same classifier the RAG path uses, so expansion can seed
-    // from the question itself (not just from entities of the vector-seed
-    // chunks). Cheap (~300ms Haiku call) and meaningful for entity-heavy
-    // queries where the vector hits don't already include the entity-bearing
-    // chunks. RAG already does this; mirror it on REST search for parity.
-    const graphEnabled = body.graph !== false;
-    let queryEntities: Array<{ name: string; type: 'person' | 'org' | 'concept' | 'tool' | 'paper' }> = [];
-    if (graphEnabled) {
-      const classification = await classifyQueryDepth(deps, body.query);
-      queryEntities = classification.entities;
-    }
+      // Default graph:true. When on, extract named entities from the query
+      // via the same classifier the RAG path uses so expansion can seed
+      // from the question itself (not just the vector-seed chunks).
+      const graphEnabled = body.graph !== false;
+      let queryEntities: Array<{ name: string; type: 'person' | 'org' | 'concept' | 'tool' | 'paper' }> = [];
+      if (graphEnabled) {
+        const classification = await classifyQueryDepth(deps, body.query);
+        queryEntities = classification.entities;
+      }
 
-    const hits = await searchSvc.search(deps, body.query, {
-      projectId: body.project_id,
-      entityTypes: body.entity_types,
-      tags: body.tags,
-      limit: body.limit ?? 10,
-      threshold: body.threshold,
-      graph: body.graph,
-      queryEntities,
-    });
-    return c.json({ hits });
-  });
+      const hits = await searchSvc.search(deps, body.query, {
+        projectId: body.project_id,
+        entityTypes: body.entity_types,
+        tags: body.tags,
+        limit: body.limit ?? 10,
+        threshold: body.threshold,
+        graph: body.graph,
+        queryEntities,
+      });
+      return c.json({ hits } as never, 200);
+    },
+  );
 
   // ==========================================================================
   // TAGS — aggregate view over content_items.tags + todos.tags
   // ==========================================================================
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/tags',
+      tags: ['Tags'],
+      summary: 'List tags with usage counts',
+      request: { query: TagListQuerySchema },
+      responses: {
+        200: { description: 'Tags', content: { 'application/json': { schema: TagListResponseSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { project_id } = c.req.valid('query');
+      const tags = await tagsSvc.listTags(deps, { project_id });
+      return c.json({ tags }, 200);
+    },
+  );
 
-  app.get('/api/v1/tags', async (c) => {
-    const project_id = c.req.query('project_id') ?? undefined;
-    if (project_id !== undefined && !isValidUuid(project_id)) {
-      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
-    }
-    const tags = await tagsSvc.listTags(deps, { project_id });
-    return c.json({ tags });
-  });
+  app.openapi(
+    createRoute({
+      method: 'put',
+      path: '/api/v1/tags/{name}',
+      tags: ['Tags'],
+      summary: 'Rename or merge a tag',
+      request: {
+        params: TagNameParamSchema,
+        body: { content: { 'application/json': { schema: TagRenameRequestSchema } } },
+      },
+      responses: {
+        200: { description: 'Renamed', content: { 'application/json': { schema: TagRenameResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { name: from } = c.req.valid('param');
+      const { to } = c.req.valid('json');
+      if (to === from) {
+        return c.json({ from, to, updated: 0, noop: true }, 200);
+      }
+      const result = await tagsSvc.renameTag(deps, from, to);
+      return c.json({ from, to, updated: result.updated }, 200);
+    },
+  );
 
-  // Rename a tag across content_items.tags + todos.tags in one transaction.
-  // Body { to } is required. Idempotent on no-op (from === to).
-  app.put('/api/v1/tags/:name', async (c) => {
-    const from = c.req.param('name');
-    const body = await c.req.json<{ to: string }>();
-    if (!body.to || typeof body.to !== 'string') {
-      return c.json({ error: 'Body must include `to` (string).' }, 400);
-    }
-    if (body.to === from) {
-      // No-op rename. Return success without thrashing the DB.
-      return c.json({ from, to: body.to, updated: 0, noop: true });
-    }
-    const result = await tagsSvc.renameTag(deps, from, body.to);
-    return c.json({ from, to: body.to, updated: result.updated });
-  });
-
-  // Strip a tag from every row that has it. The rows themselves are NOT
-  // deleted — only the tag is removed.
-  app.delete('/api/v1/tags/:name', async (c) => {
-    const name = c.req.param('name');
-    const result = await tagsSvc.deleteTag(deps, name);
-    return c.json({ name, updated: result.updated });
-  });
+  app.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/api/v1/tags/{name}',
+      tags: ['Tags'],
+      summary: 'Strip a tag from every row that has it',
+      request: { params: TagNameParamSchema },
+      responses: {
+        200: { description: 'Deleted', content: { 'application/json': { schema: TagDeleteResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { name } = c.req.valid('param');
+      const result = await tagsSvc.deleteTag(deps, name);
+      return c.json({ name, updated: result.updated }, 200);
+    },
+  );
 
   // ==========================================================================
   // ACTIVITY — recent-changes feed across content_items + todos + comments
   // ==========================================================================
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/activity',
+      tags: ['Activity'],
+      summary: 'Recent-changes feed (ingest / edit / comment)',
+      request: { query: ActivityListQuerySchema },
+      responses: {
+        200: { description: 'Activity events', content: { 'application/json': { schema: ActivityListResponseSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const q = c.req.valid('query');
 
-  app.get('/api/v1/activity', async (c) => {
-    const sinceRaw = c.req.query('since');
-    const untilRaw = c.req.query('until');
-    const project_id = c.req.query('project_id') ?? undefined;
-    const limitRaw = c.req.query('limit');
-    const kindsRaw = c.req.query('kinds');
-
-    if (project_id !== undefined && !isValidUuid(project_id)) {
-      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
-    }
-
-    let since: Date | undefined;
-    let until: Date | undefined;
-    if (sinceRaw) {
-      const d = new Date(sinceRaw);
-      if (isNaN(d.getTime())) return c.json({ error: `Invalid since: "${sinceRaw}". Expected ISO 8601.` }, 400);
-      since = d;
-    }
-    if (untilRaw) {
-      const d = new Date(untilRaw);
-      if (isNaN(d.getTime())) return c.json({ error: `Invalid until: "${untilRaw}". Expected ISO 8601.` }, 400);
-      until = d;
-    }
-
-    let kinds: ActivityKind[] | undefined;
-    if (kindsRaw) {
-      const allowed = new Set<ActivityKind>(['ingest', 'edit', 'comment']);
-      const values = kindsRaw.split(',').map((s) => s.trim()).filter(Boolean);
-      const bad = values.filter((v) => !allowed.has(v as ActivityKind));
-      if (bad.length > 0) {
-        return c.json({
-          error: `Invalid kinds value(s): ${bad.join(', ')}. Allowed: ingest, edit, comment.`,
-        }, 400);
+      let since: Date | undefined;
+      let until: Date | undefined;
+      if (q.since) {
+        const d = new Date(q.since);
+        if (isNaN(d.getTime())) return c.json({ error: `Invalid since: "${q.since}". Expected ISO 8601.` }, 400);
+        since = d;
       }
-      kinds = values as ActivityKind[];
-    }
+      if (q.until) {
+        const d = new Date(q.until);
+        if (isNaN(d.getTime())) return c.json({ error: `Invalid until: "${q.until}". Expected ISO 8601.` }, 400);
+        until = d;
+      }
 
-    const limit = limitRaw ? Math.min(parseInt(limitRaw, 10) || 100, 500) : undefined;
+      let kinds: ActivityKind[] | undefined;
+      if (q.kinds) {
+        const allowed = new Set<ActivityKind>(['ingest', 'edit', 'comment']);
+        const values = q.kinds.split(',').map((s) => s.trim()).filter(Boolean);
+        const bad = values.filter((v) => !allowed.has(v as ActivityKind));
+        if (bad.length > 0) {
+          return c.json({
+            error: `Invalid kinds value(s): ${bad.join(', ')}. Allowed: ingest, edit, comment.`,
+          }, 400);
+        }
+        kinds = values as ActivityKind[];
+      }
 
-    const rows = await activitySvc.listActivity(deps, {
-      since, until, project_id, kinds, limit,
-    });
-    return c.json({ events: rows });
-  });
+      const limit = q.limit !== undefined ? Math.min(q.limit, 500) : undefined;
+
+      const rows = await activitySvc.listActivity(deps, {
+        since, until, project_id: q.project_id, kinds, limit,
+      });
+      return c.json({ events: rows } as never, 200);
+    },
+  );
 
   // ==========================================================================
   // STATS — inventory snapshot for dashboards
   // ==========================================================================
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/stats',
+      tags: ['Stats'],
+      summary: 'Inventory snapshot (counts, processing, freshness, top tags)',
+      request: { query: StatsQuerySchema },
+      responses: {
+        200: { description: 'Stats', content: { 'application/json': { schema: StatsSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { project_id } = c.req.valid('query');
+      const stats = await statsSvc.getStats(deps, project_id);
+      return c.json(stats as never, 200);
+    },
+  );
 
-  app.get('/api/v1/stats', async (c) => {
-    const project_id = c.req.query('project_id') ?? undefined;
-    if (project_id !== undefined && !isValidUuid(project_id)) {
-      return c.json({ error: `Invalid UUID format: "${project_id}"` }, 400);
-    }
-    const stats = await statsSvc.getStats(deps, project_id);
-    return c.json(stats);
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/find-mentions',
+      tags: ['Search'],
+      summary: 'Find chunks mentioning an entity by canonical name or alias',
+      request: { body: { content: { 'application/json': { schema: FindMentionsRequestSchema } } } },
+      responses: {
+        200: { description: 'Mention hits', content: { 'application/json': { schema: FindMentionsResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      const result = await searchSvc.findMentions(deps, body.entity, {
+        type: body.type,
+        projectId: body.project_id,
+        limit: body.limit ?? 20,
+      });
+      return c.json(result as never, 200);
+    },
+  );
 
-  app.post('/api/v1/find-mentions', async (c) => {
-    const body = await c.req.json<{
-      entity: string;
-      type?: 'person' | 'org' | 'concept' | 'tool' | 'paper';
-      project_id?: string;
-      limit?: number;
-    }>();
-    if (!body.entity) return c.json({ error: 'entity is required' }, 400);
-    const result = await searchSvc.findMentions(deps, body.entity, {
-      type: body.type,
-      projectId: body.project_id,
-      limit: body.limit ?? 20,
-    });
-    return c.json(result);
-  });
-
-  app.post('/api/v1/rag', async (c) => {
-    const body = await c.req.json<{
-      question: string;
-      project_id?: string;
-      tags?: string[];
-      entity_types?: Array<'document' | 'note' | 'todo'>;
-      max_chunks?: number;
-      depth?: 'auto' | 'fast' | 'thorough';
-      reasoning_effort?: 'low' | 'medium' | 'high';
-    }>();
-    if (!body.question) return c.json({ error: 'question is required' }, 400);
-    const result = await ragSvc.ragQuery(deps, body.question, {
-      projectId: body.project_id,
-      tags: body.tags,
-      entityTypes: body.entity_types,
-      maxChunks: body.max_chunks ?? 6,
-      // Default 'fast' — see ragQuery() and docs/profiles/2026-04-25-rag-effort-baseline.md.
-      // Caller can opt into 'auto' or 'thorough' explicitly.
-      depth: body.depth ?? 'fast',
-      reasoningEffort: body.reasoning_effort,
-    });
-    return c.json(result);
-  });
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/rag',
+      tags: ['RAG'],
+      summary: 'RAG synthesis (auto / fast / thorough depth)',
+      request: { body: { content: { 'application/json': { schema: RagRequestSchema } } } },
+      responses: {
+        200: { description: 'Answer', content: { 'application/json': { schema: RagResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      const result = await ragSvc.ragQuery(deps, body.question, {
+        projectId: body.project_id,
+        tags: body.tags,
+        entityTypes: body.entity_types,
+        maxChunks: body.max_chunks ?? 6,
+        depth: body.depth ?? 'fast',
+        reasoningEffort: body.reasoning_effort,
+      });
+      return c.json(result as never, 200);
+    },
+  );
 
   // ==========================================================================
   // Diagnostics — read-only introspection of the entity graph layer.
-  // Useful for triaging "why didn't this content show up in find_mentions"
-  // type questions when direct DB access isn't available.
   // ==========================================================================
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/diagnostics/entities',
+      tags: ['Diagnostics'],
+      summary: 'List entities with edge counts',
+      request: { query: DiagnosticsEntitiesQuerySchema },
+      responses: {
+        200: { description: 'Entities', content: { 'application/json': { schema: DiagnosticsEntitiesResponseSchema } } },
+        400: { description: 'Invalid query', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { limit } = c.req.valid('query');
+      const result = await deps.db.query(
+        `SELECT e.id, e.canonical_name, e.type, e.aliases,
+                array_length(e.aliases, 1) AS alias_count,
+                (SELECT count(*)::int FROM chunk_entities ce WHERE ce.entity_id = e.id) AS edge_count,
+                (SELECT count(DISTINCT c.content_item_id)::int
+                   FROM chunk_entities ce
+                   JOIN chunks c ON c.id = ce.chunk_id
+                  WHERE ce.entity_id = e.id) AS doc_count
+           FROM entities e
+          ORDER BY edge_count DESC, e.canonical_name ASC
+          LIMIT $1`,
+        [limit ?? 100],
+      );
+      return c.json({ entities: result.rows }, 200);
+    },
+  );
 
-  // GET /api/v1/diagnostics/entities — all entities with edge counts
-  app.get('/api/v1/diagnostics/entities', async (c) => {
-    const limit = Number(c.req.query('limit') ?? '100');
-    const result = await deps.db.query(
-      `SELECT e.id, e.canonical_name, e.type, e.aliases,
-              array_length(e.aliases, 1) AS alias_count,
-              (SELECT count(*)::int FROM chunk_entities ce WHERE ce.entity_id = e.id) AS edge_count,
-              (SELECT count(DISTINCT c.content_item_id)::int
-                 FROM chunk_entities ce
-                 JOIN chunks c ON c.id = ce.chunk_id
-                WHERE ce.entity_id = e.id) AS doc_count
-         FROM entities e
-        ORDER BY edge_count DESC, e.canonical_name ASC
-        LIMIT $1`,
-      [limit],
-    );
-    return c.json({ entities: result.rows });
-  });
+  // POST /api/v1/diagnostics/backfill-entities — re-run entity extraction.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/diagnostics/backfill-entities',
+      tags: ['Diagnostics'],
+      summary: 'Re-extract entities for a content item or the whole corpus',
+      request: {
+        body: {
+          content: { 'application/json': { schema: DiagnosticsBackfillRequestSchema } },
+          required: false,
+        },
+      },
+      responses: {
+        200: { description: 'Backfill report', content: { 'application/json': { schema: DiagnosticsBackfillResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { buildGraphEdges } = await import('./services/entities.js');
+      const { getChunksByContentItem } = await import('./db/chunks.js');
 
-  // POST /api/v1/diagnostics/backfill-entities — re-run entity extraction
-  // for a single content item or for all items. Idempotent: edges that
-  // already exist (chunk_id, entity_id PK) are skipped on conflict.
-  // Body: { content_item_id?: string }   omit = backfill the whole corpus
-  app.post('/api/v1/diagnostics/backfill-entities', async (c) => {
-    const { buildGraphEdges } = await import('./services/entities.js');
-    const { getChunksByContentItem } = await import('./db/chunks.js');
+      let body: { content_item_id?: string } = {};
+      try { body = await c.req.json(); } catch { /* empty body OK */ }
 
-    let body: { content_item_id?: string } = {};
-    try { body = await c.req.json(); } catch { /* empty body OK */ }
+      const targetId = body.content_item_id;
+      const itemQuery = targetId
+        ? `SELECT id, title, content FROM content_items WHERE id = $1 AND archived = false`
+        : `SELECT id, title, content FROM content_items WHERE archived = false AND content IS NOT NULL ORDER BY created_at ASC`;
+      const items = await deps.db.query(itemQuery, targetId ? [targetId] : []);
 
-    const targetId = body.content_item_id;
-    const itemQuery = targetId
-      ? `SELECT id, title, content FROM content_items WHERE id = $1 AND archived = false`
-      : `SELECT id, title, content FROM content_items WHERE archived = false AND content IS NOT NULL ORDER BY created_at ASC`;
-    const items = await deps.db.query(itemQuery, targetId ? [targetId] : []);
-
-    const results: Array<{ id: string; title: string; entity_count: number; edge_count: number; error?: string }> = [];
-    for (const row of items.rows) {
-      try {
-        const chunks = await getChunksByContentItem(deps.db, row.id);
-        if (chunks.length === 0) {
-          results.push({ id: row.id, title: row.title, entity_count: 0, edge_count: 0, error: 'no chunks' });
-          continue;
+      const results: Array<{ id: string; title: string; entity_count: number; edge_count: number; error?: string }> = [];
+      for (const row of items.rows) {
+        try {
+          const chunks = await getChunksByContentItem(deps.db, row.id);
+          if (chunks.length === 0) {
+            results.push({ id: row.id, title: row.title, entity_count: 0, edge_count: 0, error: 'no chunks' });
+            continue;
+          }
+          const r = await buildGraphEdges(deps, row.content ?? '', chunks);
+          results.push({ id: row.id, title: row.title, entity_count: r.entityCount, edge_count: r.edgeCount });
+        } catch (err) {
+          results.push({
+            id: row.id, title: row.title, entity_count: 0, edge_count: 0,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
-        const r = await buildGraphEdges(deps, row.content ?? '', chunks);
-        results.push({ id: row.id, title: row.title, entity_count: r.entityCount, edge_count: r.edgeCount });
-      } catch (err) {
-        results.push({
-          id: row.id, title: row.title, entity_count: 0, edge_count: 0,
-          error: err instanceof Error ? err.message : String(err),
-        });
       }
-    }
-    return c.json({ processed: results.length, results });
-  });
+      return c.json({ processed: results.length, results }, 200);
+    },
+  );
 
-  // GET /api/v1/diagnostics/content/:id/edges — all chunk_entities for one content item
-  app.get('/api/v1/diagnostics/content/:id/edges', async (c) => {
-    const id = c.req.param('id');
-    if (!isValidUuid(id)) return c.json({ error: `Invalid UUID format: "${id}"` }, 400);
-    const result = await deps.db.query(
-      `SELECT c.id AS chunk_id, c.chunk_index,
-              e.id AS entity_id, e.canonical_name, e.type,
-              ce.confidence, ce.mention_text
-         FROM chunks c
-         JOIN chunk_entities ce ON ce.chunk_id = c.id
-         JOIN entities e ON e.id = ce.entity_id
-        WHERE c.content_item_id = $1
-        ORDER BY c.chunk_index ASC, ce.confidence DESC`,
-      [id],
-    );
-    return c.json({
-      content_item_id: id,
-      edge_count: result.rows.length,
-      edges: result.rows,
-    });
-  });
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/v1/diagnostics/content/{id}/edges',
+      tags: ['Diagnostics'],
+      summary: 'List chunk-entity edges for one content item',
+      request: { params: IdParamSchema },
+      responses: {
+        200: { description: 'Edges', content: { 'application/json': { schema: DiagnosticsEdgesResponseSchema } } },
+        400: { description: 'Invalid id', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const result = await deps.db.query(
+        `SELECT c.id AS chunk_id, c.chunk_index,
+                e.id AS entity_id, e.canonical_name, e.type,
+                ce.confidence, ce.mention_text
+           FROM chunks c
+           JOIN chunk_entities ce ON ce.chunk_id = c.id
+           JOIN entities e ON e.id = ce.entity_id
+          WHERE c.content_item_id = $1
+          ORDER BY c.chunk_index ASC, ce.confidence DESC`,
+        [id],
+      );
+      return c.json({
+        content_item_id: id,
+        edge_count: result.rows.length,
+        edges: result.rows,
+      }, 200);
+    },
+  );
 
   // ==========================================================================
   // MCP endpoint — stateless mode (sessionIdGenerator: undefined).
@@ -1035,27 +1712,104 @@ export function createApp(deps: ServiceDeps) {
   return app;
 }
 
-function stripEmbedding<T extends { embedding?: unknown }>(obj: T): Omit<T, 'embedding'> {
-  const { embedding, ...rest } = obj;
-  return rest;
+// ---------------------------------------------------------------------------
+// Wire serializers — convert pg Date columns to ISO strings so OpenAPI
+// response validation (z.string().datetime) accepts them. Without these the
+// `app.openapi(...)` response check would reject Date objects since they're
+// not strings on the wire — even though JSON.stringify would coerce them.
+// ---------------------------------------------------------------------------
+
+function isoOrNull(d: Date | string | null | undefined): string | null {
+  if (d === null || d === undefined) return null;
+  return d instanceof Date ? d.toISOString() : d;
 }
 
-/**
- * Like stripEmbedding, but also rewrites blob_url to a SAS-signed URL the
- * client can actually fetch. Used for content_items responses; todos don't
- * have blob_url so they keep using stripEmbedding directly.
- */
-function stripAndSignContent<T extends { embedding?: unknown; blob_url?: string | null }>(
+function isoNonNull(d: Date | string): string {
+  return d instanceof Date ? d.toISOString() : d;
+}
+
+function serializeProject(p: {
+  id: string;
+  name: string;
+  description: string | null;
+  status: 'active' | 'archived' | 'completed';
+  pinned_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}) {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    status: p.status,
+    pinned_at: isoOrNull(p.pinned_at),
+    created_at: isoNonNull(p.created_at),
+    updated_at: isoNonNull(p.updated_at),
+  };
+}
+
+function serializeTodo<T extends {
+  embedding?: unknown;
+  pinned_at?: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+  due_date?: Date | string | null;
+}>(t: T) {
+  const { embedding: _embedding, ...rest } = t;
+  const due = rest.due_date;
+  return {
+    ...rest,
+    pinned_at: rest.pinned_at !== undefined ? isoOrNull(rest.pinned_at) : null,
+    created_at: isoNonNull(rest.created_at),
+    updated_at: isoNonNull(rest.updated_at),
+    // due_date stays a string OR null per the schema (it's a DATE column,
+    // arrives as Date object from pg). Defensive against either shape.
+    due_date: due === null || due === undefined
+      ? null
+      : due instanceof Date ? due.toISOString().slice(0, 10) : due,
+  };
+}
+
+function serializeContentItem(
+  it: { embedding?: unknown } & Record<string, unknown>,
   blobStorage: BlobStorage,
-  obj: T,
-): Omit<T, 'embedding'> {
-  const stripped = stripEmbedding(obj) as Omit<T, 'embedding'> & { blob_url?: string | null };
-  if (stripped.blob_url) {
-    stripped.blob_url = blobStorage.getReadSasUrl(stripped.blob_url);
-  }
-  return stripped;
+): z.infer<typeof ContentItemSchema> {
+  const { embedding: _e, ...rest } = it as Record<string, unknown>;
+  const blob_url = rest.blob_url
+    ? blobStorage.getReadSasUrl(rest.blob_url as string)
+    : null;
+  return {
+    ...rest,
+    blob_url,
+    pinned_at: rest.pinned_at !== undefined && rest.pinned_at !== null
+      ? isoOrNull(rest.pinned_at as Date | string | null)
+      : null,
+    created_at: isoNonNull(rest.created_at as Date | string),
+    updated_at: isoNonNull(rest.updated_at as Date | string),
+    ingest_completed_at: isoOrNull(rest.ingest_completed_at as Date | string | null | undefined),
+    published_at: isoOrNull(rest.published_at as Date | string | null | undefined),
+  } as z.infer<typeof ContentItemSchema>;
 }
 
+function serializeComment(c: {
+  id: string;
+  todo_id: string;
+  content: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}) {
+  return {
+    id: c.id,
+    todo_id: c.todo_id,
+    content: c.content,
+    created_at: isoNonNull(c.created_at),
+    updated_at: isoNonNull(c.updated_at),
+  };
+}
+
+// `parent_id` accepts a UUID OR the literal "null" — the OpenAPI schema
+// declares it as a plain string, so the handler still has to validate the
+// uuid case manually.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidUuid(s: string): boolean {
   return UUID_RE.test(s);

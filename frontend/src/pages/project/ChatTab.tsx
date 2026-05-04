@@ -1,102 +1,88 @@
 import { useEffect, useRef, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
+import { rag } from '../../lib/api';
 import { cls } from '../../lib/util';
-import type { ChatMessageT, Project } from '../../types';
-
-const SEED_MESSAGES: ChatMessageT[] = [
-  {
-    id: 'm1',
-    role: 'user',
-    text: "How am I authenticating to Claude in headless mode? I want to make sure I haven't accidentally introduced an API key path.",
-  },
-  {
-    id: 'm2',
-    role: 'assistant',
-    text:
-      "You're using subscription cookies — not API keys. The cookie is read from the OS keychain at session start, then a short-lived session token is minted and bound to it. The headless `--auth-mode=cookie` flag is what enforces this; the alternate `--auth-mode=key` exists in the binary but is never invoked from your codebase.\n\nTwo small risks worth flagging: (1) the cookie's expiry isn't surfaced anywhere in the UI yet, so a silently-expired cookie will look like a generic auth failure; (2) the keychain read happens lazily, so first-request latency includes a one-time keychain prompt on macOS.",
-    citations: [
-      {
-        id: 'h2',
-        num: 1,
-        title: 'ClaudePit — High-Level Concept',
-        path: 'note · n-cp-1',
-        chunk: '## Auth\n<em>Subscription cookies, never API keys.</em> Tokens minted bound to the cookie and stored in the OS keychain.',
-        score: 0.91,
-      },
-      {
-        id: 'h1',
-        num: 2,
-        title: 'Auth strategy — subscription cookies',
-        path: 'note · n-cp-2',
-        chunk:
-          'We mint a session token bound to the <em>subscription cookie</em> and store it in the keychain. No <em>API keys</em> ever touch the wire because the official Claude Code subscription is what users already pay for.',
-        score: 0.94,
-      },
-      {
-        id: 'h4',
-        num: 3,
-        title: 'Headless Mode Reference',
-        path: 'doc · d-cp-2',
-        chunk: '…the headless flag accepts <em>--auth-mode=cookie</em> or <em>--auth-mode=key</em>. Cookie mode reads from $XDG_CONFIG_HOME/claude…',
-        score: 0.79,
-      },
-    ],
-    timing: { retrieval_ms: 184, generation_ms: 2410, chunks: 12 },
-  },
-];
+import type { ChatCitation, ChatMessageT, Project } from '../../types';
 
 interface Props {
   project: Project;
 }
 
+type DepthChoice = 'shallow' | 'balanced' | 'deep';
+
+const DEPTH_TO_RAG: Record<DepthChoice, 'fast' | 'auto' | 'thorough'> = {
+  shallow: 'fast',
+  balanced: 'auto',
+  deep: 'thorough',
+};
+
 export function ChatTab({ project }: Props) {
-  const [messages, setMessages] = useState<ChatMessageT[]>(SEED_MESSAGES);
+  const [messages, setMessages] = useState<ChatMessageT[]>([]);
   const [draft, setDraft] = useState('');
-  const [depth, setDepth] = useState<'shallow' | 'balanced' | 'deep'>('balanced');
-  const [pending, setPending] = useState(false);
+  const [depth, setDepth] = useState<DepthChoice>('balanced');
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const send = () => {
-    if (!draft.trim()) return;
-    const next: ChatMessageT[] = [...messages, { id: `u${Date.now()}`, role: 'user', text: draft }];
-    setMessages(next);
-    setDraft('');
-    setPending(true);
-    setTimeout(() => {
-      setMessages([
-        ...next,
+  const askMut = useMutation({
+    mutationFn: (input: { question: string; depth: 'fast' | 'auto' | 'thorough' }) =>
+      rag({
+        question: input.question,
+        project_id: project.id,
+        depth: input.depth,
+      }),
+    onSuccess: (resp) => {
+      const citations: ChatCitation[] = resp.citations.map((c, i) => ({
+        id: c.id,
+        num: i + 1,
+        title: c.title,
+        path: c.source_url ?? `chunk · ${c.id.slice(0, 8)}`,
+        chunk: c.excerpt,
+        score: 0,
+      }));
+      setMessages((m) => [
+        ...m,
         {
           id: `a${Date.now()}`,
           role: 'assistant',
-          text:
-            'Mocked response — in production this would stream chunks of generated text in real time, with citations resolving inline as retrieval completes. The retrieval tier blends vector similarity, graph adjacency through your tags, and FTS, then a small reranker sorts the top 12 chunks before the model sees them.',
-          citations: [
-            {
-              id: 'x',
-              num: 1,
-              title: 'Tailscale Mesh Networking — Anthology',
-              path: 'doc · d-cp-3',
-              chunk:
-                'Magic DNS resolves <em>node names to MagicDNS hostnames</em> within a tailnet, which is why the desktop relay can be reached as `claudepit.tailnet.ts.net` from the phone.',
-              score: 0.81,
-            },
-          ],
-          timing: { retrieval_ms: 156, generation_ms: 1890, chunks: 8 },
+          text: resp.answer,
+          citations,
+          timing: {
+            retrieval_ms: resp.meta.timings_ms?.search ?? 0,
+            generation_ms: resp.meta.timings_ms?.synthesis ?? 0,
+            chunks: resp.used_chunks,
+          },
         },
       ]);
-      setPending(false);
-    }, 1200);
+    },
+    onError: (err) => {
+      setMessages((m) => [
+        ...m,
+        {
+          id: `e${Date.now()}`,
+          role: 'assistant',
+          text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ]);
+    },
+  });
+
+  const send = () => {
+    const q = draft.trim();
+    if (!q || askMut.isPending) return;
+    setMessages((m) => [...m, { id: `u${Date.now()}`, role: 'user', text: q }]);
+    setDraft('');
+    askMut.mutate({ question: q, depth: DEPTH_TO_RAG[depth] });
   };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, pending]);
+  }, [messages, askMut.isPending]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '60vh' }}>
       <div ref={scrollRef} style={{ flex: 1 }}>
         <div className="chat">
-          {messages.length === 0 && (
+          {messages.length === 0 && !askMut.isPending && (
             <div className="chat-empty">
               <div className="ic-circle">
                 <Icons.Sparkle size={20} />
@@ -104,16 +90,16 @@ export function ChatTab({ project }: Props) {
               <h3>Ask about {project.name}</h3>
               <p>Chat is grounded only in this project's documents, notes, and todos. Citations expand inline so you can verify every claim.</p>
               <div className="chat-suggest">
-                <div className="s">
+                <div className="s" onClick={() => setDraft('How am I authenticating to Claude?')}>
                   <div className="lb">Auth</div>How am I authenticating to Claude?
                 </div>
-                <div className="s">
+                <div className="s" onClick={() => setDraft('Walk me through the multi-session model.')}>
                   <div className="lb">Architecture</div>Walk me through the multi-session model.
                 </div>
-                <div className="s">
+                <div className="s" onClick={() => setDraft("What's blocking the SSE work?")}>
                   <div className="lb">Open todos</div>What's blocking the SSE work?
                 </div>
-                <div className="s">
+                <div className="s" onClick={() => setDraft('What gotchas have I logged?')}>
                   <div className="lb">Failure modes</div>What gotchas have I logged?
                 </div>
               </div>
@@ -122,7 +108,7 @@ export function ChatTab({ project }: Props) {
           {messages.map(m => (
             <ChatMessage key={m.id} m={m} />
           ))}
-          {pending && (
+          {askMut.isPending && (
             <div className="msg">
               <div className="msg-avatar">
                 <Icons.Sparkle size={13} />
@@ -159,7 +145,7 @@ export function ChatTab({ project }: Props) {
               <button className={depth === 'balanced' ? 'active' : ''} onClick={() => setDepth('balanced')}>Balanced</button>
               <button className={depth === 'deep' ? 'active' : ''} onClick={() => setDepth('deep')}>Deep</button>
             </div>
-            <button className="btn btn-primary btn-icon" onClick={send} disabled={!draft.trim()}>
+            <button className="btn btn-primary btn-icon" onClick={send} disabled={!draft.trim() || askMut.isPending}>
               <Icons.Send />
             </button>
           </div>
@@ -170,8 +156,8 @@ export function ChatTab({ project }: Props) {
         >
           <span>scope: {project.name}</span>
           <span>retrieval: vector + graph</span>
-          <span>chunks: top 12</span>
-          <span style={{ marginLeft: 'auto' }}>⌘↵ to send · ⇧↵ for newline</span>
+          <span>depth: {DEPTH_TO_RAG[depth]}</span>
+          <span style={{ marginLeft: 'auto' }}>↵ to send · ⇧↵ for newline</span>
         </div>
       </div>
     </div>
@@ -194,7 +180,7 @@ function ChatMessage({ m }: { m: ChatMessageT }) {
         <div className="msg-bubble" style={{ whiteSpace: 'pre-wrap' }}>
           {m.text}
         </div>
-        {m.citations ? (
+        {m.citations && m.citations.length > 0 ? (
           <div className="citations">
             {m.citations.map((c, i) => (
               <div key={c.id} className="cite-row">
@@ -202,9 +188,6 @@ function ChatMessage({ m }: { m: ChatMessageT }) {
                   <span className="cite-num">{c.num}</span>
                   <span className="nm">{c.title}</span>
                   <span className="pth">{c.path}</span>
-                  <span className="subtle mono" style={{ fontSize: 10 }}>
-                    {c.score.toFixed(2)}
-                  </span>
                   <span style={{ color: 'var(--fg-subtle)', marginLeft: 4 }}>
                     {expanded.has(i) ? <Icons.ChevronDown size={12} /> : <Icons.ChevronRight size={12} />}
                   </span>
@@ -214,11 +197,8 @@ function ChatMessage({ m }: { m: ChatMessageT }) {
                 ) : null}
                 {expanded.has(i) ? (
                   <div className="cite-foot">
-                    <span>retrieval: vector</span>
-                    <span>· chunk 3 of 7</span>
                     <span style={{ marginLeft: 'auto' }} className="row-flex gap-1">
                       <button className="btn btn-ghost btn-sm">Open source</button>
-                      <button className="btn btn-ghost btn-sm">Find more like this</button>
                     </span>
                   </div>
                 ) : null}

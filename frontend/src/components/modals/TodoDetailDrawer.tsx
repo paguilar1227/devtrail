@@ -1,11 +1,38 @@
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
-import { Checkbox, Drawer, EntityLink, Priority, Tag } from '../primitives';
-import { COMMENTS } from '../../lib/mock';
+import { Drawer, EntityLink, Priority, Tag } from '../primitives';
+import { createComment, listTodoComments } from '../../lib/api';
 import { cls, fmtRel } from '../../lib/util';
 import type { Todo } from '../../types';
 
 export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () => void }) {
-  const comments = COMMENTS[todo.id] || [];
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState('');
+
+  const commentsQ = useQuery({
+    queryKey: ['todo-comments', todo.id],
+    queryFn: () => listTodoComments(todo.id),
+  });
+
+  const addMut = useMutation({
+    mutationFn: (content: string) => createComment(todo.id, { content }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['todo-comments', todo.id] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      setDraft('');
+    },
+  });
+
+  const submit = () => {
+    const c = draft.trim();
+    if (!c || addMut.isPending) return;
+    addMut.mutate(c);
+  };
+
+  const comments = commentsQ.data ?? [];
+
   return (
     <Drawer
       title={todo.title}
@@ -42,49 +69,45 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
           {todo.parent_id ? <EntityLink kind="todo">{todo.parent_id}</EntityLink> : '—'}
         </span>
       </div>
-      <label className="field-label">Description</label>
-      <textarea
-        className="input"
-        rows={4}
-        defaultValue="Implement Server-Sent Events streaming for the assistant response. Need to handle nginx proxy buffering quirks (set proxy_buffering off, proxy_cache off). Reconnect with last-event-id on dropped connections."
-      />
       <div className="divider" />
-      <label className="field-label">Subtasks</label>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div className="row-flex gap-2">
-          <Checkbox checked />
-          <span style={{ textDecoration: 'line-through', color: 'var(--fg-muted)', fontSize: 12.5 }}>
-            Spec the SSE message envelope
+      <label className="field-label">
+        Comments · {commentsQ.isLoading ? '…' : comments.length}
+        {addMut.error ? (
+          <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
+            {addMut.error instanceof Error ? addMut.error.message : String(addMut.error)}
           </span>
-        </div>
-        <div className="row-flex gap-2">
-          <Checkbox />
-          <span style={{ fontSize: 12.5 }}>Heartbeat + reconnect logic</span>
-        </div>
-        <div className="row-flex gap-2">
-          <Checkbox />
-          <span style={{ fontSize: 12.5 }}>Client-side replay buffer</span>
-        </div>
-        <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start', marginTop: 4 }}>
-          <Icons.Plus size={11} /> Add subtask
-        </button>
-      </div>
-      <div className="divider" />
-      <label className="field-label">Comments · {comments.length}</label>
-      {comments.map(c => (
-        <div key={c.id} className="comment">
-          <div className="meta">
-            <b>alex</b> · {fmtRel(c.at)}
+        ) : null}
+      </label>
+      {commentsQ.isLoading ? (
+        <div className="page-subtle">Loading comments…</div>
+      ) : comments.length === 0 ? (
+        <div className="page-subtle">No comments yet.</div>
+      ) : (
+        comments.map(c => (
+          <div key={c.id} className="comment">
+            <div className="meta">
+              <b>alex</b> · {fmtRel(c.created_at)}
+            </div>
+            {c.content}
           </div>
-          {c.content}
-        </div>
-      ))}
+        ))
+      )}
       <div className="todo-input-row" style={{ marginTop: 8 }}>
         <div className="field">
           <Icons.Chat size={13} />
-          <input placeholder="Add a comment…" />
+          <input
+            placeholder="Add a comment…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            disabled={addMut.isPending}
+          />
         </div>
-        <button className="btn btn-primary btn-icon">
+        <button
+          className="btn btn-primary btn-icon"
+          onClick={submit}
+          disabled={!draft.trim() || addMut.isPending}
+        >
           <Icons.Send />
         </button>
       </div>

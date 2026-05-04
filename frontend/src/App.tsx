@@ -143,7 +143,7 @@ export default function App() {
       {isMobile && <MobileTabbar route={route} onRoute={navigate} theme={theme} onTheme={setTheme} />}
 
       {modal?.kind === 'upload' && <UploadModal project={modal.payload} onClose={() => setModal(null)} />}
-      {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} onClose={() => setModal(null)} />}
+      {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} projectId={modal.projectId} onClose={() => setModal(null)} />}
       {modal?.kind === 'doc-read' && <DocReaderDrawer doc={modal.payload} onClose={() => setModal(null)} />}
       {modal?.kind === 'todo-detail' && <TodoDetailDrawer todo={modal.payload} onClose={() => setModal(null)} />}
       {modal?.kind === 'bulk-confirm' && (

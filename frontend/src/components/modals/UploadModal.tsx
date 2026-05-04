@@ -1,20 +1,93 @@
+import { useRef, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Tag } from '../primitives';
+import { saveFromUrl, uploadFile } from '../../lib/api';
 import type { Project } from '../../types';
 
-interface QueuedFile {
-  name: string;
-  size: string;
-  status: 'uploading' | 'queued';
-  pct?: number;
+type Queued =
+  | { kind: 'file'; id: string; file: File; status: 'queued' | 'uploading' | 'ready' | 'failed'; error?: string }
+  | { kind: 'url'; id: string; url: string; status: 'queued' | 'uploading' | 'ready' | 'failed'; error?: string };
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const FILES: QueuedFile[] = [
-  { name: 'anthropic-cookbook-tools.pdf', size: '3.1 MB', status: 'uploading', pct: 64 },
-  { name: 'research-meeting-2026-04-30.md', size: '12 KB', status: 'queued' },
-];
-
 export function UploadModal({ project, onClose }: { project: Project | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [queue, setQueue] = useState<Queued[]>([]);
+  const [urlDraft, setUrlDraft] = useState('');
+  const [tagsDraft, setTagsDraft] = useState('');
+
+  const projectIds = project ? [project.id] : undefined;
+  const tags = tagsDraft
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['content'] });
+    qc.invalidateQueries({ queryKey: ['project-counts'] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+
+  const fileMut = useMutation({
+    mutationFn: (item: Extract<Queued, { kind: 'file' }>) =>
+      uploadFile({ file: item.file, projectIds, tags: tags.length ? tags : undefined }),
+  });
+  const urlMut = useMutation({
+    mutationFn: (item: Extract<Queued, { kind: 'url' }>) =>
+      saveFromUrl({ url: item.url, projectIds, tags: tags.length ? tags : undefined }),
+  });
+
+  const setStatus = (id: string, patch: Partial<Queued>) => {
+    setQueue((q) => q.map((x) => (x.id === id ? ({ ...x, ...patch } as Queued) : x)));
+  };
+
+  const onFiles = (files: FileList | null) => {
+    if (!files) return;
+    const items: Queued[] = Array.from(files).map((f) => ({
+      kind: 'file',
+      id: crypto.randomUUID(),
+      file: f,
+      status: 'queued',
+    }));
+    setQueue((q) => [...q, ...items]);
+  };
+
+  const queueUrl = () => {
+    const u = urlDraft.trim();
+    if (!u) return;
+    setQueue((q) => [...q, { kind: 'url', id: crypto.randomUUID(), url: u, status: 'queued' }]);
+    setUrlDraft('');
+  };
+
+  const processAll = async () => {
+    const pending = queue.filter((x) => x.status === 'queued');
+    for (const item of pending) {
+      setStatus(item.id, { status: 'uploading' });
+      try {
+        if (item.kind === 'file') await fileMut.mutateAsync(item);
+        else await urlMut.mutateAsync(item);
+        setStatus(item.id, { status: 'ready' });
+      } catch (err) {
+        setStatus(item.id, {
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    invalidate();
+  };
+
+  const removeItem = (id: string) => setQueue((q) => q.filter((x) => x.id !== id));
+  const queuedCount = queue.filter((x) => x.status === 'queued').length;
+  const busy = queue.some((x) => x.status === 'uploading');
+
   return (
     <Modal
       title={`Add to ${project?.name || 'Inbox'}`}
@@ -22,12 +95,39 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
       size="lg"
       footer={
         <>
-          <button className="btn" onClick={onClose}>Close</button>
-          <button className="btn btn-primary">Process all</button>
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Close
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={processAll}
+            disabled={busy || queuedCount === 0}
+          >
+            {busy ? 'Uploading…' : `Process ${queuedCount || ''}`.trim()}
+          </button>
         </>
       }
     >
-      <div className="dropzone">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          onFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <div
+        className="dropzone"
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          onFiles(e.dataTransfer.files);
+        }}
+        style={{ cursor: 'pointer' }}
+      >
         <div className="ic-big">
           <Icons.Upload />
         </div>
@@ -37,62 +137,73 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
       <div className="divider" />
       <label className="field-label">Or save a URL</label>
       <div className="row-flex gap-2">
-        <input className="input" placeholder="https://example.com/article" />
-        <button className="btn">Fetch</button>
+        <input
+          className="input"
+          placeholder="https://example.com/article"
+          value={urlDraft}
+          onChange={(e) => setUrlDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              queueUrl();
+            }
+          }}
+        />
+        <button className="btn" onClick={queueUrl} disabled={!urlDraft.trim()}>
+          Queue
+        </button>
       </div>
       <div className="divider" />
-      <label className="field-label">Default tags</label>
-      <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
-        <Tag removable>research</Tag>
-        <Tag removable>auth</Tag>
-        <button className="btn btn-ghost btn-sm">+ Add</button>
-      </div>
+      <label className="field-label">Default tags (comma-separated)</label>
+      <input
+        className="input"
+        placeholder="research, auth"
+        value={tagsDraft}
+        onChange={(e) => setTagsDraft(e.target.value)}
+      />
+      {tags.length > 0 ? (
+        <div className="row-flex gap-1" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+          {tags.map((t) => (
+            <Tag key={t}>{t}</Tag>
+          ))}
+        </div>
+      ) : null}
       <div className="divider" />
-      <label className="field-label">Currently uploading</label>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {FILES.map((f, i) => (
-          <div key={i} className="doc-row" style={{ gridTemplateColumns: '32px 1fr auto' }}>
-            <div className="ic-box">
-              <Icons.Doc />
-            </div>
-            <div>
-              <div className="nm">{f.name}</div>
-              <div className="sub">
-                <span>{f.size}</span>
-                {f.status === 'uploading' ? (
-                  <span className="row-flex gap-2" style={{ flex: 1, maxWidth: 200 }}>
-                    <span
-                      style={{
-                        background: 'var(--glass-bg-soft)',
-                        height: 4,
-                        borderRadius: 4,
-                        flex: 1,
-                        position: 'relative',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <span
-                        style={{
-                          position: 'absolute',
-                          inset: 0,
-                          width: `${f.pct ?? 0}%`,
-                          background: 'var(--accent-grad)',
-                        }}
-                      />
-                    </span>
-                    <span>{f.pct}%</span>
-                  </span>
-                ) : (
-                  <span>queued</span>
-                )}
+      <label className="field-label">Queue ({queue.length})</label>
+      {queue.length === 0 ? (
+        <div className="page-subtle">No items queued.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {queue.map((item) => (
+            <div key={item.id} className="doc-row" style={{ gridTemplateColumns: '32px 1fr auto auto' }}>
+              <div className="ic-box">
+                {item.kind === 'file' ? <Icons.Doc /> : <Icons.Globe />}
               </div>
+              <div>
+                <div className="nm">{item.kind === 'file' ? item.file.name : item.url}</div>
+                <div className="sub">
+                  {item.kind === 'file' ? <span>{fmtBytes(item.file.size)}</span> : null}
+                  <span>{item.status}</span>
+                  {item.error ? (
+                    <span style={{ color: 'var(--danger)' }}>{item.error}</span>
+                  ) : null}
+                </div>
+              </div>
+              <span className="subtle mono" style={{ fontSize: 10.5 }}>
+                {item.status}
+              </span>
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => removeItem(item.id)}
+                disabled={item.status === 'uploading'}
+                title="Remove"
+              >
+                <Icons.X />
+              </button>
             </div>
-            <button className="btn btn-ghost btn-icon">
-              <Icons.X />
-            </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }

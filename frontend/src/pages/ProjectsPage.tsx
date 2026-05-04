@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { FilterChip } from '../components/primitives';
 import { ProjectCard } from '../components/ProjectCard';
-import { PROJECTS } from '../lib/mock';
+import { listProjectCounts, listProjects } from '../lib/api';
+import { toUiProjects } from '../lib/view';
 import { cls, fmtRel } from '../lib/util';
 import type { ActionDispatch, Route } from '../types';
 
@@ -14,9 +16,40 @@ interface Props {
 export function ProjectsPage({ onRoute, onAction }: Props) {
   const [filter, setFilter] = useState<'active' | 'archived' | 'all'>('active');
   const [view, setView] = useState<'grid' | 'list'>('grid');
-  const projects = PROJECTS.filter(p => filter === 'all' || p.status === filter);
-  const activeCount = PROJECTS.filter(p => p.status === 'active').length;
-  const archivedCount = PROJECTS.filter(p => p.status === 'archived').length;
+
+  const [projectsQ, countsQ] = useQueries({
+    queries: [
+      { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
+      { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
+    ],
+  });
+
+  const all = useMemo(
+    () => toUiProjects(projectsQ.data ?? [], countsQ.data ?? []),
+    [projectsQ.data, countsQ.data],
+  );
+  const projects = all.filter((p) => filter === 'all' || p.status === filter);
+  const activeCount = all.filter((p) => p.status === 'active').length;
+  const archivedCount = all.filter((p) => p.status === 'archived').length;
+
+  const error = projectsQ.error || countsQ.error;
+  if (error) {
+    return (
+      <div className="page">
+        <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+          Failed to load projects: {error instanceof Error ? error.message : String(error)}
+        </div>
+      </div>
+    );
+  }
+
+  if (projectsQ.isLoading || countsQ.isLoading) {
+    return (
+      <div className="page">
+        <div className="page-subtle">Loading…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -49,7 +82,11 @@ export function ProjectsPage({ onRoute, onAction }: Props) {
         </div>
       </div>
 
-      {view === 'grid' ? (
+      {projects.length === 0 ? (
+        <div className="page-subtle">
+          {filter === 'archived' ? 'No archived projects.' : 'No projects yet — create one to get started.'}
+        </div>
+      ) : view === 'grid' ? (
         <div className="proj-grid">
           {projects.map((p, i) => (
             <ProjectCard
@@ -62,7 +99,7 @@ export function ProjectsPage({ onRoute, onAction }: Props) {
         </div>
       ) : (
         <div className="row-list">
-          {projects.map(p => (
+          {projects.map((p) => (
             <div
               key={p.id}
               className="row"
@@ -102,4 +139,3 @@ export function ProjectsPage({ onRoute, onAction }: Props) {
     </div>
   );
 }
-

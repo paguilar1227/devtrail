@@ -93,7 +93,7 @@ describe('Projects archive/restore/hard-delete', () => {
   });
 
   it('DELETE /projects/:id soft-archives by default (status → archived)', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects/p1', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/11111111-1111-1111-1111-111111111111', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -109,7 +109,7 @@ describe('Projects archive/restore/hard-delete', () => {
   it('DELETE /projects/:id?hard=true runs scrub-and-delete inside a transaction', async () => {
     // The hard delete runs two SQL statements inside db.transaction.
     // Our transaction mock passes a tx with its own query mock — verify transaction was used.
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects/p1?hard=true', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/11111111-1111-1111-1111-111111111111?hard=true', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -118,7 +118,7 @@ describe('Projects archive/restore/hard-delete', () => {
   });
 
   it('POST /projects/:id/restore unarchives (status → active)', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects/p1/restore', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/11111111-1111-1111-1111-111111111111/restore', {
       method: 'POST', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -140,7 +140,7 @@ describe('Content items archive/restore/hard-delete', () => {
   });
 
   it('DELETE /content/:id soft-archives by default (archived → true)', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/content/c1', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/22222222-2222-2222-2222-222222222222', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -152,7 +152,7 @@ describe('Content items archive/restore/hard-delete', () => {
   });
 
   it('DELETE /content/:id?hard=true runs DELETE FROM content_items', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/content/c1?hard=true', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/22222222-2222-2222-2222-222222222222?hard=true', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -164,7 +164,7 @@ describe('Content items archive/restore/hard-delete', () => {
   });
 
   it('POST /content/:id/restore unarchives', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/content/c1/restore', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/content/22222222-2222-2222-2222-222222222222/restore', {
       method: 'POST', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -210,7 +210,7 @@ describe('Todos archive/restore/hard-delete', () => {
   });
 
   it('DELETE /todos/:id soft-archives by default', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/todos/t1', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/33333333-3333-3333-3333-333333333333', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -222,7 +222,7 @@ describe('Todos archive/restore/hard-delete', () => {
   });
 
   it('DELETE /todos/:id?hard=true deletes the row', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/todos/t1?hard=true', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/33333333-3333-3333-3333-333333333333?hard=true', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -234,7 +234,7 @@ describe('Todos archive/restore/hard-delete', () => {
   });
 
   it('POST /todos/:id/restore unarchives', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/v1/todos/t1/restore', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/33333333-3333-3333-3333-333333333333/restore', {
       method: 'POST', headers: AUTH,
     }));
     expect(res.status).toBe(200);
@@ -290,7 +290,7 @@ describe('Project hard-delete cascade (scrub orphan UUIDs)', () => {
     const txQuery = vi.fn().mockResolvedValue({ rows: [] });
     vi.mocked(deps.db.transaction).mockImplementation(async (fn: any) => fn({ query: txQuery }));
 
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects/p1?hard=true', {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects/11111111-1111-1111-1111-111111111111?hard=true', {
       method: 'DELETE', headers: AUTH,
     }));
     expect(res.status).toBe(200);

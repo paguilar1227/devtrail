@@ -41,6 +41,14 @@ else
   ok "backend/.env present"
 fi
 
+# ---- 2b. frontend/.env.local ----
+if [ ! -f frontend/.env.local ]; then
+  step "creating frontend/.env.local from frontend/.env.example"
+  cp frontend/.env.example frontend/.env.local
+else
+  ok "frontend/.env.local present"
+fi
+
 # ---- 3. node_modules ----
 if [ ! -d node_modules ]; then step "installing root deps"; npm ci; fi
 if [ ! -d backend/node_modules ]; then step "installing backend deps"; (cd backend && npm ci); fi

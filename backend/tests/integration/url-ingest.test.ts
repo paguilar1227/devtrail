@@ -125,7 +125,12 @@ describe('POST /api/v1/content/from-url', () => {
       method: 'POST', headers: AUTH, body: JSON.stringify({}),
     }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'url is required' });
+    // Wire shape after OpenAPIHono adoption: defaultHook prefixes the field
+    // path. Match substring ("url" + "required") so the test survives small
+    // message-format changes across zod-openapi versions.
+    const body = await res.json();
+    expect(body.error.toLowerCase()).toContain('url');
+    expect(body.error.toLowerCase()).toContain('required');
   });
 
   it('dedups — returns existing item when source_url already saved', async () => {

@@ -102,6 +102,58 @@ export async function unarchiveProject(db: DbClient, id: string): Promise<void> 
   );
 }
 
+export interface ProjectCounts {
+  project_id: string;
+  documents: number;
+  notes: number;
+  todos: number;
+  done: number;
+}
+
+/**
+ * Per-project content + todo counts. Single round-trip aggregating across
+ * content_items (split by type) and todos (with done filter). Excludes
+ * archived rows so the numbers match what the live workspace shows.
+ */
+export async function getProjectCounts(db: DbClient): Promise<ProjectCounts[]> {
+  const result = await db.query(
+    `WITH content_per AS (
+       SELECT pid AS project_id,
+              COUNT(*) FILTER (WHERE type = 'document')::bigint AS documents,
+              COUNT(*) FILTER (WHERE type = 'note')::bigint     AS notes
+       FROM (
+         SELECT id, type, UNNEST(project_ids) AS pid
+         FROM content_items WHERE archived = false
+       ) e
+       GROUP BY pid
+     ),
+     todo_per AS (
+       SELECT project_id,
+              COUNT(*)::bigint AS todos,
+              COUNT(*) FILTER (WHERE status = 'done')::bigint AS done
+       FROM todos
+       WHERE archived = false AND project_id IS NOT NULL
+       GROUP BY project_id
+     )
+     SELECT p.id AS project_id,
+            COALESCE(c.documents, 0)::bigint AS documents,
+            COALESCE(c.notes,     0)::bigint AS notes,
+            COALESCE(t.todos,     0)::bigint AS todos,
+            COALESCE(t.done,      0)::bigint AS done
+     FROM projects p
+     LEFT JOIN content_per c ON c.project_id = p.id
+     LEFT JOIN todo_per    t ON t.project_id = p.id`,
+    [],
+  );
+  return result.rows.map((r: { project_id: string; documents: string | number; notes: string | number; todos: string | number; done: string | number }) => ({
+    project_id: r.project_id,
+    documents: Number(r.documents),
+    notes: Number(r.notes),
+    todos: Number(r.todos),
+    done: Number(r.done),
+  }));
+}
+
 /**
  * Hard delete: removes project UUID from every content_items.project_ids[],
  * then deletes the project row. todos.project_id auto-nulls via FK cascade.

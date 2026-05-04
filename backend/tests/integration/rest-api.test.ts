@@ -123,7 +123,10 @@ describe('Projects API', () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/projects/not-a-uuid', { headers: AUTH }));
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain('Invalid UUID');
+    // Zod default uuid() error reads "Invalid uuid". Match case-insensitively
+    // so the test survives small message-format drift across zod-openapi
+    // versions.
+    expect(body.error.toLowerCase()).toContain('invalid uuid');
   });
 });
 

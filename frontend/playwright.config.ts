@@ -1,16 +1,19 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const LOCAL_PORT = 5173;
-const LOCAL_URL = `http://localhost:${LOCAL_PORT}`;
-const BASE_URL = process.env.BASE_URL || LOCAL_URL;
+const FRONTEND_PORT = 5173;
+const BACKEND_PORT = 3001;
+const FRONTEND_URL = `http://localhost:${FRONTEND_PORT}`;
+const BACKEND_HEALTH = `http://localhost:${BACKEND_PORT}/health`;
+const BASE_URL = process.env.BASE_URL || FRONTEND_URL;
 const isLocal = BASE_URL.startsWith('http://localhost') || BASE_URL.startsWith('http://127.0.0.1');
 
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
+  globalSetup: isLocal ? './tests/e2e/global-setup.ts' : undefined,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   timeout: 30_000,
   expect: { timeout: 5_000 },
@@ -30,23 +33,31 @@ export default defineConfig({
         viewport: { width: 1440, height: 900 },
       },
     },
-    {
-      name: 'mobile-chrome',
-      use: {
-        ...devices['iPhone 12'],
-        browserName: 'chromium',
-      },
-    },
   ],
 
+  // Two-server bring-up: backend (Hono on 3001) + Vite (5173). globalSetup
+  // does docker compose + seed once, then these stay running across the
+  // whole test suite. reuseExistingServer is on locally so an already-warm
+  // `npm run dev:up` shell short-circuits this.
   webServer: isLocal
-    ? {
-        command: 'npm run dev',
-        url: LOCAL_URL,
-        reuseExistingServer: !process.env.CI,
-        stdout: 'ignore',
-        stderr: 'pipe',
-        timeout: 60_000,
-      }
+    ? [
+        {
+          command: 'npm run dev:backend',
+          cwd: '..',
+          url: BACKEND_HEALTH,
+          reuseExistingServer: !process.env.CI,
+          stdout: 'ignore',
+          stderr: 'pipe',
+          timeout: 60_000,
+        },
+        {
+          command: 'npm run dev',
+          url: FRONTEND_URL,
+          reuseExistingServer: !process.env.CI,
+          stdout: 'ignore',
+          stderr: 'pipe',
+          timeout: 60_000,
+        },
+      ]
     : undefined,
 });

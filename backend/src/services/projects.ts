@@ -7,7 +7,9 @@ import {
   deleteProjectHard as dbDeleteHard,
   pinProject as dbPinProject,
   unpinProject as dbUnpinProject,
+  getProjectCounts as dbGetProjectCounts,
   type ProjectRow,
+  type ProjectCounts,
 } from '../db/projects.js';
 
 export async function createProject(
@@ -24,6 +26,10 @@ export async function listProjects(
   pinned?: boolean,
 ): Promise<ProjectRow[]> {
   return dbListProjects(deps.db, status, pinned);
+}
+
+export async function listProjectCounts(deps: ServiceDeps): Promise<ProjectCounts[]> {
+  return dbGetProjectCounts(deps.db);
 }
 
 export async function pinProject(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {

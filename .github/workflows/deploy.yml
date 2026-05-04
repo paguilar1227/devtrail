@@ -88,6 +88,10 @@ jobs:
   #   or any path that triggers ingest, embeddings, or LLM completions. Those
   #   cost real money per call and smoke runs once per merge.
   #
+  #   The write smoke below (create + hard-delete a project) is allowed
+  #   because projects don't trigger any LLM/embedding work — it's two SQL
+  #   statements that exercise the write path end-to-end without spend.
+  #
   #   Coverage for those expensive paths lives in:
   #     - CI integration tests (mocked providers, every PR, free)
   #     - Local stack with LLM_PROVIDER=stub
@@ -139,3 +143,42 @@ jobs:
             "${{ needs.build-and-deploy.outputs.app_url }}/")
           echo "ui redirect=$REDIRECT"
           echo "$REDIRECT" | grep -q 'login.microsoftonline.com'
+
+      # Round-trip a transient project: POST → GET (list contains it) →
+      # DELETE hard → GET (list does not contain it). Validates that the
+      # write path, query path, and delete path are all wired against the
+      # live database in production.
+      - name: Smoke — create / verify / delete a transient project
+        env:
+          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
+          APP_URL: ${{ needs.build-and-deploy.outputs.app_url }}
+        run: |
+          set -euo pipefail
+          NAME="__smoke__-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "creating project: $NAME"
+
+          ID=$(curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $KEY" \
+            -d "{\"name\":\"$NAME\",\"description\":\"deploy smoke — safe to delete\"}" \
+            "$APP_URL/api/v1/projects" | jq -r '.project.id')
+          echo "created id=$ID"
+          [ -n "$ID" ] && [ "$ID" != "null" ]
+
+          echo "verifying project appears in list"
+          curl -fsS \
+            -H "Authorization: Bearer $KEY" \
+            "$APP_URL/api/v1/projects" \
+            | jq -e --arg id "$ID" '.projects | map(.id) | index($id) != null'
+
+          echo "hard-deleting project"
+          curl -fsS -X DELETE \
+            -H "Authorization: Bearer $KEY" \
+            "$APP_URL/api/v1/projects/$ID?hard=true" \
+            | jq -e '.ok == true'
+
+          echo "verifying project no longer in list"
+          curl -fsS \
+            -H "Authorization: Bearer $KEY" \
+            "$APP_URL/api/v1/projects" \
+            | jq -e --arg id "$ID" '.projects | map(.id) | index($id) == null'

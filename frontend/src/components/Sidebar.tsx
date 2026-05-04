@@ -1,6 +1,9 @@
+import { useMemo } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { Icons } from './Icons';
 import { cls } from '../lib/util';
-import { PROJECTS } from '../lib/mock';
+import { listProjects, listTodos } from '../lib/api';
+import { toUiProjects } from '../lib/view';
 import type { Route } from '../types';
 
 interface Props {
@@ -11,7 +14,18 @@ interface Props {
 }
 
 export function Sidebar({ route, onRoute, collapsed, onToggleCollapsed }: Props) {
-  const projects = PROJECTS.filter(p => p.status === 'active');
+  const [projectsQ, inboxQ] = useQueries({
+    queries: [
+      { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
+      { queryKey: ['todos', 'inbox'], queryFn: () => listTodos({ project_id: 'null' }) },
+    ],
+  });
+
+  const projects = useMemo(
+    () => toUiProjects(projectsQ.data ?? []).filter(p => p.status === 'active'),
+    [projectsQ.data],
+  );
+  const inboxCount = inboxQ.data?.length ?? 0;
   const activeProjectId = route.route === 'project' ? route.project : null;
   const isRoute = (name: Route['route']) => route.route === name;
 
@@ -48,7 +62,7 @@ export function Sidebar({ route, onRoute, collapsed, onToggleCollapsed }: Props)
       <div className={cls('sb-item', isRoute('inbox') && 'active')} onClick={() => onRoute({ route: 'inbox' })}>
         <span className="ic"><Icons.Inbox /></span>
         <span className="label">Inbox</span>
-        <span className="count">4</span>
+        <span className="count">{inboxCount}</span>
       </div>
       <div className={cls('sb-item', isRoute('activity') && 'active')} onClick={() => onRoute({ route: 'activity' })}>
         <span className="ic"><Icons.Activity /></span>

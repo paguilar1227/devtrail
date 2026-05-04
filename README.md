@@ -40,9 +40,9 @@ npm run dev:up
 - **Soft delete + restore + pin/unpin:** archive/unarchive on every entity, pin to the top of any list.
 - **Bulk operations:** `POST /api/v1/{content,todos}/bulk` for archive/delete/tag-edit across many ids in one call.
 
-### MCP server (20 tools)
+### MCP server (21 tools)
 
-Read tools: `list_projects`, `list`, `get`, `search`, `find_mentions`, `list_tags`, `list_comments`, `list_activity`, `ask`. Write tools: `create_project`, `create`, `update`, `archive`, `restore`, `add_comment`, `update_comment`, `save_from_url`, `retry`, `reprocess`, `rename_tag`. Stateless: a fresh server + transport per request, mounted at `/mcp`. The server includes an `INSTRUCTIONS` string that Claude.ai / Claude Code apply automatically — covers project membership asymmetry (`project_id` vs `project_ids`), prefer-search-before-creating discipline, and the entity model.
+Read tools: `list_projects`, `list`, `get`, `search`, `find_mentions`, `list_tags`, `list_comments`, `list_activity`, `ask`. Write tools: `create_project`, `create`, `update`, `replace`, `archive`, `restore`, `add_comment`, `update_comment`, `save_from_url`, `retry`, `reprocess`, `rename_tag`. Stateless: a fresh server + transport per request, mounted at `/mcp`. The server includes an `INSTRUCTIONS` string that Claude.ai / Claude Code apply automatically — covers project membership asymmetry (`project_id` vs `project_ids`), prefer-search-before-creating discipline, and the entity model.
 
 ## Architecture
 
@@ -69,6 +69,7 @@ The Container App hosts all three surfaces in a single process. Adapters are thi
 ```
 backend/                  # Hono API + MCP server (Node 20)
 frontend/                 # Vite + React web client
+shared/                   # @open-brain/shared — Zod schemas + TS types shared on the wire
 migrations/               # SQL migrations applied on backend startup
 scripts/                  # dev-up.sh, dev-down.sh, dev-reset.sh, deploy.sh, seed-local.ts
 docs/                     # design docs, plans, UI build brief

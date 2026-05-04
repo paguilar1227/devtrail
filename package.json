@@ -2,6 +2,7 @@
   "name": "open-brain-v2",
   "version": "2.0.0",
   "private": true,
+  "workspaces": ["shared", "backend", "frontend"],
   "scripts": {
     "dev:up": "bash scripts/dev-up.sh",
     "dev:down": "bash scripts/dev-down.sh",
@@ -20,7 +21,7 @@
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm install && npm run build",
     "build:all": "npm run build:backend && npm run build:frontend",
-    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "install:all": "npm install",
     "migrate": "cd backend && npm run migrate"
   },
   "devDependencies": {

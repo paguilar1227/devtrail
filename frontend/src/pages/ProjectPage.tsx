@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { Tabs, Tag } from '../components/primitives';
-import { PROJECTS } from '../lib/mock';
+import { getProject, listProjectCounts, pinProject, unpinProject } from '../lib/api';
+import { toUiProject } from '../lib/view';
 import { cls, fmtRel } from '../lib/util';
 import type { ActionDispatch } from '../types';
 import { ChatTab } from './project/ChatTab';
@@ -17,14 +19,57 @@ interface Props {
 type TabId = 'chat' | 'documents' | 'notes' | 'todos';
 
 export function ProjectPage({ projectId, onAction }: Props) {
-  const project = PROJECTS.find(p => p.id === projectId) || PROJECTS[0];
   const [tab, setTab] = useState<TabId>('chat');
+  const qc = useQueryClient();
+  const [projectQ, countsQ] = useQueries({
+    queries: [
+      { queryKey: ['project', projectId], queryFn: () => getProject(projectId) },
+      { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
+    ],
+  });
+
+  const myCounts = countsQ.data?.find((c) => c.project_id === projectId);
+  const project = useMemo(
+    () => (projectQ.data ? toUiProject(projectQ.data, myCounts) : null),
+    [projectQ.data, myCounts],
+  );
+
+  const togglePin = useMutation({
+    mutationFn: () =>
+      project?.pinned ? unpinProject(projectId) : pinProject(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+
+  if (projectQ.error || countsQ.error) {
+    const err = projectQ.error || countsQ.error;
+    return (
+      <div className="page">
+        <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+          Failed to load project: {err instanceof Error ? err.message : String(err)}
+        </div>
+      </div>
+    );
+  }
+
+  if (projectQ.isLoading || !project) {
+    return (
+      <div className="page">
+        <div className="page-subtle">Loading project…</div>
+      </div>
+    );
+  }
+
   const tabs = [
-    { id: 'chat', label: 'Chat', icon: <Icons.Chat />, count: 8 },
+    { id: 'chat', label: 'Chat', icon: <Icons.Chat />, count: 0 },
     { id: 'documents', label: 'Documents', icon: <Icons.Doc />, count: project.counts.docs },
     { id: 'notes', label: 'Notes', icon: <Icons.Note />, count: project.counts.notes },
     { id: 'todos', label: 'Todos', icon: <Icons.Check />, count: project.counts.todos },
   ];
+
+  const isArchived = project.status === 'archived';
 
   return (
     <div className="page" style={{ paddingBottom: tab === 'chat' ? 0 : 56 }}>
@@ -36,7 +81,7 @@ export function ProjectPage({ projectId, onAction }: Props) {
               className="subtle mono"
               style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase' }}
             >
-              Active project · created {fmtRel(project.created_at)}
+              {isArchived ? 'Archived project' : 'Active project'} · created {fmtRel(project.created_at)}
             </span>
             {project.pinned ? (
               <Tag>
@@ -49,8 +94,12 @@ export function ProjectPage({ projectId, onAction }: Props) {
           <p className="desc">{project.desc}</p>
         </div>
         <div className="row-flex gap-2">
-          <button className="btn">
-            <Icons.Pin /> {project.pinned ? 'Unpin' : 'Pin'}
+          <button
+            className="btn"
+            onClick={() => togglePin.mutate()}
+            disabled={togglePin.isPending}
+          >
+            <Icons.Pin /> {togglePin.isPending ? '…' : project.pinned ? 'Unpin' : 'Pin'}
           </button>
           <button className="btn" title="More project actions">
             <Icons.More />
