@@ -18,9 +18,10 @@
     "test": "cd backend && npm test",
     "test:watch": "cd backend && npm run test:watch",
     "test:e2e": "cd frontend && npm run test:e2e",
+    "build:shared": "npm run build --workspace=@open-brain/shared",
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm install && npm run build",
-    "build:all": "npm run build:backend && npm run build:frontend",
+    "build:all": "npm run build:shared && npm run build:backend && npm run build:frontend",
     "install:all": "npm install",
     "migrate": "cd backend && npm run migrate"
   },
