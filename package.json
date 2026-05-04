@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
+    "dev:up": "bash scripts/dev-up.sh",
+    "dev:down": "bash scripts/dev-down.sh",
+    "dev:reset": "bash scripts/dev-reset.sh",
     "compose:up": "docker compose up -d --wait",
     "compose:down": "docker compose down",
     "compose:reset": "docker compose down -v && docker compose up -d --wait",
