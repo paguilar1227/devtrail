@@ -18,6 +18,7 @@ import type { ActivityKind } from './services/activity.js';
 import * as statsSvc from './services/stats.js';
 import { classifyQueryDepth } from './services/query-depth.js';
 import * as urlIngestSvc from './services/url-ingest.js';
+import { openapiHandler, swaggerUiHandler } from './openapi.js';
 
 export function createApp(deps: ServiceDeps) {
   const app = new Hono();
@@ -35,6 +36,10 @@ export function createApp(deps: ServiceDeps) {
 
   // ----- health -----
   app.get('/health', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
+
+  // ----- OpenAPI spec + Swagger UI (auth-gated by /api/* middleware above) -----
+  app.get('/api/openapi.json', () => openapiHandler());
+  app.get('/api/docs', () => swaggerUiHandler());
 
   // ==========================================================================
   // PROJECTS
