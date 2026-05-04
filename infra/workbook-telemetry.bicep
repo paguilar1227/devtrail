@@ -17,6 +17,9 @@ targetScope = 'resourceGroup'
 @description('Resource ID of the Application Insights component this workbook queries')
 param appInsightsId string
 
+@description('Resource ID of the backing Log Analytics workspace. The App* tables (AppDependencies, AppRequests, AppTraces) live here, not on the App Insights component endpoint, since this is a workspace-based component.')
+param logAnalyticsWorkspaceId string
+
 @description('Azure region. Defaults to the resource group location.')
 param location string = resourceGroup().location
 
@@ -71,7 +74,7 @@ var workbookContent = {
         timeContext: { durationMs: 86400000 }
         timeContextFromParameter: 'TimeRange'
         queryType: 0
-        resourceType: 'microsoft.insights/components'
+        resourceType: 'microsoft.operationalinsights/workspaces'
         visualization: 'table'
       }
       name: 'span-table'
@@ -86,7 +89,7 @@ var workbookContent = {
         timeContext: { durationMs: 86400000 }
         timeContextFromParameter: 'TimeRange'
         queryType: 0
-        resourceType: 'microsoft.insights/components'
+        resourceType: 'microsoft.operationalinsights/workspaces'
         visualization: 'areachart'
       }
       name: 'span-volume'
@@ -106,7 +109,7 @@ var workbookContent = {
         timeContext: { durationMs: 86400000 }
         timeContextFromParameter: 'TimeRange'
         queryType: 0
-        resourceType: 'microsoft.insights/components'
+        resourceType: 'microsoft.operationalinsights/workspaces'
         visualization: 'table'
       }
       name: 'rag-depth'
@@ -121,7 +124,7 @@ var workbookContent = {
         timeContext: { durationMs: 86400000 }
         timeContextFromParameter: 'TimeRange'
         queryType: 0
-        resourceType: 'microsoft.insights/components'
+        resourceType: 'microsoft.operationalinsights/workspaces'
         visualization: 'table'
       }
       name: 'mcp-tools'
@@ -141,7 +144,7 @@ var workbookContent = {
         timeContext: { durationMs: 86400000 }
         timeContextFromParameter: 'TimeRange'
         queryType: 0
-        resourceType: 'microsoft.insights/components'
+        resourceType: 'microsoft.operationalinsights/workspaces'
         visualization: 'table'
       }
       name: 'failures'
@@ -179,7 +182,7 @@ var workbookContent = {
       name: 'usage-mtd'
     }
   ]
-  fallbackResourceIds: [appInsightsId]
+  fallbackResourceIds: [logAnalyticsWorkspaceId, appInsightsId]
   '$schema': 'https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json'
 }
 
