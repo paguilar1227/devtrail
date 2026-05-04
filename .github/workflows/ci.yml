@@ -34,6 +34,12 @@ jobs:
       - name: Install workspace deps
         run: npm ci
 
+      # @open-brain/shared exports compiled JS (dist/) — backend's tsc and
+      # vitest both resolve through the workspace symlink, so dist must
+      # exist before any of them run.
+      - name: Build @open-brain/shared
+        run: npm run build --workspace=@open-brain/shared
+
       - name: Type check backend
         working-directory: backend
         run: npx tsc --noEmit
