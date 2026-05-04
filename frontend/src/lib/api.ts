@@ -3,9 +3,15 @@
 // Typed fetch client for the Open Brain REST API. All responses are validated
 // against shared Zod schemas (`@open-brain/shared`) — bad data fails loud.
 //
-// Auth: Bearer token from VITE_OPEN_BRAIN_API_KEY (frontend/.env.local). The
-// dev default matches backend stub mode so a fresh `npm run dev:up` works
-// without manual config.
+// Auth: dual-mode.
+//   - Local dev: VITE_OPEN_BRAIN_API_KEY → Bearer header; matches the
+//     backend's stub-mode key out of the box.
+//   - Production: same Bearer header is sent (with the placeholder fallback,
+//     which the backend rejects), but the request also carries the Easy
+//     Auth session cookie (`credentials: 'include'`). The backend's
+//     `/api/*` middleware accepts EITHER signal, so the placeholder Bearer
+//     is harmless and the cookie+principal-header path is what actually
+//     authenticates browser calls in prod.
 
 import {
   ActivityListQuerySchema,
@@ -78,7 +84,7 @@ async function request<T>(
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' });
   const text = await res.text();
   const json: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
@@ -104,7 +110,7 @@ async function fetchOk(path: string, init: RequestInit = {}): Promise<void> {
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' });
   if (!res.ok) {
     const text = await res.text();
     let msg = `HTTP ${res.status}`;
@@ -278,7 +284,7 @@ export async function uploadFile(opts: {
   if (opts.tags && opts.tags.length > 0) fd.set('tags', opts.tags.join(','));
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${API_KEY}`);
-  const res = await fetch(`${BASE}/content`, { method: 'POST', body: fd, headers });
+  const res = await fetch(`${BASE}/content`, { method: 'POST', body: fd, headers, credentials: 'include' });
   const text = await res.text();
   const json: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {

@@ -63,6 +63,50 @@ function mockDeps(): ServiceDeps {
 
 const AUTH = { 'Authorization': 'Bearer test-key' };
 
+describe('Auth gate (/api/*)', () => {
+  let deps: ServiceDeps;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    deps = mockDeps();
+    app = createApp(deps);
+  });
+
+  it('rejects request with no auth at all', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects request with wrong Bearer key', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects', {
+      headers: { 'Authorization': 'Bearer wrong-key' },
+    }));
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts request when Easy Auth principal headers are present', async () => {
+    // Container Apps Easy Auth injects these on every request that carries
+    // a valid session cookie, even when the path is in excludedPaths.
+    // The middleware treats any non-empty principal as authenticated.
+    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects', {
+      headers: {
+        'x-ms-client-principal-id': 'a-real-entra-object-id',
+        'x-ms-client-principal-name': 'owner@example.com',
+      },
+    }));
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts a non-empty x-ms-client-principal header alone (alternate signal)', async () => {
+    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
+    const res = await app.fetch(new Request('http://localhost/api/v1/projects', {
+      headers: { 'x-ms-client-principal': 'eyJhbGciOiJIUzI1NiJ9.opaque-base64' },
+    }));
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('Projects API', () => {
   let deps: ServiceDeps;
   let app: ReturnType<typeof createApp>;

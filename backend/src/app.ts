@@ -102,12 +102,27 @@ export function createApp(deps: ServiceDeps) {
   app.use('*', cors({ origin: '*' }));
 
   // ----- auth -----
+  // Two paths are accepted in parallel:
+  //   1. Bearer (Authorization header or `?key=`) — MCP, CLI, scripts, any
+  //      non-browser caller.
+  //   2. Container Apps Easy Auth principal headers — the React UI sitting
+  //      behind Entra ID. Even though `/api/*` is in Easy Auth's
+  //      excludedPaths (so anonymous Bearer callers aren't redirected),
+  //      Easy Auth still injects principal headers when the request
+  //      carries a valid session cookie. We treat any non-empty principal
+  //      as authenticated because the app registration itself is restricted
+  //      to one user (single-tenant + assignmentRequired).
   app.use('/api/*', async (c, next) => {
     const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key !== deps.config.apiKey) {
-      return c.json({ error: 'Unauthorized' }, 401);
+    if (key === deps.config.apiKey) {
+      await next();
+      return;
     }
-    await next();
+    if (c.req.header('x-ms-client-principal-id') || c.req.header('x-ms-client-principal')) {
+      await next();
+      return;
+    }
+    return c.json({ error: 'Unauthorized' }, 401);
   });
 
   // ----- health -----
