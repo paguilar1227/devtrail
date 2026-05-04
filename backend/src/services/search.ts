@@ -5,6 +5,7 @@ import {
   findChunksByEntities, findEntityByCanonical, findEntityByAlias,
   type EntityType,
 } from '../db/entities.js';
+import { withSpan } from '../observability.js';
 
 export interface SearchOptions {
   projectId?: string;
@@ -63,6 +64,23 @@ export async function search(
 }
 
 export async function searchWithTimings(
+  deps: ServiceDeps,
+  query: string,
+  opts: SearchOptions = {},
+): Promise<SearchResultWithTimings> {
+  return withSpan(
+    'search.query',
+    {
+      'search.project_id': opts.projectId ?? '',
+      'search.entity_types': opts.entityTypes?.join(',') ?? 'all',
+      'search.graph': opts.graph ?? true,
+      'search.limit': opts.limit ?? 10,
+    },
+    () => searchWithTimingsImpl(deps, query, opts),
+  );
+}
+
+async function searchWithTimingsImpl(
   deps: ServiceDeps,
   query: string,
   opts: SearchOptions = {},

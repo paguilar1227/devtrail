@@ -1,3 +1,8 @@
+// Telemetry must be the first import: the Azure Monitor distro patches
+// http/https/fetch/pg at require-time. Importing it after any of those
+// modules would silently disable auto-instrumentation.
+import './telemetry.js';
+
 import { serve } from '@hono/node-server';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';

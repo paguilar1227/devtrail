@@ -31,6 +31,7 @@ import {
 import { buildGraphEdges } from './entities.js';
 import { getChunksByContentItem } from '../db/chunks.js';
 import { mapConcurrent } from '../util/concurrency.js';
+import { withSpan } from '../observability.js';
 
 const EMBED_CONCURRENCY = 6;
 
@@ -101,6 +102,22 @@ export interface StartContentResult {
  *  11. Flip processing_status to 'ready' (or 'failed' on error)
  */
 export async function createContentItem(
+  deps: ServiceDeps,
+  input: CreateContentInput,
+): Promise<StartContentResult> {
+  return withSpan(
+    'content.create',
+    {
+      'content.type': input.type,
+      'content.has_file': Boolean(input.file),
+      'content.has_source_url': Boolean(input.sourceUrl),
+      'content.is_replace': Boolean(input.replacesId),
+    },
+    () => createContentItemImpl(deps, input),
+  );
+}
+
+async function createContentItemImpl(
   deps: ServiceDeps,
   input: CreateContentInput,
 ): Promise<StartContentResult> {
@@ -225,6 +242,24 @@ export async function createContentItem(
  * duplicating the orchestration logic.
  */
 export async function runIngestTail(
+  deps: ServiceDeps,
+  contentItemId: string,
+  input: CreateContentInput,
+  pdfText: string | null,
+  trace: IngestTrace,
+): Promise<CreateContentResult> {
+  return withSpan(
+    'content.ingest_tail',
+    {
+      'content.id': contentItemId,
+      'content.type': input.type,
+      'content.has_pdf_text': Boolean(pdfText),
+    },
+    () => runIngestTailImpl(deps, contentItemId, input, pdfText, trace),
+  );
+}
+
+async function runIngestTailImpl(
   deps: ServiceDeps,
   contentItemId: string,
   input: CreateContentInput,

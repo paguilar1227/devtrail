@@ -1,6 +1,7 @@
 import type { ServiceDeps } from './index.js';
 import { searchWithTimings } from './search.js';
 import { classifyQueryDepth, type QueryDepth } from './query-depth.js';
+import { withSpan } from '../observability.js';
 
 export interface RagOptions {
   projectId?: string;
@@ -61,6 +62,22 @@ Rules:
 - Preserve specific details: names, numbers, dates, quotes`;
 
 export async function ragQuery(
+  deps: ServiceDeps,
+  question: string,
+  opts: RagOptions = {},
+): Promise<RagResult> {
+  return withSpan(
+    'rag.query',
+    {
+      'rag.depth_requested': String(opts.depth ?? 'fast'),
+      'rag.project_id': opts.projectId ?? '',
+      'rag.question_length': question.length,
+    },
+    () => ragQueryImpl(deps, question, opts),
+  );
+}
+
+async function ragQueryImpl(
   deps: ServiceDeps,
   question: string,
   opts: RagOptions = {},

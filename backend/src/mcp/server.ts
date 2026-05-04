@@ -10,6 +10,7 @@ import * as ragSvc from '../services/rag.js';
 import * as tagsSvc from '../services/tags.js';
 import * as activitySvc from '../services/activity.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
+import { withSpan } from '../observability.js';
 
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
 const PROJECT_STATUSES = ['active', 'archived', 'completed'] as const;
@@ -125,6 +126,27 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
     { name: 'open-brain', version: '2.0.0' },
     { instructions: INSTRUCTIONS },
   );
+
+  // Wrap every tool handler in a span so MCP traffic shows up in
+  // Application Insights with the tool name attached. The shape of
+  // server.tool() varies across the SDK's overloads (description and
+  // schema are optional, in different positions); the handler is always
+  // the last argument and always async. We mutate that arg and pass
+  // everything else through unchanged.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const originalTool = (server.tool as any).bind(server);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).tool = (...args: unknown[]) => {
+    const handlerIdx = args.length - 1;
+    const original = args[handlerIdx];
+    if (typeof original !== 'function') return originalTool.apply(server, args);
+    const toolName = String(args[0]);
+    args[handlerIdx] = (...handlerArgs: unknown[]) =>
+      withSpan('mcp.tool', { 'mcp.tool_name': toolName }, () =>
+        (original as (...a: unknown[]) => Promise<unknown>)(...handlerArgs),
+      );
+    return originalTool.apply(server, args);
+  };
 
   // ---------- 1. list_projects ----------
   server.tool(
