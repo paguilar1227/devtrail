@@ -75,6 +75,7 @@ var workbookContent = {
         timeContextFromParameter: 'TimeRange'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'table'
       }
       name: 'span-table'
@@ -90,6 +91,7 @@ var workbookContent = {
         timeContextFromParameter: 'TimeRange'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'areachart'
       }
       name: 'span-volume'
@@ -110,6 +112,7 @@ var workbookContent = {
         timeContextFromParameter: 'TimeRange'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'table'
       }
       name: 'rag-depth'
@@ -125,6 +128,7 @@ var workbookContent = {
         timeContextFromParameter: 'TimeRange'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'table'
       }
       name: 'mcp-tools'
@@ -145,6 +149,7 @@ var workbookContent = {
         timeContextFromParameter: 'TimeRange'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'table'
       }
       name: 'failures'
@@ -164,6 +169,7 @@ var workbookContent = {
         timeContext: { durationMs: 2592000000 }
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'columnchart'
       }
       name: 'usage-daily'
@@ -177,6 +183,7 @@ var workbookContent = {
         title: 'Month-to-date ingestion vs 1 GB target'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
+        crossComponentResources: [logAnalyticsWorkspaceId]
         visualization: 'table'
       }
       name: 'usage-mtd'
