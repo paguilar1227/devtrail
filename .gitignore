@@ -7,3 +7,9 @@ coverage/
 .claude/
 tmp.md
 tests/fixtures/e2e/.venv/
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+frontend/tsconfig.tsbuildinfo

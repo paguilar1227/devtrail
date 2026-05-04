@@ -17,6 +17,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      app_url: ${{ steps.app_url.outputs.url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,3 +47,52 @@ jobs:
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${{ github.sha }}
+
+      - name: Resolve Container App URL
+        id: app_url
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "url=https://${FQDN}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for /health to return 200
+        run: |
+          for i in {1..30}; do
+            if curl -fsS "${{ steps.app_url.outputs.url }}/health" >/dev/null; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check failed after 150s"; exit 1
+
+  smoke:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npm run test:e2e:install
+      - name: Run @smoke against deployed app
+        working-directory: frontend
+        env:
+          BASE_URL: ${{ needs.build-and-deploy.outputs.app_url }}
+        run: npm run test:smoke
+      - name: Upload smoke report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
