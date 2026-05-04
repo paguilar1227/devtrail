@@ -10,6 +10,34 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openbrain -d openbrain"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: >
+      azurite-blob
+      --blobHost 0.0.0.0
+      --blobPort 10000
+      --location /data
+      --skipApiVersionCheck
+    # 10010 on host so we don't clash with other local Azurite instances on 10000.
+    # Inside the container Azurite still listens on 10000.
+    ports:
+      - "10010:10000"
+    volumes:
+      - azurite-data:/data
+    healthcheck:
+      # Use 127.0.0.1 — `localhost` resolves to ::1 inside the container but
+      # Azurite binds only on IPv4.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 10000 || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
 volumes:
   pgdata:
+  azurite-data:

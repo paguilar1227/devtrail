@@ -6,8 +6,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:3000', changeOrigin: true },
-      '/mcp': { target: 'http://localhost:3000', changeOrigin: true },
+      // Backend listens on 3001 locally to avoid clashing with other dev servers
+      // on the more common 3000 (mirrors why Postgres is on 5434, not 5432).
+      '/api': { target: 'http://localhost:3001', changeOrigin: true },
+      '/mcp': { target: 'http://localhost:3001', changeOrigin: true },
     },
   },
   build: {

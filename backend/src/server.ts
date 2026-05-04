@@ -11,6 +11,8 @@ import { GeminiLLMProvider } from './providers/gemini-llm.js';
 import { AnthropicLLMProvider } from './providers/anthropic-llm.js';
 import { AzureFoundryLLMProvider } from './providers/azure-foundry-llm.js';
 import { AzureFoundryResponsesProvider } from './providers/azure-foundry-responses.js';
+import { StubEmbeddingProvider, StubLLMProvider } from './providers/stub.js';
+import type { EmbeddingProvider, LLMProvider } from './providers/types.js';
 import type { ServiceDeps } from './services/index.js';
 
 const config = loadConfig();
@@ -33,25 +35,52 @@ const db = createDbClient(config.databaseUrl);
 //   ragDeepLLM:        Azure gpt-5-4-pro (Responses API) — reasoning tier,
 //                      used on multi-hop / comparison / inference questions.
 //                      15-60s response.
-const haiku = new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001');
-const geminiMedia = new GeminiLLMProvider(config.geminiApiKey, 'gemini-3-flash-preview');
+//
+// LLM_PROVIDER=stub swaps every LLM + embedding upstream for deterministic
+// in-memory fakes (providers/stub.ts). Used by local dev + CI integration tests.
+let embeddingProvider: EmbeddingProvider;
+let metadataLLM: LLMProvider;
+let mediaMetadataLLM: LLMProvider;
+let queryDepthLLM: LLMProvider;
+let ragFastLLM: LLMProvider;
+let ragDeepLLM: LLMProvider;
+
+if (config.llmProvider === 'stub') {
+  console.log('[providers] LLM_PROVIDER=stub — using deterministic stub providers');
+  const stubLLM = new StubLLMProvider();
+  embeddingProvider = new StubEmbeddingProvider();
+  metadataLLM = stubLLM;
+  mediaMetadataLLM = stubLLM;
+  queryDepthLLM = stubLLM;
+  ragFastLLM = stubLLM;
+  ragDeepLLM = stubLLM;
+} else {
+  const haiku = new AnthropicLLMProvider(config.anthropicApiKey, 'claude-haiku-4-5-20251001');
+  const geminiMedia = new GeminiLLMProvider(config.geminiApiKey, 'gemini-3-flash-preview');
+  embeddingProvider = new GeminiEmbeddingProvider(config.geminiApiKey);
+  metadataLLM = haiku;
+  mediaMetadataLLM = geminiMedia;
+  queryDepthLLM = haiku;
+  ragFastLLM = new AzureFoundryLLMProvider({
+    endpoint: config.azureOpenAIEndpoint,
+    apiKey: config.azureOpenAIKey,
+    deployment: config.azureRagDeployment,
+  });
+  ragDeepLLM = new AzureFoundryResponsesProvider({
+    endpoint: config.azureOpenAIEndpoint,
+    apiKey: config.azureOpenAIKey,
+    deployment: config.azureDeepRagDeployment,
+  });
+}
 
 const deps: ServiceDeps = {
   db,
-  embeddingProvider: new GeminiEmbeddingProvider(config.geminiApiKey),
-  metadataLLM: haiku,
-  mediaMetadataLLM: geminiMedia,
-  queryDepthLLM: haiku,
-  ragFastLLM: new AzureFoundryLLMProvider({
-    endpoint: config.azureOpenAIEndpoint,
-    apiKey: config.azureOpenAIKey,
-    deployment: config.azureRagDeployment,           // gpt-5-4 by default
-  }),
-  ragDeepLLM: new AzureFoundryResponsesProvider({
-    endpoint: config.azureOpenAIEndpoint,
-    apiKey: config.azureOpenAIKey,
-    deployment: config.azureDeepRagDeployment,       // gpt-5-4-pro by default
-  }),
+  embeddingProvider,
+  metadataLLM,
+  mediaMetadataLLM,
+  queryDepthLLM,
+  ragFastLLM,
+  ragDeepLLM,
   blobStorage: createBlobStorage(config.azureStorageConnectionString, config.azureStorageContainer),
   config,
 };

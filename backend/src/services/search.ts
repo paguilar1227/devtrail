@@ -67,8 +67,14 @@ export async function searchWithTimings(
   query: string,
   opts: SearchOptions = {},
 ): Promise<SearchResultWithTimings> {
+  // The 0.65 default is calibrated for real Gemini embeddings. Stub embeddings
+  // produce lower-magnitude cosines (relative ranking holds, absolute values
+  // don't) so we drop the floor to 0.05 in stub mode — enough to filter pure
+  // noise while letting any actual hit surface.
+  const stubMode = deps.config.llmProvider === 'stub';
+  const defaultThreshold = stubMode ? 0.05 : 0.65;
   const {
-    projectId, entityTypes, tags, limit = 10, threshold = 0.65,
+    projectId, entityTypes, tags, limit = 10, threshold = defaultThreshold,
     queryEntities = [], graph = true,
   } = opts;
   const totalStart = performance.now();

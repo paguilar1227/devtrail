@@ -3,13 +3,25 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
+    "compose:up": "docker compose up -d --wait",
+    "compose:down": "docker compose down",
+    "compose:reset": "docker compose down -v && docker compose up -d --wait",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
     "dev": "cd backend && npm run dev",
+    "dev:full": "npm run compose:up && concurrently --names backend,frontend --prefix-colors cyan,magenta 'npm:dev:backend' 'npm:dev:frontend'",
+    "seed:local": "cd backend && npx tsx ../scripts/seed-local.ts",
     "test": "cd backend && npm test",
     "test:watch": "cd backend && npm run test:watch",
+    "test:e2e": "cd frontend && npm run test:e2e",
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm install && npm run build",
     "build:all": "npm run build:backend && npm run build:frontend",
     "install:all": "cd backend && npm install && cd ../frontend && npm install",
     "migrate": "cd backend && npm run migrate"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "wait-on": "^9.0.5"
   }
 }
