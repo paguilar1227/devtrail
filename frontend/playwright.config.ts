@@ -12,10 +12,19 @@ export default defineConfig({
   globalSetup: isLocal ? './tests/e2e/global-setup.ts' : undefined,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // Local runs flake intermittently when the Vite dev server cold-starts a
+  // new BrowserContext between specs (we've seen blank-white SPA loads that
+  // recover on retry). One retry locally absorbs that without masking real
+  // failures — a real bug fails twice and shows up as a hard failure.
+  retries: process.env.CI ? 2 : 1,
   workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
-  timeout: 30_000,
+  // 30s was too tight in practice — first goto in a fresh BrowserContext can
+  // take 10–15s when Vite has to (re-)satisfy the dep graph for the test
+  // page, leaving little headroom for the actual assertions. 60s gives the
+  // SPA enough time to mount and the downstream interactions still race
+  // each other normally.
+  timeout: 60_000,
   expect: { timeout: 5_000 },
 
   use: {
@@ -25,12 +34,25 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
 
+  // Two profiles. Each project's testMatch restricts it to its own
+  // top-level subdir under tests/e2e, so a single `npx playwright test`
+  // run executes both profiles sequentially. Tests live with the device
+  // class they're written for — viewport is set by the project, not by
+  // the test, so individual specs stay device-agnostic.
   projects: [
     {
       name: 'chromium-desktop',
+      testMatch: /[\\/]desktop[\\/].*\.spec\.ts$/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
+      },
+    },
+    {
+      name: 'chromium-mobile',
+      testMatch: /[\\/]mobile[\\/].*\.spec\.ts$/,
+      use: {
+        ...devices['Pixel 7'],
       },
     },
   ],

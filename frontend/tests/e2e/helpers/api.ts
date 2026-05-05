@@ -74,6 +74,24 @@ export async function listContent(query: { project_id?: string; type?: string } 
   return data.items;
 }
 
+export async function createProject(name: string, description?: string): Promise<Project> {
+  const data = await api<{ project: Project }>('POST', '/api/v1/projects', { name, description });
+  return data.project;
+}
+
+export async function pinProject(id: string): Promise<void> {
+  await api('POST', `/api/v1/projects/${id}/pin`);
+}
+
+export async function unpinProject(id: string): Promise<void> {
+  await api('POST', `/api/v1/projects/${id}/unpin`);
+}
+
+export async function createTodo(content: string, projectId?: string | null): Promise<Todo> {
+  const data = await api<{ todo: Todo }>('POST', '/api/v1/todos', { content, project_id: projectId ?? null });
+  return data.todo;
+}
+
 export async function deleteProject(id: string): Promise<void> {
   await api('DELETE', `/api/v1/projects/${id}?hard=true`);
 }
