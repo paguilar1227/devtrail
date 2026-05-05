@@ -4,16 +4,17 @@ import { Icons } from './Icons';
 import { cls } from '../lib/util';
 import { listProjects, listTodos } from '../lib/api';
 import { toUiProjects } from '../lib/view';
-import type { Route } from '../types';
+import type { ActionDispatch, Route } from '../types';
 
 interface Props {
   route: Route;
   onRoute: (r: Route) => void;
+  onAction: ActionDispatch;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }
 
-export function Sidebar({ route, onRoute, collapsed, onToggleCollapsed }: Props) {
+export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed }: Props) {
   const [projectsQ, inboxQ] = useQueries({
     queries: [
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
@@ -110,14 +111,22 @@ export function Sidebar({ route, onRoute, collapsed, onToggleCollapsed }: Props)
         </div>
       </div>
 
-      <div className="sb-footer">
-        <div className="sb-avatar">P</div>
-        <div className="sb-user">
-          <div className="nm">Alex</div>
-          <div className="em">you@example.com</div>
-        </div>
-        <span className="sb-cog"><Icons.Cog /></span>
-      </div>
+      <button
+        type="button"
+        className="sb-footer"
+        onClick={() => onAction({ kind: 'settings' })}
+        title="Settings"
+        aria-label="Settings"
+      >
+        <span className="sb-avatar">P</span>
+        <span className="sb-user">
+          <span className="nm">Alex</span>
+          <span className="em">you@example.com</span>
+        </span>
+        <span className="sb-cog" aria-hidden="true">
+          <Icons.Cog />
+        </span>
+      </button>
     </aside>
   );
 }

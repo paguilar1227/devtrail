@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabbar } from './components/MobileTabbar';
 import { Sidebar } from './components/Sidebar';
@@ -10,7 +11,7 @@ import { NoteEditorModal } from './components/modals/NoteEditorModal';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
 import { UploadModal } from './components/modals/UploadModal';
 import { useIsMobile } from './lib/useIsMobile';
-import { PROJECTS } from './lib/mock';
+import { listProjects } from './lib/api';
 import { cls } from './lib/util';
 import { ActivityPage } from './pages/ActivityPage';
 import { HomePage } from './pages/HomePage';
@@ -19,6 +20,7 @@ import { MentionsPage } from './pages/MentionsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SearchPage } from './pages/SearchPage';
+import { SettingsModal } from './components/modals/SettingsModal';
 import { TagsPage } from './pages/TagsPage';
 import { TrashPage } from './pages/TrashPage';
 import type { ModalKind, Route, SidebarMode, Theme } from './types';
@@ -80,7 +82,13 @@ export default function App() {
     }
   }, []);
 
-  const project = route.route === 'project' ? PROJECTS.find(p => p.id === route.project) ?? null : null;
+  // Same query key the sidebar already uses, so we share the cache and
+  // don't double-fetch.
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects', 'all'],
+    queryFn: () => listProjects(),
+  });
+  const project = route.route === 'project' ? projects.find((p) => p.id === route.project) ?? null : null;
 
   const crumbs: Crumb[] = (() => {
     switch (route.route) {
@@ -120,6 +128,7 @@ export default function App() {
         <Sidebar
           route={route}
           onRoute={navigate}
+          onAction={onAction}
           collapsed={sidebarMode === 'collapsed'}
           onToggleCollapsed={() =>
             setSidebarMode(sidebarMode === 'collapsed' ? 'expanded' : 'collapsed')
@@ -127,7 +136,7 @@ export default function App() {
         />
       )}
       <main className="main">
-        <Topbar crumbs={crumbs} onCmdK={() => setCmdkOpen(true)} onTheme={setTheme} theme={theme} />
+        <Topbar crumbs={crumbs} onCmdK={() => setCmdkOpen(true)} />
         <div className="main-scroll">
           {route.route === 'home' && <HomePage onRoute={navigate} />}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
@@ -140,7 +149,7 @@ export default function App() {
           {route.route === 'trash' && <TrashPage />}
         </div>
       </main>
-      {isMobile && <MobileTabbar route={route} onRoute={navigate} theme={theme} onTheme={setTheme} />}
+      {isMobile && <MobileTabbar route={route} onRoute={navigate} onAction={onAction} />}
 
       {modal?.kind === 'upload' && <UploadModal project={modal.payload} onClose={() => setModal(null)} />}
       {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} projectId={modal.projectId} onClose={() => setModal(null)} />}
@@ -172,14 +181,23 @@ export default function App() {
         />
       )}
       {modal?.kind === 'new-project' && <NewProjectModal onClose={() => setModal(null)} />}
+      {modal?.kind === 'settings' && (
+        <SettingsModal theme={theme} onTheme={setTheme} onClose={() => setModal(null)} />
+      )}
 
       {cmdkOpen && (
         <CommandPalette
           onClose={() => setCmdkOpen(false)}
-          onRoute={r => {
+          onRoute={(r) => {
             navigate(r);
             setCmdkOpen(false);
           }}
+          onAction={(m) => {
+            onAction(m);
+            setCmdkOpen(false);
+          }}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          theme={theme}
         />
       )}
     </div>

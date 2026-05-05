@@ -105,11 +105,6 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
           <MarkdownPreview src={body} />
         )}
       </div>
-      <div className="divider" />
-      <label className="field-label">Backlinks</label>
-      <div className="page-subtle" style={{ fontSize: 11 }}>
-        Backlink graph not yet wired.
-      </div>
     </Drawer>
   );
 }

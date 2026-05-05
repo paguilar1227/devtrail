@@ -1,6 +1,5 @@
 import { Fragment } from 'react';
 import { Icons } from './Icons';
-import type { Theme } from '../types';
 
 export interface Crumb {
   label: string;
@@ -10,11 +9,9 @@ export interface Crumb {
 interface Props {
   crumbs: Crumb[];
   onCmdK: () => void;
-  onTheme: (t: Theme) => void;
-  theme: Theme;
 }
 
-export function Topbar({ crumbs, onCmdK, onTheme, theme }: Props) {
+export function Topbar({ crumbs, onCmdK }: Props) {
   return (
     <header className="topbar">
       <div className="crumb">
@@ -36,14 +33,6 @@ export function Topbar({ crumbs, onCmdK, onTheme, theme }: Props) {
         <button className="btn btn-ghost btn-icon icon-search" onClick={onCmdK}>
           <Icons.Search />
         </button>
-        <div className="thm-toggle">
-          <button className={theme === 'dark' ? 'active' : ''} onClick={() => onTheme('dark')}>
-            <Icons.Moon size={13} />
-          </button>
-          <button className={theme === 'light' ? 'active' : ''} onClick={() => onTheme('light')}>
-            <Icons.Sun size={13} />
-          </button>
-        </div>
       </div>
     </header>
   );

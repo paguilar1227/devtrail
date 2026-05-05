@@ -2,20 +2,37 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Drawer, EntityLink, Priority, Tag } from '../primitives';
-import { createComment, listTodoComments } from '../../lib/api';
+import { createComment, getTodo, listTodoComments, updateTodo } from '../../lib/api';
 import { cls, fmtRel } from '../../lib/util';
 import type { Todo } from '../../types';
+
+type PriorityVal = 'p1' | 'p2' | 'p3';
+
+// UI priority is lowercase p1/p2/p3; the wire schema is uppercase P1/P2/P3
+// (see toUiTodo's PRIORITY_MAP). Convert here so callers stay in UI shape.
+const toWirePriority = (p: PriorityVal): 'P1' | 'P2' | 'P3' =>
+  p.toUpperCase() as 'P1' | 'P2' | 'P3';
 
 export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState('');
+  const [priority, setPriority] = useState<PriorityVal>(todo.priority);
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
     queryFn: () => listTodoComments(todo.id),
   });
 
-  const addMut = useMutation({
+  // Parent todo title — resolved on demand. The list/detail payload only
+  // carries parent_id so we have to fetch it. Cached by id so jumping
+  // around sibling subtasks doesn't refetch the same parent.
+  const parentQ = useQuery({
+    queryKey: ['todo', todo.parent_id],
+    queryFn: () => getTodo(todo.parent_id!),
+    enabled: !!todo.parent_id,
+  });
+
+  const addCommentMut = useMutation({
     mutationFn: (content: string) => createComment(todo.id, { content }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['todo-comments', todo.id] });
@@ -25,10 +42,39 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
     },
   });
 
+  const updateMut = useMutation({
+    mutationFn: (patch: { priority?: PriorityVal }) =>
+      updateTodo(todo.id, {
+        ...(patch.priority ? { priority: toWirePriority(patch.priority) } : {}),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['todos'] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+    },
+  });
+
   const submit = () => {
     const c = draft.trim();
-    if (!c || addMut.isPending) return;
-    addMut.mutate(c);
+    if (!c || addCommentMut.isPending) return;
+    addCommentMut.mutate(c);
+  };
+
+  const setPriorityNow = (p: PriorityVal) => {
+    if (p === priority) return;
+    setPriority(p);
+    updateMut.mutate({ priority: p });
+  };
+
+  // Save closes the drawer after pending edits (priority is fired
+  // optimistically on chip click; this is the user's "I'm done here" gesture).
+  const dirty = priority !== todo.priority;
+  const onSave = () => {
+    if (dirty && !updateMut.isPending) {
+      updateMut.mutate({ priority }, { onSuccess: () => onClose() });
+    } else {
+      onClose();
+    }
   };
 
   const comments = commentsQ.data ?? [];
@@ -39,13 +85,15 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>Close</button>
-          <button className="btn btn-primary">Save</button>
+          <button className="btn" onClick={onClose} disabled={updateMut.isPending}>Close</button>
+          <button className="btn btn-primary" onClick={onSave} disabled={updateMut.isPending}>
+            {updateMut.isPending ? 'Saving…' : dirty ? 'Save' : 'Done'}
+          </button>
         </>
       }
     >
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-        <Priority p={todo.priority} />
+        <Priority p={priority} />
         <span className="todo-status-pill">{todo.status.replace('_', ' ')}</span>
         {todo.tags.map(t => (
           <Tag key={t}>{t}</Tag>
@@ -54,9 +102,16 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '10px 14px', fontSize: 11.5, marginBottom: 18 }}>
         <span className="subtle mono">priority</span>
         <div className="row-flex gap-1">
-          <button className={cls('filter-chip', todo.priority === 'p1' && 'active')}>P1</button>
-          <button className={cls('filter-chip', todo.priority === 'p2' && 'active')}>P2</button>
-          <button className={cls('filter-chip', todo.priority === 'p3' && 'active')}>P3</button>
+          {(['p1', 'p2', 'p3'] as const).map((p) => (
+            <button
+              key={p}
+              className={cls('filter-chip', priority === p && 'active')}
+              onClick={() => setPriorityNow(p)}
+              disabled={updateMut.isPending}
+            >
+              {p.toUpperCase()}
+            </button>
+          ))}
         </div>
         <span className="subtle mono">due</span>
         <span className="mono">{todo.due_at ? fmtRel(todo.due_at) : '—'}</span>
@@ -66,15 +121,22 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
         <span className="mono">{todo.project_id ?? 'Inbox'}</span>
         <span className="subtle mono">parent</span>
         <span className="mono">
-          {todo.parent_id ? <EntityLink kind="todo">{todo.parent_id}</EntityLink> : '—'}
+          {todo.parent_id
+            ? <EntityLink kind="todo">{parentQ.data?.content ?? (parentQ.isLoading ? '…' : todo.parent_id)}</EntityLink>
+            : '—'}
         </span>
       </div>
+      {updateMut.error ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)', marginBottom: 12 }}>
+          {updateMut.error instanceof Error ? updateMut.error.message : String(updateMut.error)}
+        </div>
+      ) : null}
       <div className="divider" />
       <label className="field-label">
         Comments · {commentsQ.isLoading ? '…' : comments.length}
-        {addMut.error ? (
+        {addCommentMut.error ? (
           <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
-            {addMut.error instanceof Error ? addMut.error.message : String(addMut.error)}
+            {addCommentMut.error instanceof Error ? addCommentMut.error.message : String(addCommentMut.error)}
           </span>
         ) : null}
       </label>
@@ -100,13 +162,13 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
-            disabled={addMut.isPending}
+            disabled={addCommentMut.isPending}
           />
         </div>
         <button
           className="btn btn-primary btn-icon"
           onClick={submit}
-          disabled={!draft.trim() || addMut.isPending}
+          disabled={!draft.trim() || addCommentMut.isPending}
         >
           <Icons.Send />
         </button>

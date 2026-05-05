@@ -152,6 +152,7 @@ export type ModalKind =
   | { kind: 'todo-detail'; payload: Todo }
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }
   | { kind: 'confirm-rename'; payload: TagRow }
-  | { kind: 'new-project' };
+  | { kind: 'new-project' }
+  | { kind: 'settings' };
 
 export type ActionDispatch = (modal: ModalKind) => void;

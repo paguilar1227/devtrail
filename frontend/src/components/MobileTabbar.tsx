@@ -1,24 +1,37 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icons } from './Icons';
+import { listProjectCounts, listProjects } from '../lib/api';
+import { toUiProjects } from '../lib/view';
 import { cls } from '../lib/util';
-import { PROJECTS } from '../lib/mock';
-import type { Route, Theme } from '../types';
+import type { ActionDispatch, Route } from '../types';
 
 interface Props {
   route: Route;
   onRoute: (r: Route) => void;
-  theme: Theme;
-  onTheme: (t: Theme) => void;
+  onAction: ActionDispatch;
 }
 
-export function MobileTabbar({ route, onRoute, theme, onTheme }: Props) {
+export function MobileTabbar({ route, onRoute, onAction }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
   const items = [
     { id: 'home' as const, label: 'Home', icon: <Icons.Home /> },
     { id: 'projects' as const, label: 'Projects', icon: <Icons.Folders /> },
     { id: 'inbox' as const, label: 'Inbox', icon: <Icons.Inbox /> },
   ];
-  const pinned = PROJECTS.filter(p => p.pinned);
+  // Same query keys the rest of the app uses → cache hit, no extra fetch.
+  const { data: apiProjects = [] } = useQuery({
+    queryKey: ['projects', 'all'],
+    queryFn: () => listProjects(),
+  });
+  const { data: counts = [] } = useQuery({
+    queryKey: ['project-counts'],
+    queryFn: () => listProjectCounts(),
+  });
+  const pinned = useMemo(
+    () => toUiProjects(apiProjects, counts).filter((p) => p.pinned && p.status === 'active'),
+    [apiProjects, counts],
+  );
 
   const go = (next: Route) => {
     setMoreOpen(false);
@@ -94,13 +107,16 @@ export function MobileTabbar({ route, onRoute, theme, onTheme }: Props) {
               </div>
             </div>
             <div className="m-sheet-list">
-              <button className="m-sheet-row" onClick={() => onTheme(theme === 'dark' ? 'light' : 'dark')}>
-                <span className="ic">{theme === 'dark' ? <Icons.Sun /> : <Icons.Moon />}</span>
-                <span>Appearance</span>
-                <span className="sub mono">{theme === 'dark' ? 'Dark' : 'Light'}</span>
-              </button>
-              <button className="m-sheet-row">
-                <span className="ic"><Icons.Cog /></span><span>Account &amp; preferences</span><span className="sub">›</span>
+              <button
+                className="m-sheet-row"
+                onClick={() => {
+                  setMoreOpen(false);
+                  onAction({ kind: 'settings' });
+                }}
+              >
+                <span className="ic"><Icons.Cog /></span>
+                <span>Account &amp; preferences</span>
+                <span className="sub">›</span>
               </button>
               <button className="m-sheet-row">
                 <span className="ic"><Icons.Inbox /></span><span>Notifications</span><span className="sub">›</span>

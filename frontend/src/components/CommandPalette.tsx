@@ -1,11 +1,28 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+// Cmd-K palette. Two query keys: a cached list of active projects (shared
+// with sidebar/App), and a debounced search query that fires once the user
+// has typed ≥2 chars. The static "Actions" group is purely client-side.
+//
+// Projects are run through `toUiProjects` so we get the UI's `accent`,
+// `pinned`, `desc` shape that the rest of the app already uses.
+//
+// Result interactions:
+//   - Project rows route into the project detail page.
+//   - Chunk hits route into the chunk's first project (so the user lands
+//     on the surface that owns the document/note). We don't open the
+//     reader drawer directly because the palette doesn't have access to
+//     the full DocumentItem shape — it has chunk-level data only.
+//   - Todo hits open the TodoDetailDrawer through `onAction`, since we
+//     have the full Todo on the wire.
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icons } from './Icons';
+import { listProjects, search } from '../lib/api';
+import { toUiProjects, toUiTodo } from '../lib/view';
 import { cls } from '../lib/util';
-import { DOCUMENTS, NOTES, PROJECTS } from '../lib/mock';
-import type { Route } from '../types';
+import type { ActionDispatch, Route, Theme } from '../types';
 
 interface PaletteItem {
-  kind: 'project' | 'document' | 'note' | 'action';
+  kind: 'project' | 'document' | 'note' | 'todo' | 'action';
   id: string;
   title: string;
   sub: string;
@@ -21,63 +38,105 @@ interface PaletteGroup {
 interface Props {
   onClose: () => void;
   onRoute: (r: Route) => void;
+  onAction: ActionDispatch;
+  onToggleTheme: () => void;
+  theme: Theme;
 }
 
-export function CommandPalette({ onClose, onRoute }: Props) {
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+export function CommandPalette({ onClose, onRoute, onAction, onToggleTheme, theme }: Props) {
   const [q, setQ] = useState('');
+  const debouncedQ = useDebounced(q.trim(), 180);
+
+  const { data: apiProjects = [] } = useQuery({
+    queryKey: ['projects', 'all'],
+    queryFn: () => listProjects(),
+  });
+  const projects = useMemo(() => toUiProjects(apiProjects), [apiProjects]);
+
+  const { data: hits = [] } = useQuery({
+    queryKey: ['search', 'cmdk', debouncedQ],
+    queryFn: () => search({ query: debouncedQ, limit: 8 }),
+    enabled: debouncedQ.length >= 2,
+  });
 
   const groups: PaletteGroup[] = useMemo(() => {
-    const projs: PaletteItem[] = PROJECTS.filter(p => p.status === 'active').map(p => ({
+    const lower = q.toLowerCase();
+    const filtProjects = projects.filter(
+      (p) => p.status === 'active' && (!q || p.name.toLowerCase().includes(lower) || p.desc.toLowerCase().includes(lower)),
+    );
+    const projItems: PaletteItem[] = filtProjects.slice(0, 5).map((p) => ({
       kind: 'project',
       id: p.id,
       title: p.name,
-      sub: p.desc,
+      sub: p.desc || `project · ${p.status}`,
       icon: <span className={cls('sb-proj-dot', p.accent)} />,
       action: () => onRoute({ route: 'project', project: p.id }),
     }));
-    const docs: PaletteItem[] = (DOCUMENTS.claudepit || []).map(d => ({
-      kind: 'document',
-      id: d.id,
-      title: d.title,
-      sub: 'doc · claudepit',
-      icon: <Icons.Doc size={13} />,
-      action: () => {},
-    }));
-    const notes: PaletteItem[] = (NOTES.claudepit || []).map(n => ({
-      kind: 'note',
-      id: n.id,
-      title: n.title,
-      sub: 'note · claudepit',
-      icon: <Icons.Note size={13} />,
-      action: () => {},
-    }));
+
+    const docItems: PaletteItem[] = [];
+    const noteItems: PaletteItem[] = [];
+    const todoItems: PaletteItem[] = [];
+    for (const h of hits) {
+      if (h.type === 'chunk') {
+        const isNote = h.chunk.parent_type === 'note';
+        const target = isNote ? noteItems : docItems;
+        const projectId = h.chunk.parent_project_ids[0] ?? null;
+        target.push({
+          kind: isNote ? 'note' : 'document',
+          id: h.chunk.id,
+          title: h.chunk.parent_title,
+          sub: h.chunk.content.replace(/\s+/g, ' ').slice(0, 80) + (h.chunk.content.length > 80 ? '…' : ''),
+          icon: isNote ? <Icons.Note size={13} /> : <Icons.Doc size={13} />,
+          action: () => projectId ? onRoute({ route: 'project', project: projectId }) : onRoute({ route: 'inbox' }),
+        });
+      } else {
+        const t = toUiTodo(h.todo);
+        todoItems.push({
+          kind: 'todo',
+          id: t.id,
+          title: t.title,
+          sub: `todo · ${t.status} · ${t.priority}`,
+          icon: <Icons.Check size={13} />,
+          action: () => onAction({ kind: 'todo-detail', payload: t }),
+        });
+      }
+    }
+
     const cmds: PaletteItem[] = [
-      { kind: 'action', id: 'new-project', title: 'Create new project', sub: 'shortcut · ⌘P', icon: <Icons.Plus size={13} />, action: () => {} },
-      { kind: 'action', id: 'upload', title: 'Upload file…', sub: 'to current project', icon: <Icons.Upload size={13} />, action: () => {} },
-      { kind: 'action', id: 'new-note', title: 'New note', sub: 'in current project', icon: <Icons.Note size={13} />, action: () => {} },
+      { kind: 'action', id: 'new-project', title: 'Create new project', sub: 'open project modal', icon: <Icons.Plus size={13} />, action: () => onAction({ kind: 'new-project' }) },
+      { kind: 'action', id: 'upload', title: 'Upload file…', sub: 'in current project', icon: <Icons.Upload size={13} />, action: () => onAction({ kind: 'upload', payload: null }) },
+      { kind: 'action', id: 'new-note', title: 'New note', sub: 'in current project', icon: <Icons.Note size={13} />, action: () => onAction({ kind: 'note-edit', payload: null }) },
       { kind: 'action', id: 'go-search', title: 'Go to Search', sub: 'shortcut · G then S', icon: <Icons.Search />, action: () => onRoute({ route: 'search' }) },
       { kind: 'action', id: 'go-inbox', title: 'Go to Inbox', sub: 'shortcut · G then I', icon: <Icons.Inbox size={13} />, action: () => onRoute({ route: 'inbox' }) },
       { kind: 'action', id: 'go-activity', title: 'Go to Activity', sub: 'shortcut · G then A', icon: <Icons.Activity size={13} />, action: () => onRoute({ route: 'activity' }) },
       { kind: 'action', id: 'go-tags', title: 'Go to Tags', sub: 'shortcut · G then T', icon: <Icons.Tag size={13} />, action: () => onRoute({ route: 'tags' }) },
-      { kind: 'action', id: 'toggle-theme', title: 'Toggle theme', sub: 'shortcut · ⌘⇧L', icon: <Icons.Moon size={13} />, action: () => {} },
+      { kind: 'action', id: 'toggle-theme', title: `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`, sub: 'shortcut · ⌘⇧L', icon: <Icons.Moon size={13} />, action: () => onToggleTheme() },
     ];
-
-    const lower = q.toLowerCase();
     const filt = (xs: PaletteItem[]) =>
-      q ? xs.filter(x => x.title.toLowerCase().includes(lower) || x.sub.toLowerCase().includes(lower)) : xs;
+      q ? xs.filter((x) => x.title.toLowerCase().includes(lower) || x.sub.toLowerCase().includes(lower)) : xs;
 
     return [
-      { name: 'Projects', items: filt(projs).slice(0, 5) },
-      { name: 'Documents', items: filt(docs).slice(0, 4) },
-      { name: 'Notes', items: filt(notes).slice(0, 4) },
+      { name: 'Projects', items: projItems },
+      { name: 'Documents', items: docItems.slice(0, 4) },
+      { name: 'Notes', items: noteItems.slice(0, 4) },
+      { name: 'Todos', items: todoItems.slice(0, 4) },
       { name: 'Actions', items: filt(cmds) },
-    ].filter(g => g.items.length);
-  }, [q, onRoute]);
+    ].filter((g) => g.items.length);
+  }, [q, projects, hits, theme, onRoute, onAction, onToggleTheme]);
 
   return (
     <div
       className="cmdk-overlay"
-      onClick={e => {
+      onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -86,35 +145,41 @@ export function CommandPalette({ onClose, onRoute }: Props) {
           <Icons.Search />
           <input
             value={q}
-            onChange={e => setQ(e.target.value)}
+            onChange={(e) => setQ(e.target.value)}
             placeholder="Search projects, documents, notes, todos, or run a command…"
             autoFocus
           />
           <span className="kbd">esc</span>
         </div>
         <div className="cmdk-results">
-          {groups.map((g, gi) => (
-            <Fragment key={g.name}>
-              <div className="cmdk-group-h">{g.name}</div>
-              {g.items.map((it, i) => (
-                <div
-                  key={it.id}
-                  className={cls('cmdk-row', i === 0 && gi === 0 && 'active')}
-                  onClick={() => {
-                    it.action();
-                    onClose();
-                  }}
-                >
-                  <div className="icb">{it.icon}</div>
-                  <div>
-                    <div className="nm">{it.title}</div>
-                    <div className="sub">{it.sub}</div>
+          {groups.length === 0 ? (
+            <div className="page-subtle" style={{ padding: '12px 16px' }}>
+              No matches.
+            </div>
+          ) : (
+            groups.map((g, gi) => (
+              <Fragment key={g.name}>
+                <div className="cmdk-group-h">{g.name}</div>
+                {g.items.map((it, i) => (
+                  <div
+                    key={it.id}
+                    className={cls('cmdk-row', i === 0 && gi === 0 && 'active')}
+                    onClick={() => {
+                      it.action();
+                      onClose();
+                    }}
+                  >
+                    <div className="icb">{it.icon}</div>
+                    <div>
+                      <div className="nm">{it.title}</div>
+                      <div className="sub">{it.sub}</div>
+                    </div>
+                    <Icons.ChevronRight size={11} style={{ color: 'var(--fg-subtle)' }} />
                   </div>
-                  <Icons.ChevronRight size={11} style={{ color: 'var(--fg-subtle)' }} />
-                </div>
-              ))}
-            </Fragment>
-          ))}
+                ))}
+              </Fragment>
+            ))
+          )}
         </div>
         <div className="cmdk-foot">
           <span>
@@ -123,10 +188,9 @@ export function CommandPalette({ onClose, onRoute }: Props) {
           <span>
             <span className="kbd">↵</span> open
           </span>
-          <span>
-            <span className="kbd">⌘↵</span> open in new pane
+          <span style={{ marginLeft: 'auto' }}>
+            {debouncedQ.length >= 2 ? `${hits.length} results` : 'type to search'}
           </span>
-          <span style={{ marginLeft: 'auto' }}>184ms · 32 results</span>
         </div>
       </div>
     </div>

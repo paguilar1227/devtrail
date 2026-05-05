@@ -20,6 +20,8 @@ import {
   ContentListQuerySchema,
   ContentListResponseSchema,
   ContentCreateResponseSchema,
+  ContentEditBodyRequestSchema,
+  ContentUpdateRequestSchema,
   NoteCreateRequestSchema,
   ProjectCountsListResponseSchema,
   ProjectCreateRequestSchema,
@@ -44,6 +46,7 @@ import {
   type ContentCreateResponse,
   type ContentItem,
   type ContentListQuery,
+  type ContentUpdateRequest,
   type NoteCreateRequest,
   type Project,
   type ProjectCounts,
@@ -84,6 +87,23 @@ let API_KEY: string =
   import.meta.env.VITE_OPEN_BRAIN_API_KEY ??
   (typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '') ??
   '';
+
+// Drop the cached Bearer key and end the session. In prod this kicks
+// the user through Easy Auth's /.auth/logout endpoint, which clears the
+// Entra cookie and redirects back to the SPA root (where bootAuth will
+// re-trigger the AAD login). In dev there's no cookie session — we just
+// reload so any in-memory state resets.
+export function logout(): void {
+  try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch { /* ignore */ }
+  API_KEY = import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? '';
+  if (import.meta.env.DEV) {
+    window.location.assign('/');
+    return;
+  }
+  // post_logout_redirect_uri matters: without it Easy Auth lands on its
+  // own /.auth/logout/complete page, which is jarring.
+  window.location.assign('/.auth/logout?post_logout_redirect_uri=/');
+}
 
 export async function bootAuth(): Promise<void> {
   // If the build supplied a key, we're in local dev — nothing to exchange.
@@ -241,6 +261,11 @@ export async function listTodos(query: TodoListQuery = {}): Promise<Todo[]> {
   return data.todos;
 }
 
+export async function getTodo(id: string): Promise<Todo> {
+  const data = await request(`/todos/${id}`, TodoGetResponseSchema);
+  return data.todo;
+}
+
 export async function createTodo(req: TodoCreateRequest): Promise<Todo> {
   const body = JSON.stringify(TodoCreateRequestSchema.parse(req));
   const data = await request('/todos', TodoGetResponseSchema, { method: 'POST', body });
@@ -296,6 +321,20 @@ export async function listContent(query: ContentListQuery = {}): Promise<Content
 export async function createNote(req: NoteCreateRequest): Promise<ContentCreateResponse> {
   const body = JSON.stringify(NoteCreateRequestSchema.parse(req));
   return request('/content', ContentCreateResponseSchema, { method: 'POST', body });
+}
+
+// PUT /content/:id handles metadata diffs only (title / projects / tags).
+// Body edits go through POST /content/:id/edit-body, which re-chunks +
+// re-embeds and is gated by the body-immutability rule for blob-backed rows.
+export async function updateContent(id: string, patch: ContentUpdateRequest): Promise<ContentItem> {
+  const body = JSON.stringify(ContentUpdateRequestSchema.parse(patch));
+  const data = await request(`/content/${id}`, ContentGetResponseSchema, { method: 'PUT', body });
+  return data.item;
+}
+
+export async function editContentBody(id: string, content: string): Promise<ContentCreateResponse> {
+  const body = JSON.stringify(ContentEditBodyRequestSchema.parse({ content }));
+  return request(`/content/${id}/edit-body`, ContentCreateResponseSchema, { method: 'POST', body });
 }
 
 export async function archiveContent(id: string): Promise<void> {
