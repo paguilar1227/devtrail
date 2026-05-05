@@ -122,6 +122,17 @@ jobs:
             "${{ needs.build-and-deploy.outputs.app_url }}/api/v1/projects" \
             | jq -e '.projects | type == "array"'
 
+      - name: Smoke — MCP auth gate (no key → 401)
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deploy-smoke","version":"1"}}}' \
+            "${{ needs.build-and-deploy.outputs.app_url }}/mcp")
+          echo "mcp no-key code=$CODE"
+          test "$CODE" = "401"
+
       - name: Smoke — MCP initialize → 200 with serverInfo
         env:
           KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}

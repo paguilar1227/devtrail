@@ -81,6 +81,8 @@ function mockDeps(): ServiceDeps {
 describe('MCP endpoint via Hono app', () => {
   let deps: ServiceDeps;
   let app: ReturnType<typeof createApp>;
+  // Auth header matches the `apiKey: 'test-key'` set in mockDeps below.
+  const AUTH = { Authorization: 'Bearer test-key' };
 
   beforeEach(() => {
     deps = mockDeps();
@@ -93,6 +95,7 @@ describe('MCP endpoint via Hono app', () => {
       headers: {
         'content-type': 'application/json',
         'accept': 'application/json, text/event-stream',
+        ...AUTH,
       },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
@@ -115,7 +118,7 @@ describe('MCP endpoint via Hono app', () => {
   it('rejects invalid JSON body with a JSON-RPC parse error, not a crash', async () => {
     const req = new Request('http://localhost/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', ...AUTH },
       body: '{not valid json',
     });
 
@@ -131,7 +134,7 @@ describe('MCP endpoint via Hono app', () => {
     // initialize can be called over and over without failing.
     const makeInit = () => new Request('http://localhost/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', ...AUTH },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
         params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } },
@@ -154,7 +157,7 @@ describe('MCP endpoint via Hono app', () => {
     // In stateless mode, subsequent calls don't need session IDs
     const listReq = new Request('http://localhost/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', ...AUTH },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
     const res = await app.fetch(listReq);
@@ -162,6 +165,50 @@ describe('MCP endpoint via Hono app', () => {
     const body = JSON.parse(await res.text());
     expect(body.result?.tools).toBeDefined();
     expect(body.result.tools.length).toBe(21);
+  });
+
+  it('rejects unauthenticated /mcp calls with 401 — no fresh server spun up', async () => {
+    // No Authorization header, no ?key= — must fail before the MCP transport
+    // even sees the request. This is the regression test that pins the gate
+    // in place; without it /mcp was reachable anonymously.
+    const req = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('rejects /mcp calls with the wrong key', async () => {
+    const req = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream',
+        Authorization: 'Bearer not-the-real-key',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts /mcp calls with the key in the ?key= query param', async () => {
+    // Same contract as /api/v1/* — Authorization header OR ?key=. Lets
+    // clients that can't set headers (e.g. quick-and-dirty curl, MCP
+    // shareable URLs) still authenticate.
+    const req = new Request('http://localhost/mcp?key=test-key', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body.result?.tools?.length).toBe(21);
   });
 });
 

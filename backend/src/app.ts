@@ -134,6 +134,17 @@ export function createApp(deps: ServiceDeps) {
     }
     await next();
   });
+  // /mcp uses the same Bearer / ?key= contract as /api/v1/*. The endpoint
+  // is wired up with `app.all('/mcp', ...)` further down; this middleware
+  // gates it before the handler ever spins up an MCP server. Match-by-path
+  // here means we don't accidentally protect the entire app with `*`.
+  app.use('/mcp', async (c, next) => {
+    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
+    if (key !== deps.config.apiKey) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    await next();
+  });
 
   // /api/auth/token: the React UI calls this on boot to exchange its Easy
   // Auth session cookie for the long-lived Bearer key the rest of the
