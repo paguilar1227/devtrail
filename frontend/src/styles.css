@@ -1462,6 +1462,22 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   letter-spacing: -0.01em;
   margin-bottom: 2px;
 }
+/* Account identity inside the Settings modal — moved here from the mobile
+   More sheet, where it looked like a clickable row but wasn't. */
+.account-id {
+  display: flex; align-items: center; gap: 12px;
+  min-width: 0;
+}
+.account-avatar {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 600; font-size: 14px;
+  flex-shrink: 0;
+}
+.account-name { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.account-email { font-size: 11.5px; color: var(--fg-subtle); font-family: var(--font-mono); }
 
 /* ── Theme + utility toggles ── */
 .thm-toggle, .seg-toggle {

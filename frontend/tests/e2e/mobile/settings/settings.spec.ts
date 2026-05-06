@@ -52,3 +52,23 @@ test('settings mobile: clicking Log out clears the cached token and redirects', 
   const stored = await page.evaluate(() => localStorage.getItem('ob.api_key'));
   expect(stored).toBeNull();
 });
+
+// The next two tests pin TODO features. `test.fail` flips the test green
+// when the feature actually lands — until then, the suite tracks them as
+// expected-failures and they're visible in every report rather than
+// silently skipped. Replace `test.fail` with `test` once wired.
+test.fail('settings mobile: tapping Notifications routes to the Notifications view', async ({ page }) => {
+  const more = page.locator('.mobile-tabbar .mtab', { hasText: 'More' });
+  await expect(more).toBeVisible();
+  await more.click();
+  await page.locator('.m-sheet .m-sheet-row', { hasText: 'Notifications' }).click();
+  await expect(page.locator('main h1', { hasText: /Notifications/ })).toBeVisible();
+});
+
+test.fail('settings mobile: tapping Help & shortcuts routes to the Help view', async ({ page }) => {
+  const more = page.locator('.mobile-tabbar .mtab', { hasText: 'More' });
+  await expect(more).toBeVisible();
+  await more.click();
+  await page.locator('.m-sheet .m-sheet-row', { hasText: 'Help & shortcuts' }).click();
+  await expect(page.locator('main h1', { hasText: /Help|Shortcuts/ })).toBeVisible();
+});

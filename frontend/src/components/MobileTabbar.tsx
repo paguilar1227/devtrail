@@ -92,20 +92,12 @@ export function MobileTabbar({ route, onRoute, onAction }: Props) {
                 <button key={p.id} className="m-sheet-row" onClick={() => go({ route: 'project', project: p.id })}>
                   <span className={cls('sb-proj-dot', p.accent)}></span>
                   <span>{p.name}</span>
-                  <span className="sub mono">{p.counts.docs + p.counts.notes}</span>
                 </button>
               ))}
               {pinned.length === 0 && <div className="m-sheet-empty">No pinned projects yet.</div>}
             </div>
 
             <div className="m-sheet-section">Settings</div>
-            <div className="m-sheet-user">
-              <div className="ic-avatar">P</div>
-              <div className="grow">
-                <div className="nm">Alex</div>
-                <div className="em">you@example.com</div>
-              </div>
-            </div>
             <div className="m-sheet-list">
               <button
                 className="m-sheet-row"
@@ -120,9 +112,6 @@ export function MobileTabbar({ route, onRoute, onAction }: Props) {
               </button>
               <button className="m-sheet-row">
                 <span className="ic"><Icons.Inbox /></span><span>Notifications</span><span className="sub">›</span>
-              </button>
-              <button className="m-sheet-row">
-                <span className="ic"><Icons.Layers /></span><span>Connected sources</span><span className="sub">›</span>
               </button>
               <button className="m-sheet-row">
                 <span className="ic"><Icons.Sparkle /></span><span>Help &amp; shortcuts</span><span className="sub">›</span>

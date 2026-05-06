@@ -30,12 +30,21 @@ export const stamp = (): string =>
   `${E2E_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
 export const SIDEBAR = 'aside.sidebar';
+export const TABBAR = 'nav.mobile-tabbar';
+export const MORE_SHEET = '.m-sheet';
 
 export const navTo = (page: Page, label: string) =>
   page.locator(`${SIDEBAR} .sb-item:has(.label:text-is("${label}"))`).click();
 
 export const projectTo = (page: Page, name: string) =>
   page.locator(`${SIDEBAR} .sb-projects .sb-item:has(.label:text-is("${name}"))`).click();
+
+/** Mobile: open the More bottom-sheet from the tabbar. Specs that act on
+ *  rows inside the sheet use this so the tap-More dance isn't repeated. */
+export const openMoreSheet = async (page: Page) => {
+  await page.locator(`${TABBAR} .mtab`, { hasText: 'More' }).click();
+  await page.locator(MORE_SHEET).waitFor({ state: 'visible' });
+};
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {

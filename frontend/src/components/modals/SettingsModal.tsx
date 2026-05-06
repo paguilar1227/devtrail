@@ -45,9 +45,12 @@ export function SettingsModal({ theme, onTheme, onClose }: Props) {
 
       <div className="settings-card">
         <div className="settings-row">
-          <div>
-            <div className="settings-row-h">Account</div>
-            <div className="page-subtle">Signed in as you@example.com</div>
+          <div className="account-id">
+            <div className="account-avatar">P</div>
+            <div>
+              <div className="account-name">Alex</div>
+              <div className="account-email">you@example.com</div>
+            </div>
           </div>
           <button className="btn btn-danger" onClick={logout}>
             Log out
