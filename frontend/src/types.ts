@@ -136,7 +136,6 @@ export type Route =
   | { route: 'home' }
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
-  | { route: 'inbox' }
   | { route: 'tags' }
   | { route: 'activity' }
   | { route: 'search' }

@@ -14,10 +14,12 @@ interface Props {
 
 export function MobileTabbar({ route, onRoute, onAction }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
+  // Inbox is gone — its content lives on Home. The tabbar drops to two
+  // primary entries plus More; Home owns personal-scope, Projects owns
+  // structured-scope, More is the sheet of everything else.
   const items = [
     { id: 'home' as const, label: 'Home', icon: <Icons.Home /> },
     { id: 'projects' as const, label: 'Projects', icon: <Icons.Folders /> },
-    { id: 'inbox' as const, label: 'Inbox', icon: <Icons.Inbox /> },
   ];
   // Same query keys the rest of the app uses → cache hit, no extra fetch.
   const { data: apiProjects = [] } = useQuery({

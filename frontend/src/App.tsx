@@ -15,7 +15,6 @@ import { listProjects } from './lib/api';
 import { cls } from './lib/util';
 import { ActivityPage } from './pages/ActivityPage';
 import { HomePage } from './pages/HomePage';
-import { InboxPage } from './pages/InboxPage';
 import { MentionsPage } from './pages/MentionsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -101,8 +100,6 @@ export default function App() {
           { label: 'Projects', onClick: () => setRoute({ route: 'projects' }) },
           { label: project?.name || 'Project' },
         ];
-      case 'inbox':
-        return [{ label: 'Inbox' }];
       case 'activity':
         return [{ label: 'Activity' }];
       case 'tags':
@@ -138,10 +135,9 @@ export default function App() {
       <main className="main">
         <Topbar crumbs={crumbs} onCmdK={() => setCmdkOpen(true)} />
         <div className="main-scroll">
-          {route.route === 'home' && <HomePage onRoute={navigate} />}
+          {route.route === 'home' && <HomePage onRoute={navigate} onAction={onAction} />}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
           {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} />}
-          {route.route === 'inbox' && <InboxPage onAction={onAction} />}
           {route.route === 'activity' && <ActivityPage />}
           {route.route === 'tags' && <TagsPage onAction={onAction} />}
           {route.route === 'mentions' && <MentionsPage />}

@@ -96,7 +96,7 @@ export function CommandPalette({ onClose, onRoute, onAction, onToggleTheme, them
           title: h.chunk.parent_title,
           sub: h.chunk.content.replace(/\s+/g, ' ').slice(0, 80) + (h.chunk.content.length > 80 ? '…' : ''),
           icon: isNote ? <Icons.Note size={13} /> : <Icons.Doc size={13} />,
-          action: () => projectId ? onRoute({ route: 'project', project: projectId }) : onRoute({ route: 'inbox' }),
+          action: () => projectId ? onRoute({ route: 'project', project: projectId }) : onRoute({ route: 'home' }),
         });
       } else {
         const t = toUiTodo(h.todo);
@@ -116,7 +116,7 @@ export function CommandPalette({ onClose, onRoute, onAction, onToggleTheme, them
       { kind: 'action', id: 'upload', title: 'Upload file…', sub: 'in current project', icon: <Icons.Upload size={13} />, action: () => onAction({ kind: 'upload', payload: null }) },
       { kind: 'action', id: 'new-note', title: 'New note', sub: 'in current project', icon: <Icons.Note size={13} />, action: () => onAction({ kind: 'note-edit', payload: null }) },
       { kind: 'action', id: 'go-search', title: 'Go to Search', sub: 'shortcut · G then S', icon: <Icons.Search />, action: () => onRoute({ route: 'search' }) },
-      { kind: 'action', id: 'go-inbox', title: 'Go to Inbox', sub: 'shortcut · G then I', icon: <Icons.Inbox size={13} />, action: () => onRoute({ route: 'inbox' }) },
+      { kind: 'action', id: 'go-home', title: 'Go to Home', sub: 'shortcut · G then H', icon: <Icons.Home size={13} />, action: () => onRoute({ route: 'home' }) },
       { kind: 'action', id: 'go-activity', title: 'Go to Activity', sub: 'shortcut · G then A', icon: <Icons.Activity size={13} />, action: () => onRoute({ route: 'activity' }) },
       { kind: 'action', id: 'go-tags', title: 'Go to Tags', sub: 'shortcut · G then T', icon: <Icons.Tag size={13} />, action: () => onRoute({ route: 'tags' }) },
       { kind: 'action', id: 'toggle-theme', title: `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`, sub: 'shortcut · ⌘⇧L', icon: <Icons.Moon size={13} />, action: () => onToggleTheme() },

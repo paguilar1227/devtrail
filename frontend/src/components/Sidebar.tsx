@@ -51,19 +51,18 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
       </div>
 
       <div className="sb-section">Workspace</div>
+      {/* Home owns personal scope (project-less todos + notes), so the
+          count that used to sit on Inbox now hangs off Home. Mirrors the
+          existing Projects-counter pattern next to it. */}
       <div className={cls('sb-item', isRoute('home') && 'active')} onClick={() => onRoute({ route: 'home' })}>
         <span className="ic"><Icons.Home /></span>
         <span className="label">Home</span>
+        <span className="count">{inboxCount}</span>
       </div>
       <div className={cls('sb-item', isRoute('projects') && 'active')} onClick={() => onRoute({ route: 'projects' })}>
         <span className="ic"><Icons.Folders /></span>
         <span className="label">Projects</span>
         <span className="count">{projects.length}</span>
-      </div>
-      <div className={cls('sb-item', isRoute('inbox') && 'active')} onClick={() => onRoute({ route: 'inbox' })}>
-        <span className="ic"><Icons.Inbox /></span>
-        <span className="label">Inbox</span>
-        <span className="count">{inboxCount}</span>
       </div>
       <div className={cls('sb-item', isRoute('activity') && 'active')} onClick={() => onRoute({ route: 'activity' })}>
         <span className="ic"><Icons.Activity /></span>

@@ -34,7 +34,6 @@ test('sidebar: every Workspace nav row routes to the right page', async ({ page 
   const routes: Array<[string, RegExp]> = [
     ['Home', /Welcome back/],
     ['Projects', /^Projects$/],
-    ['Inbox', /^Inbox$/],
     ['Activity', /^Activity$/],
     ['Tags', /^Tags$/],
     ['Mentions', /Find Mentions/],

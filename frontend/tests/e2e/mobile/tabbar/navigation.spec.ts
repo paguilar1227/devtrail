@@ -1,14 +1,11 @@
-// Mobile bottom-tabbar — the always-visible primary nav. Walks through
-// the three top-level routes the tabbar exposes (Home / Projects / Inbox),
-// asserting the page hero h1 after each tap. The More tab is covered by
-// mobile/more/* specs.
+// Mobile bottom-tabbar — primary nav. After the Inbox merge, the tabbar
+// has two route entries (Home, Projects) plus More. This test walks both
+// route entries, assertingt the hero h1 each time.
 import { expect, test } from '@playwright/test';
 import { TABBAR } from '../../helpers/setup';
 import '../../helpers/setup';
 
-test('mobile tabbar: Home / Projects / Inbox each route to their own page', async ({ page }) => {
-  // App lands on Home; verify, then click each tab and check the hero. We
-  // visit Home last to confirm the round-trip back to the starting view.
+test('mobile tabbar: Home and Projects each route to their own page', async ({ page }) => {
   const tab = (label: string) => page.locator(`${TABBAR} .mtab`, { hasText: label });
   const hero = (text: RegExp | string) => page.locator('main h1', { hasText: text });
 
@@ -16,9 +13,6 @@ test('mobile tabbar: Home / Projects / Inbox each route to their own page', asyn
 
   await tab('Projects').click();
   await expect(hero(/^Projects$/)).toBeVisible();
-
-  await tab('Inbox').click();
-  await expect(hero(/^Inbox$/)).toBeVisible();
 
   await tab('Home').click();
   await expect(hero(/Welcome back/)).toBeVisible();

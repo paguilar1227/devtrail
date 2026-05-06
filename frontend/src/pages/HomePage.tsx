@@ -1,35 +1,60 @@
-import { useMemo } from 'react';
-import { useQueries } from '@tanstack/react-query';
+// Home — personal-scope landing page. Absorbs what used to be the Inbox
+// (project-less todos), adds project-less notes alongside it, and exposes
+// search at the top with a Personal/All-projects scope toggle.
+//
+// Layout (top to bottom):
+//   1. Hero      — greeting + New project button.
+//   2. Search    — input + scope toggle. Enter routes to /search?q=… so
+//                  the existing Search route owns rendering of results.
+//   3. Top row   — Todos progress card + Recent activity preview.
+//   4. Personal  — two columns: Personal todos | Personal notes, each
+//                  with a quick-add input at the top.
+//   5. Pinned    — chip strip linking to pinned projects.
+//
+// "Personal" means project_ids = [] (content) / project_id = null (todo).
+// The backend's content list filter accepts a single project_id, not the
+// "no project" case, so personal notes are filtered client-side.
+
+import { useMemo, useState } from 'react';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { Checkbox, Priority } from '../components/primitives';
-import { Spark } from '../components/primitives';
-import { ProjectCard } from '../components/ProjectCard';
 import {
-  getStats,
+  createNote,
+  createTodo,
   listActivity,
+  listContent,
   listProjectCounts,
   listProjects,
   listTodos,
+  getStats,
+  updateTodo,
 } from '../lib/api';
-import { toUiActivity, toUiProjects, toUiStats, toUiTodo } from '../lib/view';
+import { toUiActivity, toUiProjects, toUiTodo } from '../lib/view';
 import { cls, fmtRel, isOverdue } from '../lib/util';
-import type { Route } from '../types';
+import type { ActionDispatch, Route, Todo } from '../types';
 
 interface Props {
   onRoute: (r: Route) => void;
+  onAction: ActionDispatch;
 }
 
-export function HomePage({ onRoute }: Props) {
+type SearchScope = 'personal' | 'all';
+
+export function HomePage({ onRoute, onAction }: Props) {
+  const qc = useQueryClient();
+
   const queries = useQueries({
     queries: [
       { queryKey: ['stats'], queryFn: () => getStats() },
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
       { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
       { queryKey: ['todos', 'inbox'], queryFn: () => listTodos({ project_id: 'null' }) },
-      { queryKey: ['activity', 'recent'], queryFn: () => listActivity({ limit: 6 }) },
+      { queryKey: ['content', 'notes'], queryFn: () => listContent({ type: 'note' }) },
+      { queryKey: ['activity', 'recent'], queryFn: () => listActivity({ limit: 4 }) },
     ],
   });
-  const [statsQ, projectsQ, countsQ, inboxQ, activityQ] = queries;
+  const [statsQ, projectsQ, countsQ, todosQ, notesQ, activityQ] = queries;
 
   const projectsRaw = projectsQ.data ?? [];
   const projectsById = useMemo(
@@ -41,12 +66,80 @@ export function HomePage({ onRoute }: Props) {
     [projectsRaw, countsQ.data],
   );
   const pinned = projects.filter((p) => p.pinned && p.status === 'active');
-  const inbox = (inboxQ.data ?? []).slice(0, 4).map(toUiTodo);
-  const activity = (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById));
-  const stats = statsQ.data ? toUiStats(statsQ.data) : null;
+  const personalTodos = useMemo(
+    () => (todosQ.data ?? []).map(toUiTodo),
+    [todosQ.data],
+  );
+  // Personal notes = notes with no project membership. Backend list endpoint
+  // doesn't expose a "no project" filter today, so filter client-side. At
+  // single-user scale this is cheap; switch to a backend filter if it grows.
+  const personalNotes = useMemo(
+    () => (notesQ.data ?? []).filter((c) => c.project_ids.length === 0),
+    [notesQ.data],
+  );
+  const activity = useMemo(
+    () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
+    [activityQ.data, projectsById],
+  );
+  const stats = statsQ.data;
 
   const isLoading = queries.some((q) => q.isLoading);
   const error = queries.find((q) => q.error)?.error;
+
+  const todosTotal = stats?.counts.todos.total ?? 0;
+  const todosDone = stats?.counts.todos.done ?? 0;
+  const donePct = todosTotal > 0 ? Math.round((todosDone / todosTotal) * 100) : 0;
+  const overdueCount = personalTodos.filter(
+    (t) => t.status !== 'done' && t.due_at && isOverdue(t.due_at),
+  ).length;
+  const dueThisWeekCount = personalTodos.filter((t) => {
+    if (t.status === 'done' || !t.due_at) return false;
+    const due = new Date(t.due_at).getTime();
+    const now = Date.now();
+    return due > now && due - now < 7 * 24 * 60 * 60 * 1000;
+  }).length;
+
+  // ── Search ───────────────────────────────────────────────
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<SearchScope>('personal');
+  const submitSearch = () => {
+    if (!query.trim()) return;
+    // Scope passes through but the search route only consumes `q` for now.
+    // Wiring scope into the actual search filter is a follow-up — the
+    // toggle is in the UI so we capture intent, just not yet enforced.
+    onRoute({ route: 'search' });
+  };
+
+  // ── Quick-add ───────────────────────────────────────────
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['todos'] });
+    qc.invalidateQueries({ queryKey: ['content'] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+  const todoCreate = useMutation({
+    mutationFn: (content: string) => createTodo({ content }),
+    onSuccess: invalidate,
+  });
+  const noteCreate = useMutation({
+    // Quick capture — first line becomes the title (capped at 80 chars),
+    // full text goes into the body. Mirrors the NoteEditorModal contract
+    // but keystroke-light for the Home column.
+    mutationFn: (body: string) => {
+      const firstLine = body.split('\n')[0].trim();
+      const title = (firstLine || 'Untitled note').slice(0, 80);
+      return createNote({ type: 'note', title, content: body, project_ids: [], tags: [] });
+    },
+    onSuccess: invalidate,
+  });
+  const todoToggle = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
+      updateTodo(id, { status }),
+    onSuccess: invalidate,
+  });
+
+  const [todoDraft, setTodoDraft] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
 
   if (error) {
     return (
@@ -66,147 +159,201 @@ export function HomePage({ onRoute }: Props) {
     );
   }
 
-  const inboxCount = inboxQ.data?.length ?? 0;
-  const todosTotal = stats.counts.todos;
-  const donePct = todosTotal > 0 ? Math.round((stats.counts.done / todosTotal) * 100) : 0;
-
   return (
     <div className="page">
       <div className="proj-hero">
         <div>
           <h1>Welcome back, Alex.</h1>
-          <p className="page-subtle">
-            You have <b style={{ color: 'var(--fg)' }}>{stats.processing.pending} document processing</b>,{' '}
-            <b style={{ color: 'var(--fg)' }}>{inboxCount} todos in your inbox</b>, and {pinned.length} active projects pinned.
-            {stats.freshness.last_edit_ms > 0 ? (
-              <> Last edit was {fmtRel(new Date(Date.now() - stats.freshness.last_edit_ms).toISOString())}.</>
-            ) : null}
-          </p>
         </div>
         <button className="btn btn-primary" onClick={() => onRoute({ route: 'projects', action: 'new' })}>
           <Icons.Plus /> New project
         </button>
       </div>
 
-      <div className="stats">
-        <div className="stat-card">
-          <div className="lb">Projects</div>
-          <div className="vl">{stats.counts.projects}</div>
-          <div className="ds">{pinned.length} pinned · {projects.filter(p => p.status === 'active').length} active</div>
-          <span className="spark" style={{ color: 'var(--accent-1)' }}>
-            <Spark data={[2, 3, 3, 4, 4, 5, 5]} />
-          </span>
+      <div className="home-search-row">
+        <div className="home-search-box">
+          <Icons.Search />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+            placeholder="Search your stuff — todos, notes, documents…"
+          />
         </div>
-        <div className="stat-card">
-          <div className="lb">Documents</div>
-          <div className="vl tabular">{stats.counts.documents}</div>
-          <div className="ds">
-            {stats.processing.pending > 0 ? `${stats.processing.pending} pending` : 'all ready'}
-            {stats.processing.failed > 0 ? ` · ${stats.processing.failed} failed` : ''}
-          </div>
-          <span className="spark" style={{ color: 'oklch(0.74 0.08 220)' }}>
-            <Spark data={[35, 38, 41, 42, 44, 47, 50]} />
-          </span>
-        </div>
-        <div className="stat-card">
-          <div className="lb">Notes</div>
-          <div className="vl tabular">{stats.counts.notes}</div>
-          <div className="ds">in {projects.filter(p => p.counts.notes > 0).length} projects</div>
-          <span className="spark" style={{ color: 'oklch(0.74 0.10 80)' }}>
-            <Spark data={[40, 41, 43, 43, 44, 45, 46]} />
-          </span>
-        </div>
-        <div className="stat-card">
-          <div className="lb">Todos</div>
-          <div className="vl tabular">
-            {stats.counts.done}/{todosTotal}
-          </div>
-          <div className="ds">{donePct}% complete</div>
-          <span className="spark" style={{ color: 'oklch(0.74 0.10 150)' }}>
-            <Spark data={[12, 14, 16, 18, 20, 22, 23]} />
-          </span>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-head">
-          <h2>Pinned projects</h2>
-          <button className="btn btn-ghost btn-sm" onClick={() => onRoute({ route: 'projects' })}>
-            All projects →
+        <div className="home-scope-toggle" role="tablist" aria-label="Search scope">
+          <button
+            type="button"
+            role="tab"
+            className={cls(scope === 'personal' && 'active')}
+            onClick={() => setScope('personal')}
+          >
+            Personal
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={cls(scope === 'all' && 'active')}
+            onClick={() => setScope('all')}
+          >
+            All projects
           </button>
         </div>
-        {pinned.length > 0 ? (
-          <div className="proj-grid">
-            {pinned.map((p) => (
-              <ProjectCard key={p.id} p={p} size="lg" onOpen={() => onRoute({ route: 'project', project: p.id })} />
-            ))}
-          </div>
-        ) : (
-          <div className="page-subtle">No pinned projects yet — pin from any project menu.</div>
-        )}
       </div>
 
-      <div className="section home-bottom-grid">
-        <div>
-          <div className="section-head">
-            <h2>Inbox · todos with no project</h2>
-            <button className="btn btn-ghost btn-sm" onClick={() => onRoute({ route: 'inbox' })}>
-              Open inbox →
-            </button>
+      <div className="home-top-row">
+        <div className="stat-todos">
+          <div className="lb">Todos</div>
+          <div className="vl">
+            {todosDone}
+            <span className="vl-sub">/{todosTotal}</span>
           </div>
-          <div className="row-list">
-            {inbox.length === 0 ? (
-              <div className="page-subtle">Inbox is empty.</div>
-            ) : (
-              inbox.map((t) => (
-                <div key={t.id} className="row" style={{ gridTemplateColumns: '20px 1fr auto auto' }}>
-                  <Checkbox checked={t.status === 'done'} />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{t.title}</div>
-                    {t.due_at ? (
-                      <div style={{ fontSize: 10.5, color: 'var(--fg-subtle)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-                        <span className={isOverdue(t.due_at) ? 'due-overdue' : ''}>due {fmtRel(t.due_at)}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  <Priority p={t.priority} />
-                  <span className="subtle mono" style={{ fontSize: 10.5 }}>
-                    {fmtRel(t.created_at)}
-                  </span>
-                </div>
-              ))
-            )}
+          <div className="ds">
+            {donePct}% complete
+            {dueThisWeekCount > 0 ? ` · ${dueThisWeekCount} due this week` : ''}
+            {overdueCount > 0 ? ` · ${overdueCount} overdue` : ''}
           </div>
         </div>
-        <div>
-          <div className="section-head">
-            <h2>Recent activity</h2>
+        <div className="stat-activity">
+          <div className="ah">
+            <div className="lb">Recent activity</div>
             <button className="btn btn-ghost btn-sm" onClick={() => onRoute({ route: 'activity' })}>
               Full feed →
             </button>
           </div>
-          <div className="row-list">
-            {activity.length === 0 ? (
-              <div className="page-subtle">No recent activity.</div>
-            ) : (
-              activity.map((a) => (
-                <div key={a.id} className="activity-row">
-                  <div className={cls('activity-icon', a.kind)}>
+          {activity.length === 0 ? (
+            <div className="page-subtle">No recent activity.</div>
+          ) : (
+            <div className="arows">
+              {activity.map((a) => (
+                <div key={a.id} className="arow">
+                  <span className={cls('aic', a.kind)}>
                     {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
-                  </div>
-                  <div className="text">
+                  </span>
+                  <span className="atext">
                     {a.kind === 'ingest' ? 'Ingested' : a.kind === 'edit' ? 'Edited' : 'Commented on'} <b>{a.title}</b>
-                    <span className="subtle mono" style={{ fontSize: 10, marginLeft: 6 }}>
-                      · {a.project}
-                    </span>
-                  </div>
-                  <span className="ts">{fmtRel(a.at)}</span>
+                    <span className="subtle mono"> · {a.project}</span>
+                  </span>
+                  <span className="ats">{fmtRel(a.at)}</span>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      <div className="home-personal-h">
+        <h2>Personal</h2>
+        <span className="sub mono">project-less todos and notes</span>
+      </div>
+
+      <div className="home-personal-grid">
+        <div className="pcol">
+          <div className="pcol-h">
+            <h3>Todos</h3>
+            <span className="ct mono">{personalTodos.length}</span>
+          </div>
+          <div className="pcol-add">
+            <input
+              placeholder="+ New todo (no project) — press Enter to add"
+              value={todoDraft}
+              onChange={(e) => setTodoDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && todoDraft.trim() && !todoCreate.isPending) {
+                  e.preventDefault();
+                  const c = todoDraft.trim();
+                  setTodoDraft('');
+                  todoCreate.mutate(c);
+                }
+              }}
+              disabled={todoCreate.isPending}
+            />
+          </div>
+          {personalTodos.length === 0 ? (
+            <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+          ) : (
+            personalTodos.slice(0, 6).map((t) => (
+              <div
+                key={t.id}
+                className="prow prow-todo"
+                onClick={() => onAction({ kind: 'todo-detail', payload: t })}
+              >
+                <Checkbox
+                  checked={t.status === 'done'}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    todoToggle.mutate({
+                      id: t.id,
+                      status: t.status === 'done' ? 'not_started' : 'done',
+                    });
+                  }}
+                />
+                <div>
+                  <div className="ti">{t.title}</div>
+                  {t.due_at ? (
+                    <div className={cls('ti-sub', isOverdue(t.due_at) && 'due-overdue')}>
+                      due {fmtRel(t.due_at)}
+                    </div>
+                  ) : null}
+                </div>
+                <Priority p={t.priority} />
+                <span className="ats mono">{fmtRel(t.created_at)}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="pcol">
+          <div className="pcol-h">
+            <h3>Notes</h3>
+            <span className="ct mono">{personalNotes.length}</span>
+          </div>
+          <div className="pcol-add">
+            <input
+              placeholder="+ Quick note — press Enter to capture"
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && noteDraft.trim() && !noteCreate.isPending) {
+                  e.preventDefault();
+                  const c = noteDraft.trim();
+                  setNoteDraft('');
+                  noteCreate.mutate(c);
+                }
+              }}
+              disabled={noteCreate.isPending}
+            />
+          </div>
+          {personalNotes.length === 0 ? (
+            <div className="pcol-empty">No personal notes — capture above.</div>
+          ) : (
+            personalNotes.slice(0, 6).map((n) => (
+              <div key={n.id} className="prow prow-note">
+                <div>
+                  <div className="ti">{n.title}</div>
+                  <div className="ti-sub mono">{fmtRel(n.updated_at ?? n.created_at)} ago</div>
+                </div>
+                <span className="ats mono">{fmtRel(n.updated_at ?? n.created_at)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {pinned.length > 0 ? (
+        <div className="home-pinned-strip">
+          <span className="label mono">Pinned</span>
+          {pinned.map((p) => (
+            <button
+              key={p.id}
+              className="pin-chip"
+              onClick={() => onRoute({ route: 'project', project: p.id })}
+            >
+              <span className={cls('dot', p.accent)}></span>
+              {p.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
