@@ -62,7 +62,10 @@ export interface ContentItemStatus {
 
 export interface ListContentItemsFilters {
   type?: ContentType;
-  project_id?: string;              // matches if project_id is in project_ids[]
+  // Three modes: a UUID matches rows whose project_ids array contains it;
+  // `null` matches rows with no project membership at all (personal scope —
+  // mirrors the equivalent on todos.project_id); `undefined` does no filter.
+  project_id?: string | null;
   tags?: string[];                   // AND semantics: all tags must be present
   processing_status?: ProcessingStatus[]; // OR semantics: row must match any
   pinned?: boolean;                  // true = only pinned, false = only not pinned, undefined = no filter
@@ -151,7 +154,15 @@ export async function listContentItems(
 
   if (!filters.include_archived) conditions.push('archived = false');
   if (filters.type) { conditions.push(`type = $${i++}`); params.push(filters.type); }
-  if (filters.project_id) { conditions.push(`project_ids @> ARRAY[$${i++}]::uuid[]`); params.push(filters.project_id); }
+  if (filters.project_id === null) {
+    // Personal scope — rows with no project membership. project_ids is a
+    // NOT NULL array column, so "no project" means an empty array. Index
+    // hint: cardinality(project_ids) = 0 stays sargable on the array.
+    conditions.push('cardinality(project_ids) = 0');
+  } else if (filters.project_id !== undefined) {
+    conditions.push(`project_ids @> ARRAY[$${i++}]::uuid[]`);
+    params.push(filters.project_id);
+  }
   if (filters.tags && filters.tags.length > 0) { conditions.push(`tags @> $${i++}`); params.push(filters.tags); }
   if (filters.processing_status && filters.processing_status.length > 0) {
     conditions.push(`processing_status = ANY($${i++}::text[])`);

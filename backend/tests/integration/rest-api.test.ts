@@ -941,6 +941,59 @@ describe('Content items API', () => {
     expect(listQ!.params).toContainEqual(['failed']);
   });
 
+  it('GET /content?project_id=null filters to rows with no project membership', async () => {
+    // Personal-scope filter — mirrors /todos?project_id=null. The wire
+    // sentinel 'null' must translate to a SQL predicate that picks rows
+    // whose project_ids array is empty (cardinality = 0). Without this,
+    // Home would have to load every note and filter client-side.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?type=note&project_id=null',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/cardinality\(project_ids\)\s*=\s*0/i);
+    // The literal 'null' must NOT show up as a UUID parameter — the handler
+    // converts it to a SQL predicate, not a bound param.
+    expect(listQ!.params).not.toContain('null');
+  });
+
+  it('GET /content?project_id=<uuid> still filters by project membership (regression)', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const projectId = '11111111-1111-1111-1111-111111111111';
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content?project_id=${projectId}`,
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ!.sql).toMatch(/project_ids\s*@>\s*ARRAY/i);
+    expect(listQ!.params).toContain(projectId);
+  });
+
+  it('GET /content?project_id=not-a-uuid-and-not-null returns 400', async () => {
+    // Schema accepts UUID or the literal 'null'; anything else is invalid.
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?project_id=garbage',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(400);
+  });
+
   it('GET /content?processing_status=pending,failed forwards both statuses', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
@@ -1983,6 +2036,40 @@ describe('Search API', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body.hits)).toBe(true);
+  });
+
+  it('POST /search with project_id="null" filters chunks to personal scope', async () => {
+    // Personal scope on /search must surface as a SQL predicate that picks
+    // chunks whose parent has no project membership (cardinality of
+    // parent.project_ids = 0). Without this, "Personal" on Home is a lie —
+    // it'd silently match across all projects.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', project_id: 'null', graph: false }),
+    }));
+    expect(res.status).toBe(200);
+
+    const seedQ = queries.find((q) => /FROM chunks c/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(seedQ).toBeDefined();
+    expect(seedQ!.sql).toMatch(/cardinality\(ci\.project_ids\)\s*=\s*0/i);
+    // The literal 'null' must NOT show up as a UUID-bound param.
+    expect(seedQ!.params).not.toContain('null');
+  });
+
+  it('POST /search with project_id="not-a-uuid-and-not-null" returns 400', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', project_id: 'garbage' }),
+    }));
+    expect(res.status).toBe(400);
   });
 
   it('extracts query entities via the depth classifier when graph is on (F1)', async () => {

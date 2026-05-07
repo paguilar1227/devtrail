@@ -141,7 +141,7 @@ export default function App() {
           {route.route === 'activity' && <ActivityPage />}
           {route.route === 'tags' && <TagsPage onAction={onAction} />}
           {route.route === 'mentions' && <MentionsPage />}
-          {route.route === 'search' && <SearchPage />}
+          {route.route === 'search' && <SearchPage initialQuery={route.query} initialScope={route.scope} />}
           {route.route === 'trash' && <TrashPage />}
         </div>
       </main>

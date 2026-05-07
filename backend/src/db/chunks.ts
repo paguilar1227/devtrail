@@ -94,7 +94,11 @@ export async function findSimilarChunks(
   embedding: number[],
   threshold: number,
   limit: number = 10,
-  opts: { projectId?: string; parentType?: 'document' | 'note'; tags?: string[] } = {},
+  // projectId modes mirror /content list:
+  //   string  → chunks whose parent's project_ids contains this UUID
+  //   null    → chunks whose parent has no project membership (personal)
+  //   undef   → no filter (global)
+  opts: { projectId?: string | null; parentType?: 'document' | 'note'; tags?: string[] } = {},
 ): Promise<ChunkSearchResult[]> {
   const conditions = [
     'ci.archived = false',
@@ -104,7 +108,9 @@ export async function findSimilarChunks(
   const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
   let i = 4;
 
-  if (opts.projectId) {
+  if (opts.projectId === null) {
+    conditions.push('cardinality(ci.project_ids) = 0');
+  } else if (opts.projectId !== undefined) {
     conditions.push(`ci.project_ids @> ARRAY[$${i++}]::uuid[]`);
     params.push(opts.projectId);
   }

@@ -138,7 +138,11 @@ export type Route =
   | { route: 'project'; project: string }
   | { route: 'tags' }
   | { route: 'activity' }
-  | { route: 'search' }
+  // Search optionally carries a query + scope from the entry point so
+  // navigating from Home doesn't dump the user on an empty Search view.
+  // scope: 'personal' = no-project content/todos; 'all' = global; or a
+  // specific project UUID to narrow to one project.
+  | { route: 'search'; query?: string; scope?: 'personal' | 'all' | string }
   | { route: 'mentions' }
   | { route: 'trash' };
 

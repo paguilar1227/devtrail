@@ -8,7 +8,11 @@ import {
 import { withSpan } from '../observability.js';
 
 export interface SearchOptions {
-  projectId?: string;
+  // Same trinary as /content list filter:
+  //   string  = single project scope
+  //   null    = personal scope (no project membership)
+  //   undef   = global scope (everything)
+  projectId?: string | null;
   entityTypes?: Array<'document' | 'note' | 'todo'>;
   tags?: string[];
   limit?: number;
@@ -119,7 +123,11 @@ async function searchWithTimingsImpl(
       : Promise.resolve([]),
     searchTodos && !tags
       ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit)
-          .then((t) => projectId ? t.filter((x) => x.project_id === projectId) : t)
+          .then((t) => {
+            if (projectId === null) return t.filter((x) => x.project_id === null);
+            if (typeof projectId === 'string') return t.filter((x) => x.project_id === projectId);
+            return t;
+          })
       : Promise.resolve([]),
   ]);
   const dbMs = Math.round(performance.now() - dbStart);
@@ -189,7 +197,9 @@ async function searchWithTimingsImpl(
           "ci.processing_status = 'ready'",
         ];
         const paramsList: unknown[] = [expandedChunkIds];
-        if (projectId) {
+        if (projectId === null) {
+          conditions.push('cardinality(ci.project_ids) = 0');
+        } else if (typeof projectId === 'string') {
           paramsList.push(projectId);
           conditions.push(`$${paramsList.length}::uuid = ANY(ci.project_ids)`);
         }

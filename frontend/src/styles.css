@@ -1748,7 +1748,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 
 .prow {
   padding: 11px 16px; display: grid; gap: 10px; align-items: center;
+  cursor: pointer;
 }
+.prow:hover { background: var(--glass-bg-soft); }
 .prow + .prow { border-top: 0.5px solid var(--hairline); }
 .prow-todo { grid-template-columns: 18px 1fr auto auto; }
 .prow-note { grid-template-columns: 1fr auto; }

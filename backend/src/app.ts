@@ -461,9 +461,12 @@ export function createApp(deps: ServiceDeps) {
         return c.json({ error: `Invalid pinned: "${q.pinned}". Expected true/false.` }, 400);
       }
 
+      // Translate the wire-level 'null' sentinel into the internal `null`
+      // the db filter understands — same shape as /todos uses for
+      // project-less rows.
       const items = await contentSvc.listContentItems(deps, {
         type: q.type,
-        project_id: q.project_id,
+        project_id: q.project_id === 'null' ? null : q.project_id,
         tags,
         processing_status,
         pinned,
@@ -1406,8 +1409,10 @@ export function createApp(deps: ServiceDeps) {
         queryEntities = classification.entities;
       }
 
+      // Translate the wire-level 'null' sentinel into the internal `null`
+      // the search service understands — same shape as /content list uses.
       const hits = await searchSvc.search(deps, body.query, {
-        projectId: body.project_id,
+        projectId: body.project_id === 'null' ? null : body.project_id,
         entityTypes: body.entity_types,
         tags: body.tags,
         limit: body.limit ?? 10,

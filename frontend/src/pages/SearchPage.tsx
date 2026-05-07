@@ -6,10 +6,21 @@ import { SearchResultsList } from '../components/SearchResultsList';
 import { listProjects, search } from '../lib/api';
 import { toUiSearchHit } from '../lib/view';
 
-export function SearchPage({ initialQuery = '' }: { initialQuery?: string }) {
+// scope values:
+//   'all'       → no project_id filter (global)
+//   'personal'  → project_id='null' on the wire (no-project content + todos)
+//   <uuid>      → single project filter
+type Scope = 'all' | 'personal' | string;
+
+interface Props {
+  initialQuery?: string;
+  initialScope?: Scope;
+}
+
+export function SearchPage({ initialQuery = '', initialScope = 'all' }: Props) {
   const [q, setQ] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
-  const [scope, setScope] = useState<string>('all');
+  const [scope, setScope] = useState<Scope>(initialScope);
 
   const { data: projects } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
   const projectsById = useMemo(
@@ -22,7 +33,10 @@ export function SearchPage({ initialQuery = '' }: { initialQuery?: string }) {
     queryFn: () =>
       search({
         query: submittedQuery,
-        project_id: scope === 'all' ? undefined : scope,
+        // 'all' = omit the filter; 'personal' goes on the wire as the
+        // string 'null' which the backend translates to a no-project
+        // SQL predicate; anything else is a project UUID.
+        project_id: scope === 'all' ? undefined : scope === 'personal' ? 'null' : scope,
         limit: 20,
       }),
     enabled: submittedQuery.trim().length > 0,
@@ -59,6 +73,9 @@ export function SearchPage({ initialQuery = '' }: { initialQuery?: string }) {
       <div className="filter-bar">
         <FilterChip active={scope === 'all'} onClick={() => setScope('all')}>
           All projects
+        </FilterChip>
+        <FilterChip active={scope === 'personal'} onClick={() => setScope('personal')}>
+          Personal
         </FilterChip>
         {(projects ?? []).filter(p => p.status === 'active').map(p => (
           <FilterChip key={p.id} active={scope === p.id} onClick={() => setScope(p.id)}>

@@ -180,7 +180,11 @@ export type ContentUpdateRequest = z.infer<typeof ContentUpdateRequestSchema>;
 // schema doubles as accurate OpenAPI documentation.
 export const ContentListQuerySchema = z.object({
   type: ContentTypeSchema.optional(),
-  project_id: UuidSchema.optional(),
+  // Either a UUID (rows whose project_ids array contains this UUID) or the
+  // literal string 'null' (rows with no project membership at all). Mirrors
+  // the contract on /todos so personal-scope queries are uniform across
+  // entity types.
+  project_id: z.union([UuidSchema, z.literal('null')]).optional(),
   tags: z.string().optional(),
   processing_status: z.string().optional(),
   pinned: z.string().optional(),
@@ -363,7 +367,10 @@ export type SearchHit = z.infer<typeof SearchHitSchema>;
 
 export const SearchRequestSchema = z.object({
   query: z.string().min(1),
-  project_id: UuidSchema.optional(),
+  // UUID = scope to a specific project. 'null' literal = personal scope:
+  // chunks whose parent content_item has no project_ids and todos whose
+  // project_id IS NULL. Omitted = global (all projects + personal).
+  project_id: z.union([UuidSchema, z.literal('null')]).optional(),
   entity_types: z.array(EntityKindSchema).optional(),
   tags: z.array(z.string()).optional(),
   limit: z.number().int().min(1).max(100).optional(),

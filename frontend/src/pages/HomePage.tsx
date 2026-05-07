@@ -30,7 +30,7 @@ import {
   getStats,
   updateTodo,
 } from '../lib/api';
-import { toUiActivity, toUiProjects, toUiTodo } from '../lib/view';
+import { toUiActivity, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
 import { cls, fmtRel, isOverdue } from '../lib/util';
 import type { ActionDispatch, Route, Todo } from '../types';
 
@@ -50,7 +50,10 @@ export function HomePage({ onRoute, onAction }: Props) {
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
       { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
       { queryKey: ['todos', 'inbox'], queryFn: () => listTodos({ project_id: 'null' }) },
-      { queryKey: ['content', 'notes'], queryFn: () => listContent({ type: 'note' }) },
+      // Backend filter: project_id='null' = rows with no project
+      // membership. Server-side keeps Home fast as the corpus grows
+      // instead of relying on a client-side filter over every note.
+      { queryKey: ['content', 'notes', 'personal'], queryFn: () => listContent({ type: 'note', project_id: 'null' }) },
       { queryKey: ['activity', 'recent'], queryFn: () => listActivity({ limit: 4 }) },
     ],
   });
@@ -70,13 +73,7 @@ export function HomePage({ onRoute, onAction }: Props) {
     () => (todosQ.data ?? []).map(toUiTodo),
     [todosQ.data],
   );
-  // Personal notes = notes with no project membership. Backend list endpoint
-  // doesn't expose a "no project" filter today, so filter client-side. At
-  // single-user scale this is cheap; switch to a backend filter if it grows.
-  const personalNotes = useMemo(
-    () => (notesQ.data ?? []).filter((c) => c.project_ids.length === 0),
-    [notesQ.data],
-  );
+  const personalNotes = notesQ.data ?? [];
   const activity = useMemo(
     () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
     [activityQ.data, projectsById],
@@ -104,10 +101,7 @@ export function HomePage({ onRoute, onAction }: Props) {
   const [scope, setScope] = useState<SearchScope>('personal');
   const submitSearch = () => {
     if (!query.trim()) return;
-    // Scope passes through but the search route only consumes `q` for now.
-    // Wiring scope into the actual search filter is a follow-up — the
-    // toggle is in the UI so we capture intent, just not yet enforced.
-    onRoute({ route: 'search' });
+    onRoute({ route: 'search', query: query.trim(), scope });
   };
 
   // ── Quick-add ───────────────────────────────────────────
@@ -327,10 +321,14 @@ export function HomePage({ onRoute, onAction }: Props) {
             <div className="pcol-empty">No personal notes — capture above.</div>
           ) : (
             personalNotes.slice(0, 6).map((n) => (
-              <div key={n.id} className="prow prow-note">
+              <div
+                key={n.id}
+                className="prow prow-note"
+                onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
+              >
                 <div>
                   <div className="ti">{n.title}</div>
-                  <div className="ti-sub mono">{fmtRel(n.updated_at ?? n.created_at)} ago</div>
+                  <div className="ti-sub mono">edited {fmtRel(n.updated_at ?? n.created_at)}</div>
                 </div>
                 <span className="ats mono">{fmtRel(n.updated_at ?? n.created_at)}</span>
               </div>
