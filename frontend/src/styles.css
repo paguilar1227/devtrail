@@ -1544,6 +1544,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   backdrop-filter: blur(8px);
   z-index: 1;
 }
+.activity-list { background: transparent; border: none; }
 .activity-row {
   display: grid;
   grid-template-columns: 24px 1fr auto;
@@ -1551,9 +1552,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   gap: 12px;
   padding: 8px 12px;
   border-radius: 8px;
+  cursor: pointer;
   transition: background 120ms;
 }
 .activity-row:hover { background: var(--glass-bg-soft); }
+.activity-row:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: 1px;
+}
 .activity-icon {
   width: 24px; height: 24px;
   display: grid; place-items: center;
@@ -1724,8 +1730,17 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .stat-activity .arow {
   display: grid; grid-template-columns: 22px 1fr auto;
   align-items: center; gap: 10px;
-  padding: 7px 0;
+  padding: 7px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  cursor: pointer;
   font-size: var(--type-body);
+  transition: background 120ms;
+}
+.stat-activity .arow:hover { background: var(--glass-bg-soft); }
+.stat-activity .arow:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: 1px;
 }
 .stat-activity .arow + .arow { border-top: 0.5px solid var(--hairline); }
 .stat-activity .arow .aic {
@@ -1828,9 +1843,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   cursor: pointer;
 }
 .pin-chip:hover { background: var(--glass-bg-soft); }
-.pin-chip .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-}
+.pin-chip .sb-proj-dot { width: 8px; height: 8px; }
 
 .note-editor-grid {
   display: grid;

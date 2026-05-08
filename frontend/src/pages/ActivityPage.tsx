@@ -4,12 +4,17 @@ import { Icons } from '../components/Icons';
 import { FilterChip } from '../components/primitives';
 import { listActivity, listProjects } from '../lib/api';
 import { toUiActivity } from '../lib/view';
+import { openActivityTarget } from '../lib/openActivity';
 import { cls, fmtRel } from '../lib/util';
-import type { ActivityEvent, ActivityKind } from '../types';
+import type { ActionDispatch, ActivityEvent, ActivityKind } from '../types';
 
 type FilterKind = 'all' | ActivityKind;
 
-export function ActivityPage() {
+interface Props {
+  onAction: ActionDispatch;
+}
+
+export function ActivityPage({ onAction }: Props) {
   const [kind, setKind] = useState<FilterKind>('all');
   const [activityQ, projectsQ] = useQueries({
     queries: [
@@ -80,12 +85,24 @@ export function ActivityPage() {
       ) : all.length === 0 ? (
         <div className="page-subtle">No activity yet.</div>
       ) : (
-        <div className="row-list" style={{ background: 'transparent', border: 'none' }}>
+        <div className="row-list activity-list">
           {Object.entries(grouped).map(([day, items]) => (
             <Fragment key={day}>
               <div className="activity-day">{day}</div>
               {items.map(a => (
-                <div key={a.id} className="activity-row">
+                <div
+                  key={a.id}
+                  className="activity-row"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openActivityTarget(a, onAction)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openActivityTarget(a, onAction);
+                    }
+                  }}
+                >
                   <div className={cls('activity-icon', a.kind)}>
                     {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
                   </div>

@@ -138,7 +138,7 @@ export default function App() {
           {route.route === 'home' && <HomePage onRoute={navigate} onAction={onAction} />}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
           {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} />}
-          {route.route === 'activity' && <ActivityPage />}
+          {route.route === 'activity' && <ActivityPage onAction={onAction} />}
           {route.route === 'tags' && <TagsPage onAction={onAction} />}
           {route.route === 'mentions' && <MentionsPage />}
           {route.route === 'search' && <SearchPage initialQuery={route.query} initialScope={route.scope} />}

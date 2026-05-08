@@ -6,3 +6,18 @@ test('activity: feed renders entries from the seed', async ({ page }) => {
   await expect(page.locator('h1', { hasText: 'Activity' })).toBeVisible();
   await expect(page.locator('.activity-row').first()).toBeVisible();
 });
+
+test('activity: clicking a row opens the underlying entity modal', async ({ page }) => {
+  await navTo(page, 'Activity');
+  const firstRow = page.locator('.activity-row').first();
+  await expect(firstRow).toBeVisible();
+
+  const title = (await firstRow.locator('.text b').innerText()).trim();
+  expect(title.length).toBeGreaterThan(0);
+
+  await firstRow.click();
+
+  const dialog = page.locator('[role="dialog"]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(title);
+});

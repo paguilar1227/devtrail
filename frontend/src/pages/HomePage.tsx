@@ -31,6 +31,7 @@ import {
   updateTodo,
 } from '../lib/api';
 import { toUiActivity, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
+import { openActivityTarget } from '../lib/openActivity';
 import { cls, fmtRel, isOverdue } from '../lib/util';
 import type { ActionDispatch, Route, Todo } from '../types';
 
@@ -219,7 +220,19 @@ export function HomePage({ onRoute, onAction }: Props) {
           ) : (
             <div className="arows">
               {activity.map((a) => (
-                <div key={a.id} className="arow">
+                <div
+                  key={a.id}
+                  className="arow"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openActivityTarget(a, onAction)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openActivityTarget(a, onAction);
+                    }
+                  }}
+                >
                   <span className={cls('aic', a.kind)}>
                     {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
                   </span>
@@ -346,7 +359,7 @@ export function HomePage({ onRoute, onAction }: Props) {
               className="pin-chip"
               onClick={() => onRoute({ route: 'project', project: p.id })}
             >
-              <span className={cls('dot', p.accent)}></span>
+              <span className={cls('sb-proj-dot', p.accent)}></span>
               {p.name}
             </button>
           ))}
