@@ -2,25 +2,31 @@
 // personal-todos column and the personal todos drawer. Anything that
 // should look or behave the same across both surfaces lives here.
 //
-// Markup intentionally mirrors what HomePage had inline so existing
-// CSS (.prow / .prow-todo / .ti / .ti-sub / .ats) keeps working — no
-// stylesheet churn beyond what the refactor strictly requires.
+// Visual states the row carries:
+//   - depth=1 → indented under its parent (subtask)
+//   - status=done → title struck through, row dimmed
+//   - comment_count > 0 → tiny chat-bubble badge with the count
+//   - due in the past + status != done → red due meta line
 
+import { Icons } from './Icons';
 import { Checkbox, Priority } from './primitives';
 import { cls, fmtRel, isOverdue } from '../lib/util';
 import type { Todo } from '../types';
 
 interface Props {
   todo: Todo;
+  depth?: 0 | 1;
   onClick?: () => void;
   onToggleDone?: () => void;
 }
 
-export function TodoRow({ todo, onClick, onToggleDone }: Props) {
+export function TodoRow({ todo, depth = 0, onClick, onToggleDone }: Props) {
   const t = todo;
+  const done = t.status === 'done';
   return (
     <div
-      className="prow prow-todo"
+      className={cls('prow', 'prow-todo', done && 'prow-done')}
+      data-depth={depth}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
@@ -32,7 +38,7 @@ export function TodoRow({ todo, onClick, onToggleDone }: Props) {
       } : undefined}
     >
       <Checkbox
-        checked={t.status === 'done'}
+        checked={done}
         onClick={(e: React.MouseEvent) => {
           e.stopPropagation();
           onToggleDone?.();
@@ -41,11 +47,17 @@ export function TodoRow({ todo, onClick, onToggleDone }: Props) {
       <div>
         <div className="ti">{t.title}</div>
         {t.due_at ? (
-          <div className={cls('ti-sub', isOverdue(t.due_at) && 'due-overdue')}>
+          <div className={cls('ti-sub', !done && isOverdue(t.due_at) && 'due-overdue')}>
             due {fmtRel(t.due_at)}
           </div>
         ) : null}
       </div>
+      {t.comments > 0 ? (
+        <span className="prow-comments" title={`${t.comments} comment${t.comments === 1 ? '' : 's'}`}>
+          <Icons.Chat size={11} />
+          <span>{t.comments}</span>
+        </span>
+      ) : null}
       <Priority p={t.priority} />
       <span className="ats">{fmtRel(t.created_at)}</span>
     </div>

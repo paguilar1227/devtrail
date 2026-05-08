@@ -12,6 +12,7 @@ import { Drawer } from '../primitives';
 import { TodoRow } from '../TodoRow';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
+import { sortPersonalTodos } from '../../lib/todoSort';
 import type { ActionDispatch, Todo } from '../../types';
 
 interface Props {
@@ -25,7 +26,7 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
     queryKey: ['todos', 'inbox'],
     queryFn: () => listTodos({ project_id: 'null' }),
   });
-  const todos = (data ?? []).map(toUiTodo);
+  const todos = sortPersonalTodos((data ?? []).map(toUiTodo));
 
   const toggle = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
@@ -52,6 +53,7 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
             <TodoRow
               key={t.id}
               todo={t}
+              depth={t.parent_id ? 1 : 0}
               onClick={() => {
                 onClose();
                 onAction({ kind: 'todo-detail', payload: t });

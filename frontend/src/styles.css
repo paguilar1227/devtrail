@@ -1809,13 +1809,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   padding: 1px 7px; border: 0.5px solid var(--hairline); border-radius: 6px;
   font-variant-numeric: tabular-nums;
 }
-.pcol-expand {
+.pcol-more {
   appearance: none; border: 0; cursor: pointer;
   background: transparent; color: var(--fg-subtle);
-  padding: 4px; border-radius: 6px;
-  display: inline-grid; place-items: center;
+  padding: 11px 16px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit;
+  font-size: var(--type-meta);
+  border-top: 0.5px solid var(--hairline);
+  width: 100%;
+  transition: background 100ms;
 }
-.pcol-expand:hover { background: var(--glass-bg-soft); color: var(--fg); }
+.pcol-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
 .todo-list-drawer-rows {
   display: flex; flex-direction: column;
   margin: -8px -18px;
@@ -1841,7 +1846,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .prow:hover { background: var(--glass-bg-soft); }
 .prow + .prow { border-top: 0.5px solid var(--hairline); }
-.prow-todo { grid-template-columns: 18px 1fr auto auto; }
+.prow-todo { grid-template-columns: 18px 1fr auto auto auto; }
 .prow-note { grid-template-columns: 1fr auto; }
 .prow .ti { font-size: var(--type-body); font-weight: 500; line-height: 1.35; }
 .prow .ti-sub {
@@ -1851,6 +1856,17 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .prow .ti-sub.due-overdue { color: oklch(0.72 0.14 25); }
 .prow .ats {
   font-size: var(--type-meta); color: var(--fg-subtle);
+}
+/* Subtask indent — single nesting level only on Home/drawer compact
+   views. The hierarchy is two-deep at most for personal todos. */
+.prow-todo[data-depth="1"] { padding-left: 38px; }
+/* Done todos read as background context — struck through + dimmed. */
+.prow-done .ti { text-decoration: line-through; color: var(--fg-muted); }
+.prow-done { opacity: 0.65; }
+.prow-comments {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .home-pinned-strip {

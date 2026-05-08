@@ -21,6 +21,7 @@ import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
 import { TodoRow } from '../components/TodoRow';
+import { sortPersonalTodos } from '../lib/todoSort';
 import {
   createNote,
   createTodo,
@@ -73,7 +74,7 @@ export function HomePage({ onRoute, onAction }: Props) {
   );
   const pinned = projects.filter((p) => p.pinned && p.status === 'active');
   const personalTodos = useMemo(
-    () => (todosQ.data ?? []).map(toUiTodo),
+    () => sortPersonalTodos((todosQ.data ?? []).map(toUiTodo)),
     [todosQ.data],
   );
   const personalNotes = notesQ.data ?? [];
@@ -243,16 +244,6 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Todos</h3>
             <span className="ct">{personalTodos.length}</span>
-            {personalTodos.length > 6 ? (
-              <button
-                className="pcol-expand"
-                onClick={() => onAction({ kind: 'personal-todos' })}
-                aria-label="View all personal todos"
-                title="View all"
-              >
-                <Icons.Expand />
-              </button>
-            ) : null}
           </div>
           <div className="pcol-add">
             <input
@@ -273,19 +264,31 @@ export function HomePage({ onRoute, onAction }: Props) {
           {personalTodos.length === 0 ? (
             <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
           ) : (
-            personalTodos.slice(0, 6).map((t) => (
-              <TodoRow
-                key={t.id}
-                todo={t}
-                onClick={() => onAction({ kind: 'todo-detail', payload: t })}
-                onToggleDone={() =>
-                  todoToggle.mutate({
-                    id: t.id,
-                    status: t.status === 'done' ? 'not_started' : 'done',
-                  })
-                }
-              />
-            ))
+            <>
+              {personalTodos.slice(0, 6).map((t) => (
+                <TodoRow
+                  key={t.id}
+                  todo={t}
+                  depth={t.parent_id ? 1 : 0}
+                  onClick={() => onAction({ kind: 'todo-detail', payload: t })}
+                  onToggleDone={() =>
+                    todoToggle.mutate({
+                      id: t.id,
+                      status: t.status === 'done' ? 'not_started' : 'done',
+                    })
+                  }
+                />
+              ))}
+              {personalTodos.length > 6 ? (
+                <button
+                  className="pcol-more"
+                  onClick={() => onAction({ kind: 'personal-todos' })}
+                >
+                  View {personalTodos.length - 6} more
+                  <Icons.ChevronRight size={11} />
+                </button>
+              ) : null}
+            </>
           )}
         </div>
 
@@ -293,16 +296,6 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Notes</h3>
             <span className="ct">{personalNotes.length}</span>
-            {personalNotes.length > 6 ? (
-              <button
-                className="pcol-expand"
-                onClick={() => onAction({ kind: 'personal-notes' })}
-                aria-label="View all personal notes"
-                title="View all"
-              >
-                <Icons.Expand />
-              </button>
-            ) : null}
           </div>
           <div className="pcol-add">
             <input
@@ -323,13 +316,24 @@ export function HomePage({ onRoute, onAction }: Props) {
           {personalNotes.length === 0 ? (
             <div className="pcol-empty">No personal notes — capture above.</div>
           ) : (
-            personalNotes.slice(0, 6).map((n) => (
-              <NoteRow
-                key={n.id}
-                note={toUiNote(n)}
-                onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
-              />
-            ))
+            <>
+              {personalNotes.slice(0, 6).map((n) => (
+                <NoteRow
+                  key={n.id}
+                  note={toUiNote(n)}
+                  onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
+                />
+              ))}
+              {personalNotes.length > 6 ? (
+                <button
+                  className="pcol-more"
+                  onClick={() => onAction({ kind: 'personal-notes' })}
+                >
+                  View {personalNotes.length - 6} more
+                  <Icons.ChevronRight size={11} />
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       </div>

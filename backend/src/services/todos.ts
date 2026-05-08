@@ -1,4 +1,5 @@
 import type { ServiceDeps } from './index.js';
+import { countCommentsByTodoIds } from '../db/todo-comments.js';
 import {
   insertTodo, listTodos as dbListTodos, getTodoById,
   updateTodo as dbUpdateTodo,
@@ -46,7 +47,12 @@ export async function createTodo(
 }
 
 export async function listTodos(deps: ServiceDeps, filters: ListTodosFilters = {}): Promise<TodoRow[]> {
-  return dbListTodos(deps.db, filters);
+  const rows = await dbListTodos(deps.db, filters);
+  if (rows.length === 0) return rows;
+  // Comment counts come from a single batched query — keeps the list
+  // path O(1) DB roundtrips instead of fanning out per row.
+  const counts = await countCommentsByTodoIds(deps.db, rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, comment_count: counts.get(r.id) ?? 0 }));
 }
 
 export async function getTodo(deps: ServiceDeps, id: string): Promise<TodoRow | null> {

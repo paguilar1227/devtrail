@@ -1679,9 +1679,13 @@ describe('Todos API', () => {
   });
 
   it('lists todos', async () => {
-    vi.mocked(deps.db.query).mockResolvedValueOnce({
-      rows: [{ id: 't1', content: 'Thing', status: 'not_started', tags: [], embedding: null, archived: false, created_at: new Date(), updated_at: new Date() }],
-    } as any);
+    // listTodos issues two queries: the list itself, then a batched
+    // comment-count lookup. Mock both so we don't NPE on the second.
+    vi.mocked(deps.db.query)
+      .mockResolvedValueOnce({
+        rows: [{ id: 't1', content: 'Thing', status: 'not_started', tags: [], embedding: null, archived: false, created_at: new Date(), updated_at: new Date() }],
+      } as any)
+      .mockResolvedValueOnce({ rows: [{ todo_id: 't1', count: 3 }] } as any);
 
     const res = await app.fetch(new Request('http://localhost/api/v1/todos', { headers: AUTH }));
     expect(res.status).toBe(200);
@@ -1689,6 +1693,8 @@ describe('Todos API', () => {
     expect(body.todos).toHaveLength(1);
     // embedding should be stripped
     expect(body.todos[0].embedding).toBeUndefined();
+    // comment_count attached from the second query
+    expect(body.todos[0].comment_count).toBe(3);
   });
 
   it('GET /todos?parent_id=<uuid> filters subtasks of a specific parent', async () => {
