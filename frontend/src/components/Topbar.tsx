@@ -1,5 +1,4 @@
 import { Fragment } from 'react';
-import { Icons } from './Icons';
 
 export interface Crumb {
   label: string;
@@ -8,10 +7,9 @@ export interface Crumb {
 
 interface Props {
   crumbs: Crumb[];
-  onCmdK: () => void;
 }
 
-export function Topbar({ crumbs, onCmdK }: Props) {
+export function Topbar({ crumbs }: Props) {
   return (
     <header className="topbar">
       <div className="crumb">
@@ -23,16 +21,6 @@ export function Topbar({ crumbs, onCmdK }: Props) {
             </span>
           </Fragment>
         ))}
-      </div>
-      <div className="search" onClick={onCmdK}>
-        <span style={{ color: 'var(--fg-subtle)' }}><Icons.Search /></span>
-        <input placeholder="Search across all projects…" readOnly />
-        <span className="kbd">⌘K</span>
-      </div>
-      <div className="topbar-actions">
-        <button className="btn btn-ghost btn-icon icon-search" onClick={onCmdK}>
-          <Icons.Search />
-        </button>
       </div>
     </header>
   );

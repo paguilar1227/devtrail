@@ -59,6 +59,10 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
         <span className="label">Home</span>
         <span className="count">{inboxCount}</span>
       </div>
+      <div className="sb-item" onClick={() => onAction({ kind: 'search' })}>
+        <span className="ic"><Icons.Search /></span>
+        <span className="label">Search</span>
+      </div>
       <div className={cls('sb-item', isRoute('projects') && 'active')} onClick={() => onRoute({ route: 'projects' })}>
         <span className="ic"><Icons.Folders /></span>
         <span className="label">Projects</span>

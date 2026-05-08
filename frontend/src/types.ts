@@ -156,6 +156,7 @@ export type ModalKind =
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }
   | { kind: 'confirm-rename'; payload: TagRow }
   | { kind: 'new-project' }
-  | { kind: 'settings' };
+  | { kind: 'settings' }
+  | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } };
 
 export type ActionDispatch = (modal: ModalKind) => void;

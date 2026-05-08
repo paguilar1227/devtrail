@@ -103,7 +103,7 @@ export function HomePage({ onRoute, onAction }: Props) {
   const [scope, setScope] = useState<SearchScope>('personal');
   const submitSearch = () => {
     if (!query.trim()) return;
-    onRoute({ route: 'search', query: query.trim(), scope });
+    onAction({ kind: 'search', payload: { query: query.trim(), scope } });
   };
 
   // ── Quick-add ───────────────────────────────────────────

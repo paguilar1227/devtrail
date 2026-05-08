@@ -8,6 +8,7 @@ import { ConfirmModal } from './components/modals/ConfirmModal';
 import { DocReaderDrawer } from './components/modals/DocReaderDrawer';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
+import { SearchDrawer } from './components/modals/SearchDrawer';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
 import { UploadModal } from './components/modals/UploadModal';
 import { useIsMobile } from './lib/useIsMobile';
@@ -133,7 +134,7 @@ export default function App() {
         />
       )}
       <main className="main">
-        <Topbar crumbs={crumbs} onCmdK={() => setCmdkOpen(true)} />
+        <Topbar crumbs={crumbs} />
         <div className="main-scroll">
           {route.route === 'home' && <HomePage onRoute={navigate} onAction={onAction} />}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
@@ -179,6 +180,13 @@ export default function App() {
       {modal?.kind === 'new-project' && <NewProjectModal onClose={() => setModal(null)} />}
       {modal?.kind === 'settings' && (
         <SettingsModal theme={theme} onTheme={setTheme} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'search' && (
+        <SearchDrawer
+          initialQuery={modal.payload?.query}
+          initialScope={modal.payload?.scope}
+          onClose={() => setModal(null)}
+        />
       )}
 
       {cmdkOpen && (
