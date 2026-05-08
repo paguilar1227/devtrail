@@ -12,7 +12,9 @@ test('drawer: expand toggle moves the right-rail drawer to centered/wider and ba
   // share the same Drawer primitive, so the toggle behavior is identical.
   await page.locator('.stat-activity .arow').first().click();
   const drawer = page.locator('.drawer');
-  await expect(drawer).toBeVisible();
+  // Click triggers an async fetch for the full entity — give CI's
+  // slower runner room to finish before asserting.
+  await expect(drawer).toBeVisible({ timeout: 15000 });
   await expect(drawer).not.toHaveClass(/drawer-expanded/);
 
   // Default: ~480px wide, anchored 12px from the right edge.

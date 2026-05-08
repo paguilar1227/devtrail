@@ -20,9 +20,11 @@ test('home activity: clicking a row opens the underlying entity modal', async ({
   await firstRow.click();
 
   // All three modals (note/todo/doc) render as role="dialog" — a single
-  // assertion covers every entity kind.
+  // assertion covers every entity kind. The click triggers an async
+  // fetch for the full entity, so allow extra time on CI's slower
+  // runner — the default 5s timeout is tight here.
   const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeVisible({ timeout: 15000 });
   // The opened modal should reference the same entity by title.
   await expect(dialog).toContainText(title);
 });

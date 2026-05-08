@@ -9,7 +9,9 @@ test('drawer: covers the full viewport on mobile and hides the expand toggle', a
   await expect(page.locator('.stat-activity .arows')).toBeVisible();
   await page.locator('.stat-activity .arow').first().click();
   const drawer = page.locator('.drawer');
-  await expect(drawer).toBeVisible();
+  // Click triggers an async fetch for the full entity — give CI's
+  // slower runner room to finish before asserting.
+  await expect(drawer).toBeVisible({ timeout: 15000 });
 
   // Drawer should fill the viewport — no offset on any side.
   const dims = await drawer.evaluate((el) => {
