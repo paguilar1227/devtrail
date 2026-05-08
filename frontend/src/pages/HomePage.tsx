@@ -233,7 +233,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                     }
                   }}
                 >
-                  <span className={cls('aic', a.kind)}>
+                  <span className={cls('activity-icon', a.kind)}>
                     {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
                   </span>
                   <span className="atext">

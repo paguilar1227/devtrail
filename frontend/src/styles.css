@@ -1754,7 +1754,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .stat-activity .arows { display: flex; flex-direction: column; }
 .stat-activity .arow {
-  display: grid; grid-template-columns: 22px 1fr auto;
+  display: grid; grid-template-columns: 24px 1fr auto;
   align-items: center; gap: 10px;
   padding: 7px 6px;
   margin: 0 -6px;
@@ -1769,12 +1769,6 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   outline-offset: 1px;
 }
 .stat-activity .arow + .arow { border-top: 0.5px solid var(--hairline); }
-.stat-activity .arow .aic {
-  width: 22px; height: 22px; border-radius: 6px;
-  background: var(--glass-bg-soft);
-  display: grid; place-items: center;
-  color: var(--fg-muted);
-}
 .stat-activity .arow .atext { color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stat-activity .arow .atext b { color: var(--fg); font-weight: 500; }
 .stat-activity .arow .ats {
