@@ -99,8 +99,8 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
           <Tag key={t}>{t}</Tag>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '10px 14px', fontSize: 11.5, marginBottom: 18 }}>
-        <span className="subtle mono">priority</span>
+      <div className="meta-grid">
+        <span className="subtle">priority</span>
         <div className="row-flex gap-1">
           {(['p1', 'p2', 'p3'] as const).map((p) => (
             <button
@@ -113,14 +113,14 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
             </button>
           ))}
         </div>
-        <span className="subtle mono">due</span>
-        <span className="mono">{todo.due_at ? fmtRel(todo.due_at) : '—'}</span>
-        <span className="subtle mono">created</span>
-        <span className="mono">{fmtRel(todo.created_at)}</span>
-        <span className="subtle mono">project</span>
-        <span className="mono">{todo.project_id ?? 'Inbox'}</span>
-        <span className="subtle mono">parent</span>
-        <span className="mono">
+        <span className="subtle">due</span>
+        <span>{todo.due_at ? fmtRel(todo.due_at) : '—'}</span>
+        <span className="subtle">created</span>
+        <span>{fmtRel(todo.created_at)}</span>
+        <span className="subtle">project</span>
+        <span>{todo.project_id ?? 'Inbox'}</span>
+        <span className="subtle">parent</span>
+        <span>
           {todo.parent_id
             ? <EntityLink kind="todo">{parentQ.data?.content ?? (parentQ.isLoading ? '…' : todo.parent_id)}</EntityLink>
             : '—'}

@@ -145,7 +145,7 @@ export function TrashPage() {
               </div>
               <div>
                 <div className="strong">{it.title}</div>
-                <div className="subtle mono" style={{ fontSize: 10.5, marginTop: 2 }}>
+                <div className="subtle row-meta">
                   {it.kind} · {it.sub} · archived {fmtRel(it.at)}
                 </div>
               </div>

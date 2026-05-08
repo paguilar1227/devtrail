@@ -57,18 +57,18 @@ export function TagsPage({ onAction }: Props) {
           {filtered.map(t => (
             <div key={t.name} className="tag-row">
               <span className="tag-glyph">#</span>
-              <div className="tag-name strong mono">{t.name}</div>
+              <div className="tag-name strong">{t.name}</div>
               <div className="tag-counts">
-                <span className="mono subtle">
+                <span className="subtle">
                   {t.total} <i>total</i>
                 </span>
-                <span className="mono subtle">
+                <span className="subtle">
                   {t.by_type.document} <i>docs</i>
                 </span>
-                <span className="mono subtle">
+                <span className="subtle">
                   {t.by_type.note} <i>notes</i>
                 </span>
-                <span className="mono subtle">
+                <span className="subtle">
                   {t.by_type.todo} <i>todos</i>
                 </span>
               </div>

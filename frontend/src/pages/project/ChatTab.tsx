@@ -150,14 +150,11 @@ export function ChatTab({ project }: Props) {
             </button>
           </div>
         </div>
-        <div
-          className="row-flex gap-3"
-          style={{ marginTop: 6, fontSize: 10.5, color: 'var(--fg-subtle)', fontFamily: 'var(--font-mono)' }}
-        >
+        <div className="row-flex gap-3 chat-foot">
           <span>scope: {project.name}</span>
           <span>retrieval: vector + graph</span>
           <span>depth: {DEPTH_TO_RAG[depth]}</span>
-          <span style={{ marginLeft: 'auto' }}>↵ to send · ⇧↵ for newline</span>
+          <span className="chat-foot-trail">↵ to send · ⇧↵ for newline</span>
         </div>
       </div>
     </div>

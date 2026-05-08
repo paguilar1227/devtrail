@@ -75,12 +75,9 @@ export function ProjectPage({ projectId, onAction }: Props) {
     <div className="page" style={{ paddingBottom: tab === 'chat' ? 0 : 56 }}>
       <div className="proj-hero">
         <div>
-          <div className="row-flex gap-2" style={{ marginBottom: 8 }}>
-            <span className={cls('sb-proj-dot', project.accent)} style={{ width: 12, height: 12 }}></span>
-            <span
-              className="subtle mono"
-              style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase' }}
-            >
+          <div className="row-flex gap-2 proj-eyebrow-row">
+            <span className={cls('sb-proj-dot', project.accent, 'proj-dot-lg')}></span>
+            <span className="subtle eyebrow">
               {isArchived ? 'Archived project' : 'Active project'} · created {fmtRel(project.created_at)}
             </span>
             {project.pinned ? (

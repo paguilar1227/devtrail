@@ -135,7 +135,7 @@ export function FilterChip({
     <span className={cls('filter-chip', active && 'active')} onClick={onClick}>
       {children}
       {count != null ? (
-        <span style={{ opacity: 0.6, fontFamily: 'var(--font-mono)' }}>{count}</span>
+        <span className="filter-chip-count">{count}</span>
       ) : null}
     </span>
   );

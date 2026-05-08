@@ -189,9 +189,7 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
                   ) : null}
                 </div>
               </div>
-              <span className="subtle mono" style={{ fontSize: 10.5 }}>
-                {item.status}
-              </span>
+              <span className="subtle upload-status-pill">{item.status}</span>
               <button
                 className="btn btn-ghost btn-icon"
                 onClick={() => removeItem(item.id)}

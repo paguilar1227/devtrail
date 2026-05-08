@@ -103,9 +103,9 @@ export function DocumentsTab({ project, onAction }: Props) {
         <div className="page-subtle">No documents in this project yet.</div>
       ) : (
         <>
-          <div className="row-flex gap-2" style={{ marginBottom: 8, paddingLeft: 16, paddingRight: 16 }}>
+          <div className="row-flex gap-2 list-bulk-bar">
             <BulkCheckbox checked={allSelected} onClick={toggleAll} />
-            <span className="subtle mono" style={{ fontSize: 11 }}>
+            <span className="subtle">
               {filtered.length} of {docs.length} {selected.size ? `· ${selected.size} selected` : ''}
             </span>
           </div>

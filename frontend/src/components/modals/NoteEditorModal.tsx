@@ -95,7 +95,7 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
       onClose={onClose}
       footer={
         <>
-          <span className="subtle mono" style={{ fontSize: 10.5, marginRight: 'auto' }}>
+          <span className="subtle modal-foot-meta">
             {isNew ? 'draft' : `last edit ${fmtRel(note!.updated_at)}`} · {body.split(/\s+/).length} words
           </span>
           <button className="btn" onClick={onClose} disabled={pending}>Cancel</button>
@@ -106,10 +106,9 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
       }
     >
       <input
-        className="input"
+        className="input note-title-input"
         value={title}
         onChange={e => setTitle(e.target.value)}
-        style={{ fontSize: 18, fontWeight: 600, padding: '10px 14px', marginBottom: 12, letterSpacing: '-0.015em' }}
       />
       <div className="row-flex gap-1" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
         {tags.map((t, i) => (

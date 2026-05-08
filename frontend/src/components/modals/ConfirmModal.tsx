@@ -36,18 +36,16 @@ export function ConfirmModal({
         </>
       }
     >
-      <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: 0, color: 'var(--fg-muted)' }}>{message}</p>
+      <p className="confirm-message">{message}</p>
       {requireType ? (
         <>
           <div className="divider" />
           <label className="field-label">
             Type{' '}
-            <span className="mono" style={{ color: 'var(--fg)', textTransform: 'none' }}>
-              "{requireType}"
-            </span>{' '}
+            <span className="confirm-type-target">"{requireType}"</span>{' '}
             to confirm
           </label>
-          <input className="input input-mono" value={typed} onChange={e => setTyped(e.target.value)} autoFocus />
+          <input className="input" value={typed} onChange={e => setTyped(e.target.value)} autoFocus />
         </>
       ) : null}
     </Modal>

@@ -225,7 +225,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                   </span>
                   <span className="atext">
                     {a.kind === 'ingest' ? 'Ingested' : a.kind === 'edit' ? 'Edited' : 'Commented on'} <b>{a.title}</b>
-                    <span className="subtle mono"> · {a.project}</span>
+                    <span className="subtle"> · {a.project}</span>
                   </span>
                   <span className="ats">{fmtRel(a.at)}</span>
                 </div>
@@ -237,14 +237,14 @@ export function HomePage({ onRoute, onAction }: Props) {
 
       <div className="home-personal-h">
         <h2>Personal</h2>
-        <span className="sub mono">project-less todos and notes</span>
+        <span className="sub">project-less todos and notes</span>
       </div>
 
       <div className="home-personal-grid">
         <div className="pcol">
           <div className="pcol-h">
             <h3>Todos</h3>
-            <span className="ct mono">{personalTodos.length}</span>
+            <span className="ct">{personalTodos.length}</span>
           </div>
           <div className="pcol-add">
             <input
@@ -290,7 +290,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                   ) : null}
                 </div>
                 <Priority p={t.priority} />
-                <span className="ats mono">{fmtRel(t.created_at)}</span>
+                <span className="ats">{fmtRel(t.created_at)}</span>
               </div>
             ))
           )}
@@ -299,7 +299,7 @@ export function HomePage({ onRoute, onAction }: Props) {
         <div className="pcol">
           <div className="pcol-h">
             <h3>Notes</h3>
-            <span className="ct mono">{personalNotes.length}</span>
+            <span className="ct">{personalNotes.length}</span>
           </div>
           <div className="pcol-add">
             <input
@@ -328,9 +328,9 @@ export function HomePage({ onRoute, onAction }: Props) {
               >
                 <div>
                   <div className="ti">{n.title}</div>
-                  <div className="ti-sub mono">edited {fmtRel(n.updated_at ?? n.created_at)}</div>
+                  <div className="ti-sub">edited {fmtRel(n.updated_at ?? n.created_at)}</div>
                 </div>
-                <span className="ats mono">{fmtRel(n.updated_at ?? n.created_at)}</span>
+                <span className="ats">{fmtRel(n.updated_at ?? n.created_at)}</span>
               </div>
             ))
           )}
@@ -339,7 +339,7 @@ export function HomePage({ onRoute, onAction }: Props) {
 
       {pinned.length > 0 ? (
         <div className="home-pinned-strip">
-          <span className="label mono">Pinned</span>
+          <span className="label">Pinned</span>
           {pinned.map((p) => (
             <button
               key={p.id}

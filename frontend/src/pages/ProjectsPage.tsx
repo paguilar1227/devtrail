@@ -102,33 +102,20 @@ export function ProjectsPage({ onRoute, onAction }: Props) {
           {projects.map((p) => (
             <div
               key={p.id}
-              className="row"
-              style={{ gridTemplateColumns: '16px 1fr 80px 80px 80px 100px 60px' }}
+              className="row project-row"
               onClick={() => onRoute({ route: 'project', project: p.id })}
             >
               <span className={cls('sb-proj-dot', p.accent)}></span>
-              <div>
+              <div className="project-row-main">
                 <div className="strong">{p.name}</div>
-                <div
-                  className="subtle"
-                  style={{
-                    fontSize: 11,
-                    marginTop: 2,
-                    maxWidth: 460,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {p.desc}
-                </div>
+                <div className="subtle project-row-desc">{p.desc}</div>
               </div>
-              <span className="mono subtle" style={{ fontSize: 11 }}>{p.counts.docs} docs</span>
-              <span className="mono subtle" style={{ fontSize: 11 }}>{p.counts.notes} notes</span>
-              <span className="mono subtle" style={{ fontSize: 11 }}>
+              <span className="subtle project-row-count">{p.counts.docs} docs</span>
+              <span className="subtle project-row-count">{p.counts.notes} notes</span>
+              <span className="subtle project-row-count">
                 {p.counts.done}/{p.counts.todos}
               </span>
-              <span className="mono subtle" style={{ fontSize: 11 }}>{fmtRel(p.updated_at)}</span>
+              <span className="subtle project-row-count">{fmtRel(p.updated_at)}</span>
               <button className="btn btn-ghost btn-icon" onClick={e => e.stopPropagation()}>
                 <Icons.More />
               </button>

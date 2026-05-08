@@ -100,7 +100,7 @@ export function SearchPage({ initialQuery = '', initialScope = 'all' }: Props) {
         <div className="page-subtle">No results for "{submittedQuery}".</div>
       ) : (
         <>
-          <div className="subtle mono" style={{ fontSize: 11, marginBottom: 10 }}>
+          <div className="subtle results-count">
             {hits.length} results
           </div>
           <SearchResultsList hits={hits} />

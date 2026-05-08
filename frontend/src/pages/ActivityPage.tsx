@@ -92,7 +92,7 @@ export function ActivityPage() {
                   <div className="text">
                     {a.kind === 'ingest' ? 'Ingested ' : a.kind === 'edit' ? 'Edited ' : 'Commented on '}
                     <b>{a.title}</b>
-                    <span className="subtle mono" style={{ fontSize: 10, marginLeft: 8 }}>
+                    <span className="subtle activity-row-meta">
                       {a.entity_kind} · {a.project}
                     </span>
                   </div>

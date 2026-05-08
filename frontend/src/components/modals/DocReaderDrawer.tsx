@@ -24,48 +24,44 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
 
   return (
     <Drawer title={doc.title} onClose={onClose}>
-      <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+      <div className="row-flex gap-2 chip-row">
         <Status status={doc.processing_status} error={doc.processing_error} />
         <Tag>{doc.type}</Tag>
-        <span className="subtle mono" style={{ fontSize: 10.5 }}>
-          {doc.size}
-        </span>
+        <span className="subtle">{doc.size}</span>
         {doc.tags.map(t => (
           <Tag key={t}>{t}</Tag>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 14px', fontSize: 11.5, marginBottom: 18 }}>
-        <span className="subtle mono">created</span>
-        <span className="mono">{fmtRel(doc.created_at)}</span>
+      <div className="meta-grid">
+        <span className="subtle">created</span>
+        <span>{fmtRel(doc.created_at)}</span>
         {doc.published_at ? (
           <>
-            <span className="subtle mono">published</span>
-            <span className="mono">{fmtRel(doc.published_at)}</span>
+            <span className="subtle">published</span>
+            <span>{fmtRel(doc.published_at)}</span>
           </>
         ) : null}
         {doc.file_hash ? (
           <>
-            <span className="subtle mono">sha256</span>
-            <span className="mono">{doc.file_hash}</span>
+            <span className="subtle">sha256</span>
+            <span className="meta-hash">{doc.file_hash}</span>
           </>
         ) : null}
         {doc.source_url ? (
           <>
-            <span className="subtle mono">source</span>
-            <span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {doc.source_url}
-            </span>
+            <span className="subtle">source</span>
+            <span className="meta-url">{doc.source_url}</span>
           </>
         ) : null}
-        <span className="subtle mono">projects</span>
-        <span className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
+        <span className="subtle">projects</span>
+        <span className="row-flex gap-1 meta-projects">
           {doc.project_ids.map(id => (
             <Tag key={id}>{id.slice(0, 8)}</Tag>
           ))}
         </span>
       </div>
 
-      <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+      <div className="row-flex gap-2 chip-row">
         {doc.source_url ? (
           <a className="btn btn-sm btn-primary" href={doc.source_url} target="_blank" rel="noreferrer">
             <Icons.ExternalLink size={12} /> Open original
@@ -78,21 +74,9 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
         >
           <Icons.Pin size={12} /> {doc.pinned ? 'Unpin' : 'Pin'}
         </button>
-        <span className="subtle mono" style={{ marginLeft: 'auto', fontSize: 10.5 }}>
-          {doc.size}
-        </span>
+        <span className="subtle doc-size-trail">{doc.size}</span>
       </div>
-      <div
-        className="md-preview"
-        style={{
-          padding: 14,
-          background: 'var(--glass-bg-soft)',
-          borderRadius: 10,
-          border: '0.5px solid var(--hairline)',
-          maxHeight: 480,
-          overflowY: 'auto',
-        }}
-      >
+      <div className="md-preview md-preview-card">
         {fullQ.isLoading ? (
           <div className="page-subtle">Loading content…</div>
         ) : fullQ.error ? (
