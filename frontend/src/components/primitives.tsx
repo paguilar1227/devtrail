@@ -1,4 +1,4 @@
-import { Fragment, useEffect, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icons } from './Icons';
 import { cls } from '../lib/util';
 import type { ProcessingStatus, TodoPriority } from '../types';
@@ -193,6 +193,12 @@ export function Drawer({
   onClose: () => void;
   footer?: ReactNode;
 }) {
+  // The drawer ships in two desktop layouts: the default right-rail
+  // (compact, lives next to the page) and an expanded center-stage
+  // variant for when the user wants more room. Mobile ignores this —
+  // the drawer is always full-screen there. State is local because
+  // expansion is a per-instance UI affordance, not session-wide.
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -201,10 +207,18 @@ export function Drawer({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="drawer">
+    <div className={cls('drawer', expanded && 'drawer-expanded')}>
       <div className="drawer-head">
         <span className="ti">{title}</span>
-        <button className="btn btn-ghost btn-icon" onClick={onClose}>
+        <button
+          className="btn btn-ghost btn-icon drawer-expand"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Collapse' : 'Expand'}
+          aria-label={expanded ? 'Collapse drawer' : 'Expand drawer'}
+        >
+          {expanded ? <Icons.Compact /> : <Icons.Expand />}
+        </button>
+        <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">
           <Icons.X />
         </button>
       </div>

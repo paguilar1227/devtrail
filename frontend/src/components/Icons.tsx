@@ -92,6 +92,12 @@ export const Icons = {
   Moon: make(<path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a6 6 0 1 0 7 7z" />),
   Link: make(<path d="M6.5 9.5 9.5 6.5M5.5 4.5h-1A2.5 2.5 0 0 0 4.5 9.5h1M10.5 11.5h1A2.5 2.5 0 0 0 11.5 6.5h-1" />),
   Upload: make(<path d="M8 10.5V2M5 5l3-3 3 3M2.5 11v1.5c0 .6.4 1 1 1h9c.6 0 1-.4 1-1V11" />),
+  Expand: make(
+    <path d="M3.5 6V3.5H6M10 3.5h2.5V6M12.5 10v2.5H10M6 12.5H3.5V10" />,
+  ),
+  Compact: make(
+    <path d="M6 3.5V6H3.5M10 6V3.5h2.5M10 12.5V10h2.5M3.5 10H6v2.5" />,
+  ),
   Globe: make(
     <>
       <circle cx="8" cy="8" r="6" />
