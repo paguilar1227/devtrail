@@ -14,4 +14,9 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
 frontend/tsconfig.tsbuildinfo
+/test-results/
 .playwright-mcp/
+
+# Working scratch — screenshots, prototypes, throwaway notes.
+# Anything that should not be committed long-term goes here.
+scratch/
