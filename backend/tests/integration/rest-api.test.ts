@@ -1863,6 +1863,79 @@ describe('Todos API', () => {
     expect(queries[0].params[1]).toBeNull();
   });
 
+  it('PUT /todos/:id with status=done cascades to non-done descendants', async () => {
+    const parent = '22222222-2222-4222-8222-222222222222';
+    const child1 = '33333333-3333-4333-8333-333333333333';
+    const child2 = '44444444-4444-4444-8444-444444444444';
+    const grandchild = '55555555-5555-4555-8555-555555555555';
+
+    // updateTodo's cascade fans out: UPDATE parent → SELECT children →
+    // UPDATE each non-done child (recursing). Mock the SQL traffic so
+    // we can assert the right rows got updated and the already-done
+    // child1 was skipped (no redundant UPDATE).
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
+        if (params?.[0] === parent) {
+          return { rows: [
+            { id: child1, content: 'c1', status: 'done', archived: false },
+            { id: child2, content: 'c2', status: 'in_progress', archived: false },
+          ] } as any;
+        }
+        if (params?.[0] === child2) {
+          return { rows: [
+            { id: grandchild, content: 'gc', status: 'not_started', archived: false },
+          ] } as any;
+        }
+        if (params?.[0] === grandchild) return { rows: [] } as any;
+        return { rows: [] } as any;
+      }
+      // UPDATE returns the patched row.
+      return { rows: [{ id: params?.[params.length - 1], status: 'done' }] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'done' }),
+    }));
+    expect(res.status).toBe(200);
+
+    // The id values bound to UPDATE statements tell the cascade story:
+    // parent + child2 + grandchild were updated; child1 (already done)
+    // was skipped.
+    const updatedIds = queries
+      .filter((q) => /UPDATE\s+todos\b/i.test(q.sql))
+      .map((q) => q.params[q.params.length - 1]);
+    expect(updatedIds).toContain(parent);
+    expect(updatedIds).toContain(child2);
+    expect(updatedIds).toContain(grandchild);
+    expect(updatedIds).not.toContain(child1);
+  });
+
+  it('PUT /todos/:id un-completing a parent (status != done) does NOT cascade', async () => {
+    const parent = '66666666-6666-4666-8666-666666666666';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [{ id: parent, status: 'in_progress' }] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'in_progress' }),
+    }));
+    expect(res.status).toBe(200);
+
+    // Single UPDATE on the parent. No SELECT for children, no fan-out.
+    const selectChildren = queries.filter((q) => /SELECT \* FROM todos WHERE parent_id/i.test(q.sql));
+    expect(selectChildren).toHaveLength(0);
+    const updates = queries.filter((q) => /UPDATE\s+todos\b/i.test(q.sql));
+    expect(updates).toHaveLength(1);
+  });
+
   it('PUT /todos/:id with due_date=null clears the column (does not silently drop)', async () => {
     const id = '11111111-1111-4111-8111-111111111111';
     const queries: Array<{ sql: string; params: unknown[] }> = [];

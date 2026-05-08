@@ -77,21 +77,20 @@ export async function updateTodo(
   if (patch.content !== undefined) {
     embedding = await deps.embeddingProvider.embed(patch.content);
   }
-  return dbUpdateTodo(deps.db, id, { ...patch, embedding });
-}
-
-export async function completeTodo(
-  deps: ServiceDeps,
-  id: string,
-  cascade: boolean = true,
-): Promise<void> {
-  await dbUpdateTodo(deps.db, id, { status: 'done' });
-  if (cascade) {
+  const result = await dbUpdateTodo(deps.db, id, { ...patch, embedding });
+  // Marking a parent done implies the work below it is finished too —
+  // cascade to all descendants. We don't cascade un-completion: clearing
+  // a parent's done state is a "this isn't actually finished" signal,
+  // not a claim about each child's state.
+  if (patch.status === 'done') {
     const children = await findChildTodos(deps.db, id);
     for (const child of children) {
-      await completeTodo(deps, child.id, true);
+      if (child.status !== 'done') {
+        await updateTodo(deps, child.id, { status: 'done' });
+      }
     }
   }
+  return result;
 }
 
 export async function archiveTodoById(deps: ServiceDeps, id: string): Promise<void> {

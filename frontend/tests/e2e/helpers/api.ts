@@ -90,11 +90,20 @@ export async function unpinProject(id: string): Promise<void> {
 export async function createTodo(
   content: string,
   projectId?: string | null,
-  extras: { due_date?: string | null } = {},
+  extras: { due_date?: string | null; parent_id?: string | null } = {},
 ): Promise<Todo> {
   const body: Record<string, unknown> = { content, project_id: projectId ?? null };
   if (extras.due_date !== undefined) body.due_date = extras.due_date;
+  if (extras.parent_id !== undefined) body.parent_id = extras.parent_id;
   const data = await api<{ todo: Todo }>('POST', '/api/v1/todos', body);
+  return data.todo;
+}
+
+export async function updateTodo(
+  id: string,
+  patch: Partial<Pick<Todo, 'status' | 'priority' | 'content' | 'project_id' | 'parent_id' | 'due_date' | 'tags'>>,
+): Promise<Todo> {
+  const data = await api<{ todo: Todo }>('PUT', `/api/v1/todos/${id}`, patch);
   return data.todo;
 }
 
