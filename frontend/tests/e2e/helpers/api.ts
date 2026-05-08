@@ -87,8 +87,14 @@ export async function unpinProject(id: string): Promise<void> {
   await api('POST', `/api/v1/projects/${id}/unpin`);
 }
 
-export async function createTodo(content: string, projectId?: string | null): Promise<Todo> {
-  const data = await api<{ todo: Todo }>('POST', '/api/v1/todos', { content, project_id: projectId ?? null });
+export async function createTodo(
+  content: string,
+  projectId?: string | null,
+  extras: { due_date?: string | null } = {},
+): Promise<Todo> {
+  const body: Record<string, unknown> = { content, project_id: projectId ?? null };
+  if (extras.due_date !== undefined) body.due_date = extras.due_date;
+  const data = await api<{ todo: Todo }>('POST', '/api/v1/todos', body);
   return data.todo;
 }
 

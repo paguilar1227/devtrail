@@ -17,7 +17,7 @@
 
 import { Icons } from './Icons';
 import { Checkbox, Priority } from './primitives';
-import { cls, fmtRel, isOverdue } from '../lib/util';
+import { cls, fmtDue, fmtRel, isOverdue } from '../lib/util';
 import type { Todo } from '../types';
 
 interface Props {
@@ -96,7 +96,7 @@ export function TodoRow({
         </div>
         {t.due_at ? (
           <div className={cls('ti-sub', !done && isOverdue(t.due_at) && 'due-overdue')}>
-            due {fmtRel(t.due_at)}
+            due {fmtDue(t.due_at)}
           </div>
         ) : null}
         {showDeeperHint ? (

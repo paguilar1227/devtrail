@@ -1863,6 +1863,35 @@ describe('Todos API', () => {
     expect(queries[0].params[1]).toBeNull();
   });
 
+  it('PUT /todos/:id with due_date=null clears the column (does not silently drop)', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      // Return a row so the route reaches serializeTodo.
+      return {
+        rows: [{
+          id, content: 'x', project_id: null, section: null, parent_id: null,
+          priority: null, status: 'not_started', due_date: null, tags: [],
+          archived: false, pinned_at: null, created_at: new Date(), updated_at: new Date(),
+        }],
+      } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${id}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ due_date: null }),
+    }));
+    expect(res.status).toBe(200);
+    // The UPDATE query must include `due_date = $...` with a null bind
+    // so the column actually clears. Earlier code shortcut treated null
+    // as "don't touch" and silently dropped clear requests.
+    const updateQ = queries.find((q) => /UPDATE\s+todos/i.test(q.sql) && /due_date\s*=/.test(q.sql));
+    expect(updateQ).toBeTruthy();
+    expect(updateQ!.params).toContain(null);
+  });
+
   it('POST /todos/bulk set_due_date accepts ISO 8601 and forwards as Date', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {

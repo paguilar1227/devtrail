@@ -1132,7 +1132,14 @@ export function createApp(deps: ServiceDeps) {
         parentId: body.parent_id === null ? null : body.parent_id,
         status: body.status,
         priority: body.priority,
-        dueDate: body.due_date ? new Date(body.due_date) : undefined,
+        // Distinguish "clear" (null) from "don't touch" (undefined). The
+        // earlier shortcut `body.due_date ? ... : undefined` collapsed
+        // null into undefined and silently dropped clear requests.
+        dueDate: body.due_date === undefined
+          ? undefined
+          : body.due_date === null
+            ? null
+            : new Date(body.due_date),
         tags: body.tags,
       });
       if (!todo) return c.json({ error: 'Not found' }, 404);
@@ -1826,11 +1833,13 @@ function serializeTodo<T extends {
     pinned_at: rest.pinned_at !== undefined ? isoOrNull(rest.pinned_at) : null,
     created_at: isoNonNull(rest.created_at),
     updated_at: isoNonNull(rest.updated_at),
-    // due_date stays a string OR null per the schema (it's a DATE column,
-    // arrives as Date object from pg). Defensive against either shape.
+    // due_date is a `timestamptz` column — preserve the full ISO so the
+    // UI can render time-of-day (and so notification scheduling has the
+    // resolution it needs). Defensive against either Date-from-pg or
+    // already-stringified shape.
     due_date: due === null || due === undefined
       ? null
-      : due instanceof Date ? due.toISOString().slice(0, 10) : due,
+      : due instanceof Date ? due.toISOString() : due,
   };
 }
 

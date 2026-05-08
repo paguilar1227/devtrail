@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Drawer, EntityLink, Priority, Tag } from '../primitives';
 import { createComment, getTodo, listTodoComments, updateTodo } from '../../lib/api';
-import { cls, fmtRel } from '../../lib/util';
+import { cls, fmtDue, fmtRel, toDatetimeLocal } from '../../lib/util';
 import type { Todo } from '../../types';
 
 type PriorityVal = 'p1' | 'p2' | 'p3';
@@ -17,6 +17,7 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
   const qc = useQueryClient();
   const [draft, setDraft] = useState('');
   const [priority, setPriority] = useState<PriorityVal>(todo.priority);
+  const [dueLocal, setDueLocal] = useState<string>(toDatetimeLocal(todo.due_at));
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -43,9 +44,10 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
   });
 
   const updateMut = useMutation({
-    mutationFn: (patch: { priority?: PriorityVal }) =>
+    mutationFn: (patch: { priority?: PriorityVal; due_date?: string | null }) =>
       updateTodo(todo.id, {
         ...(patch.priority ? { priority: toWirePriority(patch.priority) } : {}),
+        ...('due_date' in patch ? { due_date: patch.due_date } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['todos'] });
@@ -66,12 +68,22 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
     updateMut.mutate({ priority: p });
   };
 
-  // Save closes the drawer after pending edits (priority is fired
-  // optimistically on chip click; this is the user's "I'm done here" gesture).
-  const dirty = priority !== todo.priority;
+  // Save closes the drawer after pending edits. Priority fires
+  // optimistically on chip click; due-date fires on input blur or
+  // Save click. `dirty` reflects either is unsaved.
+  const dueDirty = toDatetimeLocal(todo.due_at) !== dueLocal;
+  const dirty = priority !== todo.priority || dueDirty;
+  const dueWirePayload = (): string | null => {
+    if (!dueLocal) return null;
+    const ms = new Date(dueLocal).getTime();
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  };
   const onSave = () => {
     if (dirty && !updateMut.isPending) {
-      updateMut.mutate({ priority }, { onSuccess: () => onClose() });
+      const patch: { priority?: PriorityVal; due_date?: string | null } = {};
+      if (priority !== todo.priority) patch.priority = priority;
+      if (dueDirty) patch.due_date = dueWirePayload();
+      updateMut.mutate(patch, { onSuccess: () => onClose() });
     } else {
       onClose();
     }
@@ -114,7 +126,29 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
           ))}
         </div>
         <span className="subtle">due</span>
-        <span>{todo.due_at ? fmtRel(todo.due_at) : '—'}</span>
+        <div className="row-flex gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="datetime-local"
+            className="input input-sm"
+            value={dueLocal}
+            onChange={(e) => setDueLocal(e.target.value)}
+            disabled={updateMut.isPending}
+          />
+          {dueLocal ? (
+            <>
+              <span className="subtle">{fmtDue(dueWirePayload() ?? new Date(dueLocal).toISOString())}</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setDueLocal('')}
+                disabled={updateMut.isPending}
+                title="Clear due date"
+              >
+                clear
+              </button>
+            </>
+          ) : null}
+        </div>
         <span className="subtle">created</span>
         <span>{fmtRel(todo.created_at)}</span>
         <span className="subtle">project</span>
