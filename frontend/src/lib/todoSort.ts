@@ -1,23 +1,43 @@
 // Hierarchical sort for personal todos. Used by both the Home column
-// (top 6) and the personal todos drawer.
+// (top 6, depth-capped, default-collapsed) and the personal todos
+// drawer (full tree, default-collapsed).
 //
 // Top-level sort bands, in order:
-//   1. Pinned       — surface intent first
-//   2. Active       — anything not done; within band sort by priority
-//                     asc (P1 most urgent), then due asc (overdue
-//                     first), then created desc (newest at top of band)
-//   3. Done         — pushed to the bottom of the column; recently
-//                     completed sit at the top of the band
+//   0. Overdue       — anything active with a due_at in the past;
+//                      bubbled to the absolute top so action items lead
+//   1. Pinned        — sticky context the user marked as important
+//   2. Active        — anything else not done
+//   3. Done          — pushed to the bottom; recently completed first
+//
+// Within each band, secondary sort is priority asc (P1 most urgent),
+// then due asc (sooner first), then created desc (newest first).
 //
 // Subtasks always emit immediately after their parent, regardless of
-// their own band. The visual hierarchy beats the sort score for
-// children — splitting a parent from its kids would be more confusing
-// than a done child appearing above an active sibling.
+// their own band. Children are emitted recursively, so grandchildren
+// (depth=2) sit under their parent (depth=1) sit under their grandparent
+// (depth=0) — the visual hierarchy beats sort score for descendants.
 //
-// Orphan children (parent not in the list) get appended at the end
-// rather than dropped — happens if a partial filter is applied.
+// Two knobs control what's actually emitted:
+//   - `maxDepth`  — descendants beyond this depth are omitted and
+//                   counted into `hiddenDescendants` so the deepest
+//                   visible row can render a "+N deeper" hint.
+//   - `isExpanded(id)` — when provided AND returns false for a parent,
+//                   that parent's subtree is omitted (counted into
+//                   `hiddenDescendants` so the chevron can show "(N)").
+//                   Default is "always expanded" — caller opts into
+//                   collapse semantics.
+//
+// Orphan children (parent not in the list) get appended at the end at
+// depth=0 rather than dropped — happens if a partial filter is applied.
 
 import type { Todo } from '../types';
+
+export interface SortedTodo {
+  todo: Todo;
+  depth: number;
+  childCount: number;
+  hiddenDescendants: number;
+}
 
 const PRIORITY_RANK: Record<Todo['priority'], number> = { p1: 0, p2: 1, p3: 2 };
 
@@ -27,17 +47,15 @@ function isOverdueAt(d: string | null): boolean {
 }
 
 function bandRank(t: Todo): number {
-  if (t.pinned) return 0;
-  if (t.status === 'done') return 2;
-  return 1;
+  if (t.status !== 'done' && isOverdueAt(t.due_at)) return 0;
+  if (t.pinned && t.status !== 'done') return 1;
+  if (t.status === 'done') return 3;
+  return 2;
 }
 
 function withinBandRank(t: Todo): [number, number, number] {
-  // Priority asc (lower number = higher priority).
   const p = PRIORITY_RANK[t.priority] ?? 9;
-  // Due asc; null due dates sort last within priority.
   const dueMs = t.due_at ? new Date(t.due_at).getTime() : Number.MAX_SAFE_INTEGER;
-  // Created desc — newest first inside the same priority/due bucket.
   const createdMs = -new Date(t.created_at).getTime();
   return [p, dueMs, createdMs];
 }
@@ -46,19 +64,21 @@ function compare(a: Todo, b: Todo): number {
   const ba = bandRank(a);
   const bb = bandRank(b);
   if (ba !== bb) return ba - bb;
-  // Inside the active band, overdue gets pulled forward independently
-  // of priority — an overdue P3 outranks a future P1.
-  if (ba === 1) {
-    const oa = isOverdueAt(a.due_at) ? 0 : 1;
-    const ob = isOverdueAt(b.due_at) ? 0 : 1;
-    if (oa !== ob) return oa - ob;
-  }
   const wa = withinBandRank(a);
   const wb = withinBandRank(b);
   return wa[0] - wb[0] || wa[1] - wb[1] || wa[2] - wb[2];
 }
 
-export function sortPersonalTodos(todos: Todo[]): Todo[] {
+export interface SortOptions {
+  maxDepth?: number;
+  isExpanded?: (id: string) => boolean;
+}
+
+export function sortPersonalTodos(
+  todos: Todo[],
+  opts: SortOptions = {},
+): SortedTodo[] {
+  const { maxDepth = Infinity, isExpanded } = opts;
   const byParent = new Map<string, Todo[]>();
   const tops: Todo[] = [];
   for (const t of todos) {
@@ -73,22 +93,59 @@ export function sortPersonalTodos(todos: Todo[]): Todo[] {
   tops.sort(compare);
   for (const cs of byParent.values()) cs.sort(compare);
 
-  const out: Todo[] = [];
+  const out: SortedTodo[] = [];
   const seenChildren = new Set<string>();
-  for (const t of tops) {
-    out.push(t);
+
+  const countDescendants = (id: string): number => {
+    let n = 0;
+    const cs = byParent.get(id);
+    if (!cs) return 0;
+    for (const c of cs) n += 1 + countDescendants(c.id);
+    return n;
+  };
+
+  const markSubtreeSeen = (id: string) => {
+    const k = byParent.get(id);
+    if (!k) return;
+    for (const x of k) {
+      seenChildren.add(x.id);
+      markSubtreeSeen(x.id);
+    }
+  };
+
+  const emit = (t: Todo, depth: number) => {
+    if (depth > maxDepth) return;
     const cs = byParent.get(t.id);
+    const childCount = cs?.length ?? 0;
+    const collapsed = !!isExpanded && childCount > 0 && !isExpanded(t.id);
+    const atCap = depth === maxDepth && childCount > 0;
+    let hidden = 0;
+    if (collapsed || atCap) hidden = countDescendants(t.id);
+    // At maxDepth, suppress childCount so the row renders the deeper
+    // hint instead of an inert chevron — expansion here can't reveal
+    // anything on this surface, so showing a chevron would mislead.
+    const reportedChildCount = atCap ? 0 : childCount;
+    out.push({ todo: t, depth, childCount: reportedChildCount, hiddenDescendants: hidden });
+
+    if (collapsed || atCap) {
+      markSubtreeSeen(t.id);
+      return;
+    }
     if (cs) {
       for (const c of cs) {
-        out.push(c);
         seenChildren.add(c.id);
+        emit(c, depth + 1);
       }
     }
-  }
-  // Orphans: children whose parent isn't in this list.
+  };
+
+  for (const t of tops) emit(t, 0);
+
   for (const cs of byParent.values()) {
     for (const c of cs) {
-      if (!seenChildren.has(c.id)) out.push(c);
+      if (!seenChildren.has(c.id)) {
+        out.push({ todo: c, depth: 0, childCount: 0, hiddenDescendants: 0 });
+      }
     }
   }
   return out;

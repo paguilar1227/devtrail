@@ -352,22 +352,26 @@ async function main() {
     // 0: pinned, in_progress, parent of subtasks — exercises the most
     { content: 'Plan home office overhaul', priority: 'P2', status: 'in_progress', tags: ['home'], pin: true,
       comments: ["Shortlist desks under $500", 'Need to measure the wall before ordering'] },
-    { content: 'Pick a standing desk', priority: 'P3', status: 'in_progress', parent: 0, tags: ['home'] },          // 1
-    { content: 'Order monitor arm', priority: 'P3', status: 'done', parent: 0, tags: ['home'] },                   // 2
-    { content: 'Cable management', priority: 'P3', status: 'not_started', parent: 0, tags: ['home'] },             // 3
+    // 1: subtask with its own comments AND a grandchild — exercises
+    // depth=2 + comments-on-subtask paths.
+    { content: 'Pick a standing desk', priority: 'P3', status: 'in_progress', parent: 0, tags: ['home'],
+      comments: ['Compared Uplift v2 vs Fully Jarvis — leaning Uplift for the 80x30 top'] },                       // 1
+    { content: 'Measure wall outlet height', priority: 'P3', status: 'not_started', parent: 1, tags: ['home'] },   // 2 grandchild
+    { content: 'Order monitor arm', priority: 'P3', status: 'done', parent: 0, tags: ['home'] },                   // 3
+    { content: 'Cable management', priority: 'P3', status: 'not_started', parent: 0, tags: ['home'] },             // 4
 
     // standalones — variety on status, due, tags
     { content: 'Reply to Sebastian about the dataset request', priority: 'P2', status: 'not_started',
-      due_date: daysFromNow(-1) },                                                                                 // 4 overdue
+      due_date: daysFromNow(-1) },                                                                                 // 5 overdue
     { content: 'Renew domain (openbrain.local) — expires in 12 days', priority: 'P1',
-      status: 'not_started', due_date: daysFromNow(12), tags: ['chore'] },                                         // 5 upcoming
+      status: 'not_started', due_date: daysFromNow(12), tags: ['chore'] },                                         // 6 upcoming
     { content: "Read 'On the Measure of Intelligence' (Chollet)", priority: 'P3', status: 'paused',
-      tags: ['reading'] },                                                                                          // 6 paused
-    { content: 'Buy new mechanical keyboard', priority: 'P3', status: 'done', tags: ['chore'] },                   // 7 done
+      tags: ['reading'] },                                                                                          // 7 paused
+    { content: 'Buy new mechanical keyboard', priority: 'P3', status: 'done', tags: ['chore'] },                   // 8 done
     { content: 'Schedule annual physical', priority: 'P2', status: 'not_started', due_date: daysFromNow(21),
-      tags: ['health'] },                                                                                           // 8 future due
+      tags: ['health'] },                                                                                           // 9 future due
     { content: 'Cancel unused streaming subscription', priority: 'P3', status: 'done',
-      comments: ['Done — saved $14/mo'] },                                                                         // 9 done w/ comment
+      comments: ['Done — saved $14/mo'] },                                                                         // 10 done w/ comment
   ];
 
   const inboxIds: string[] = [];

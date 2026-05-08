@@ -22,6 +22,7 @@ import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
 import { TodoRow } from '../components/TodoRow';
 import { sortPersonalTodos } from '../lib/todoSort';
+import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
   createNote,
   createTodo,
@@ -73,9 +74,17 @@ export function HomePage({ onRoute, onAction }: Props) {
     [projectsRaw, countsQ.data],
   );
   const pinned = projects.filter((p) => p.pinned && p.status === 'active');
-  const personalTodos = useMemo(
-    () => sortPersonalTodos((todosQ.data ?? []).map(toUiTodo)),
+  // Widget caps at depth=1 — anything deeper rolls up into a "+N deeper"
+  // hint on the deepest visible row. Drawer (TodoListDrawer) gets the
+  // full tree. Both surfaces honor the same per-parent expansion state.
+  const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
+  const allPersonalTodos = useMemo(
+    () => (todosQ.data ?? []).map(toUiTodo),
     [todosQ.data],
+  );
+  const personalTodos = useMemo(
+    () => sortPersonalTodos(allPersonalTodos, { maxDepth: 1, isExpanded }),
+    [allPersonalTodos, isExpanded],
   );
   const personalNotes = notesQ.data ?? [];
   const activity = useMemo(
@@ -90,10 +99,12 @@ export function HomePage({ onRoute, onAction }: Props) {
   const todosTotal = stats?.counts.todos.total ?? 0;
   const todosDone = stats?.counts.todos.done ?? 0;
   const donePct = todosTotal > 0 ? Math.round((todosDone / todosTotal) * 100) : 0;
-  const overdueCount = personalTodos.filter(
+  // Overdue / due-this-week counts walk the full unfiltered list so
+  // grandchildren beyond the widget cap still count.
+  const overdueCount = allPersonalTodos.filter(
     (t) => t.status !== 'done' && t.due_at && isOverdue(t.due_at),
   ).length;
-  const dueThisWeekCount = personalTodos.filter((t) => {
+  const dueThisWeekCount = allPersonalTodos.filter((t) => {
     if (t.status === 'done' || !t.due_at) return false;
     const due = new Date(t.due_at).getTime();
     const now = Date.now();
@@ -265,16 +276,20 @@ export function HomePage({ onRoute, onAction }: Props) {
             <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
           ) : (
             <>
-              {personalTodos.slice(0, 6).map((t) => (
+              {personalTodos.slice(0, 6).map((s) => (
                 <TodoRow
-                  key={t.id}
-                  todo={t}
-                  depth={t.parent_id ? 1 : 0}
-                  onClick={() => onAction({ kind: 'todo-detail', payload: t })}
+                  key={s.todo.id}
+                  todo={s.todo}
+                  depth={s.depth}
+                  childCount={s.childCount}
+                  expanded={isExpanded(s.todo.id)}
+                  hiddenDescendants={s.hiddenDescendants}
+                  onClick={() => onAction({ kind: 'todo-detail', payload: s.todo })}
+                  onToggleExpand={() => toggleExpand(s.todo.id)}
                   onToggleDone={() =>
                     todoToggle.mutate({
-                      id: t.id,
-                      status: t.status === 'done' ? 'not_started' : 'done',
+                      id: s.todo.id,
+                      status: s.todo.status === 'done' ? 'not_started' : 'done',
                     })
                   }
                 />

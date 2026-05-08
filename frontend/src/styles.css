@@ -1846,7 +1846,23 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .prow:hover { background: var(--glass-bg-soft); }
 .prow + .prow { border-top: 0.5px solid var(--hairline); }
-.prow-todo { grid-template-columns: 18px 1fr auto auto auto; }
+.prow-todo { grid-template-columns: 14px 18px 1fr auto auto auto; }
+.prow-chev {
+  appearance: none; border: 0; cursor: pointer; padding: 0;
+  background: transparent; color: var(--fg-subtle);
+  width: 14px; height: 14px;
+  display: inline-grid; place-items: center;
+  border-radius: 4px;
+  transition: transform 120ms, color 120ms, background 120ms;
+}
+.prow-chev:hover { color: var(--fg); background: var(--glass-bg-soft); }
+.prow-chev.open { transform: rotate(90deg); color: var(--fg); }
+.prow-chev-spacer { width: 14px; height: 14px; display: inline-block; }
+.ti-childcount {
+  margin-left: 6px; font-size: var(--type-meta);
+  color: var(--fg-subtle); font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
 .prow-note { grid-template-columns: 1fr auto; }
 .prow .ti { font-size: var(--type-body); font-weight: 500; line-height: 1.35; }
 .prow .ti-sub {
@@ -1857,9 +1873,16 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .prow .ats {
   font-size: var(--type-meta); color: var(--fg-subtle);
 }
-/* Subtask indent — single nesting level only on Home/drawer compact
-   views. The hierarchy is two-deep at most for personal todos. */
-.prow-todo[data-depth="1"] { padding-left: 38px; }
+/* Subtask indent — depth-aware. Each level adds 18px of left padding.
+   The Home widget caps at depth=1; the drawer renders the full tree. */
+.prow-todo { padding-left: calc(16px + var(--depth, 0) * 18px); }
+.ti-deeper {
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  font-style: italic;
+}
 /* Done todos read as background context — struck through + dimmed. */
 .prow-done .ti { text-decoration: line-through; color: var(--fg-muted); }
 .prow-done { opacity: 0.65; }
