@@ -109,7 +109,7 @@ export async function listActivity(
   if (kinds.includes('comment')) {
     branches.push(`
       SELECT tc.created_at AS at, 'comment'::text AS kind,
-             'todo_comment'::text AS entity_type, tc.id AS entity_id,
+             'todo_comment'::text AS entity_type, tc.todo_id AS entity_id,
              t.content AS title,
              CASE WHEN t.project_id IS NULL THEN ARRAY[]::uuid[] ELSE ARRAY[t.project_id] END AS project_ids
         FROM todo_comments tc
@@ -117,6 +117,11 @@ export async function listActivity(
        WHERE ($1::timestamptz IS NULL OR tc.created_at >= $1)
          AND ($2::timestamptz IS NULL OR tc.created_at <  $2)
          ${commentScope}`);
+    // entity_id intentionally points at the parent todo (tc.todo_id, not
+    // tc.id) — a comment activity event is a navigation target ("take me
+    // to the thing this comment is about"), not a comment-detail link.
+    // The 'todo_comment' entity_type still tags it as a comment event so
+    // consumers can render "Commented on X" rather than "Edited X".
   }
 
   const params: unknown[] = [since, until];

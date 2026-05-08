@@ -327,16 +327,68 @@ async function main() {
 
   // ============================================================
   // INBOX — personal todos, no project
+  // Designed to exercise every todo feature visible on Home and the
+  // personal todos drawer:
+  //   priorities P1/P2/P3 ✓
+  //   statuses not_started, in_progress, done, paused ✓
+  //   due dates: overdue, due-soon, far-future, none ✓
+  //   tags ✓
+  //   parent / subtask hierarchy ✓
+  //   pinned ✓
+  //   comments ✓
+  // Order matters: items are referenced by index for parent links.
   // ============================================================
-  const inbox: Array<{ content: string; priority: Pri; due_date?: string; tags?: string[] }> = [
-    { content: 'Reply to Sebastian about the dataset request', priority: 'P2', due_date: daysFromNow(-1) },        // overdue
-    { content: 'Renew domain (openbrain.local) — expires in 12 days', priority: 'P1', due_date: daysFromNow(12), tags: ['chore'] },
-    { content: "Read 'On the Measure of Intelligence' (Chollet)", priority: 'P3', tags: ['reading'] },
-    { content: 'Buy new mechanical keyboard', priority: 'P3', tags: ['chore'] },
+  type InboxSpec = {
+    content: string;
+    priority: Pri;
+    status?: 'not_started' | 'in_progress' | 'done' | 'paused';
+    due_date?: string;
+    tags?: string[];
+    parent?: number;
+    pin?: boolean;
+    comments?: string[];
+  };
+  const inbox: InboxSpec[] = [
+    // 0: pinned, in_progress, parent of subtasks — exercises the most
+    { content: 'Plan home office overhaul', priority: 'P2', status: 'in_progress', tags: ['home'], pin: true,
+      comments: ["Shortlist desks under $500", 'Need to measure the wall before ordering'] },
+    { content: 'Pick a standing desk', priority: 'P3', status: 'in_progress', parent: 0, tags: ['home'] },          // 1
+    { content: 'Order monitor arm', priority: 'P3', status: 'done', parent: 0, tags: ['home'] },                   // 2
+    { content: 'Cable management', priority: 'P3', status: 'not_started', parent: 0, tags: ['home'] },             // 3
+
+    // standalones — variety on status, due, tags
+    { content: 'Reply to Sebastian about the dataset request', priority: 'P2', status: 'not_started',
+      due_date: daysFromNow(-1) },                                                                                 // 4 overdue
+    { content: 'Renew domain (openbrain.local) — expires in 12 days', priority: 'P1',
+      status: 'not_started', due_date: daysFromNow(12), tags: ['chore'] },                                         // 5 upcoming
+    { content: "Read 'On the Measure of Intelligence' (Chollet)", priority: 'P3', status: 'paused',
+      tags: ['reading'] },                                                                                          // 6 paused
+    { content: 'Buy new mechanical keyboard', priority: 'P3', status: 'done', tags: ['chore'] },                   // 7 done
+    { content: 'Schedule annual physical', priority: 'P2', status: 'not_started', due_date: daysFromNow(21),
+      tags: ['health'] },                                                                                           // 8 future due
+    { content: 'Cancel unused streaming subscription', priority: 'P3', status: 'done',
+      comments: ['Done — saved $14/mo'] },                                                                         // 9 done w/ comment
   ];
+
+  const inboxIds: string[] = [];
   for (const t of inbox) {
-    await api('POST', '/api/v1/todos', t);
-    console.log(`  + inbox todo [${t.priority}] "${t.content}"`);
+    const body: Json = { content: t.content, priority: t.priority, tags: t.tags };
+    if (t.parent !== undefined) body.parent_id = inboxIds[t.parent];
+    if (t.due_date) body.due_date = t.due_date;
+    const created = await api<{ todo: { id: string } }>('POST', '/api/v1/todos', body);
+    inboxIds.push(created.todo.id);
+    if (t.status && t.status !== 'not_started') {
+      await api('PUT', `/api/v1/todos/${created.todo.id}`, { status: t.status });
+    }
+    if (t.pin) {
+      await api('POST', `/api/v1/todos/${created.todo.id}/pin`);
+    }
+    for (const c of t.comments ?? []) {
+      await api('POST', `/api/v1/todos/${created.todo.id}/comments`, { content: c });
+    }
+    const labels = [t.priority, t.status ?? 'not_started', t.parent !== undefined ? `↳ child of #${t.parent}` : null]
+      .filter(Boolean).join(' · ');
+    console.log(`  + inbox todo [${labels}] "${t.content}"`);
   }
 
   console.log('\n✓ seed complete');

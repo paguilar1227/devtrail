@@ -157,6 +157,8 @@ export type ModalKind =
   | { kind: 'confirm-rename'; payload: TagRow }
   | { kind: 'new-project' }
   | { kind: 'settings' }
-  | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } };
+  | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
+  | { kind: 'personal-todos' }
+  | { kind: 'personal-notes' };
 
 export type ActionDispatch = (modal: ModalKind) => void;

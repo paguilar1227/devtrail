@@ -19,7 +19,8 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
-import { Checkbox, Priority } from '../components/primitives';
+import { NoteRow } from '../components/NoteRow';
+import { TodoRow } from '../components/TodoRow';
 import {
   createNote,
   createTodo,
@@ -242,6 +243,16 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Todos</h3>
             <span className="ct">{personalTodos.length}</span>
+            {personalTodos.length > 6 ? (
+              <button
+                className="pcol-expand"
+                onClick={() => onAction({ kind: 'personal-todos' })}
+                aria-label="View all personal todos"
+                title="View all"
+              >
+                <Icons.Expand />
+              </button>
+            ) : null}
           </div>
           <div className="pcol-add">
             <input
@@ -263,32 +274,17 @@ export function HomePage({ onRoute, onAction }: Props) {
             <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
           ) : (
             personalTodos.slice(0, 6).map((t) => (
-              <div
+              <TodoRow
                 key={t.id}
-                className="prow prow-todo"
+                todo={t}
                 onClick={() => onAction({ kind: 'todo-detail', payload: t })}
-              >
-                <Checkbox
-                  checked={t.status === 'done'}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    todoToggle.mutate({
-                      id: t.id,
-                      status: t.status === 'done' ? 'not_started' : 'done',
-                    });
-                  }}
-                />
-                <div>
-                  <div className="ti">{t.title}</div>
-                  {t.due_at ? (
-                    <div className={cls('ti-sub', isOverdue(t.due_at) && 'due-overdue')}>
-                      due {fmtRel(t.due_at)}
-                    </div>
-                  ) : null}
-                </div>
-                <Priority p={t.priority} />
-                <span className="ats">{fmtRel(t.created_at)}</span>
-              </div>
+                onToggleDone={() =>
+                  todoToggle.mutate({
+                    id: t.id,
+                    status: t.status === 'done' ? 'not_started' : 'done',
+                  })
+                }
+              />
             ))
           )}
         </div>
@@ -297,6 +293,16 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Notes</h3>
             <span className="ct">{personalNotes.length}</span>
+            {personalNotes.length > 6 ? (
+              <button
+                className="pcol-expand"
+                onClick={() => onAction({ kind: 'personal-notes' })}
+                aria-label="View all personal notes"
+                title="View all"
+              >
+                <Icons.Expand />
+              </button>
+            ) : null}
           </div>
           <div className="pcol-add">
             <input
@@ -318,17 +324,11 @@ export function HomePage({ onRoute, onAction }: Props) {
             <div className="pcol-empty">No personal notes — capture above.</div>
           ) : (
             personalNotes.slice(0, 6).map((n) => (
-              <div
+              <NoteRow
                 key={n.id}
-                className="prow prow-note"
+                note={toUiNote(n)}
                 onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
-              >
-                <div>
-                  <div className="ti">{n.title}</div>
-                  <div className="ti-sub">edited {fmtRel(n.updated_at ?? n.created_at)}</div>
-                </div>
-                <span className="ats">{fmtRel(n.updated_at ?? n.created_at)}</span>
-              </div>
+              />
             ))
           )}
         </div>

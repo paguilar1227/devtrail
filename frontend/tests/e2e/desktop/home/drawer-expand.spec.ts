@@ -46,13 +46,21 @@ test('drawer: expand toggle moves the right-rail drawer to centered/wider and ba
 
   await page.locator('.drawer-expand').click();
   await expect(drawer).toHaveClass(/drawer-expanded/);
-  // Drawer animates 220ms; wait for the new width to settle.
+  // Both width and transform: translateX animate over 220ms. Width
+  // can settle a few ms before the transform does, so polling on
+  // width alone catches the drawer mid-flight. Poll on the centering
+  // invariant directly.
   await expect
-    .poll(async () => drawer.evaluate((el) => Math.round(el.getBoundingClientRect().width)))
-    .toBeGreaterThan(before.width);
+    .poll(async () =>
+      drawer.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return Math.abs(Math.round(r.left) - Math.round(window.innerWidth - r.right));
+      })
+    )
+    .toBeLessThanOrEqual(2);
 
   // Expanded: visibly wider, and the left/right gaps are roughly equal
-  // (centered). We allow a small tolerance for transform rounding.
+  // (centered).
   const after = await drawer.evaluate((el) => {
     const r = el.getBoundingClientRect();
     return {

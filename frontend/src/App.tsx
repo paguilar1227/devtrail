@@ -8,8 +8,10 @@ import { ConfirmModal } from './components/modals/ConfirmModal';
 import { DocReaderDrawer } from './components/modals/DocReaderDrawer';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
+import { NoteListDrawer } from './components/modals/NoteListDrawer';
 import { SearchDrawer } from './components/modals/SearchDrawer';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
+import { TodoListDrawer } from './components/modals/TodoListDrawer';
 import { UploadModal } from './components/modals/UploadModal';
 import { useIsMobile } from './lib/useIsMobile';
 import { listProjects } from './lib/api';
@@ -187,6 +189,12 @@ export default function App() {
           initialScope={modal.payload?.scope}
           onClose={() => setModal(null)}
         />
+      )}
+      {modal?.kind === 'personal-todos' && (
+        <TodoListDrawer onClose={() => setModal(null)} onAction={onAction} />
+      )}
+      {modal?.kind === 'personal-notes' && (
+        <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} />
       )}
 
       {cmdkOpen && (

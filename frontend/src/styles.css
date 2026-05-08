@@ -1799,16 +1799,28 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   overflow: hidden;
 }
 .pcol .pcol-h {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 8px;
   padding: 12px 16px;
   border-bottom: 0.5px solid var(--hairline);
 }
-.pcol .pcol-h h3 { font-size: var(--type-h); font-weight: 600; margin: 0; }
+.pcol .pcol-h h3 { font-size: var(--type-h); font-weight: 600; margin: 0; flex: 1; }
 .pcol .pcol-h .ct {
   font-size: var(--type-meta); color: var(--fg-subtle);
   padding: 1px 7px; border: 0.5px solid var(--hairline); border-radius: 6px;
   font-variant-numeric: tabular-nums;
 }
+.pcol-expand {
+  appearance: none; border: 0; cursor: pointer;
+  background: transparent; color: var(--fg-subtle);
+  padding: 4px; border-radius: 6px;
+  display: inline-grid; place-items: center;
+}
+.pcol-expand:hover { background: var(--glass-bg-soft); color: var(--fg); }
+.todo-list-drawer-rows {
+  display: flex; flex-direction: column;
+  margin: -8px -18px;
+}
+.todo-list-drawer-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
 .pcol .pcol-add {
   padding: 12px 16px;
   border-bottom: 0.5px solid var(--hairline);
