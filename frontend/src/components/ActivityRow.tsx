@@ -24,10 +24,16 @@ const KIND_LABEL: Record<ActivityEvent['kind'], string> = {
   comment: 'Commented on',
 };
 
-function KindIcon({ kind }: { kind: ActivityEvent['kind'] }) {
-  if (kind === 'ingest') return <Icons.Upload size={12} />;
-  if (kind === 'edit') return <Icons.Note size={12} />;
-  return <Icons.Chat size={12} />;
+// Icon picks by what the thing IS (entity_kind), color picks by what
+// HAPPENED to it (kind, via CSS class on the wrapper). The exception
+// is comments — those have no useful "thing" signal beyond the parent
+// todo, so we keep the chat-bubble icon as a marker that this row is
+// about a discussion rather than the entity itself.
+function EntityIcon({ kind, entity_kind }: { kind: ActivityEvent['kind']; entity_kind: ActivityEvent['entity_kind'] }) {
+  if (kind === 'comment') return <Icons.Chat size={12} />;
+  if (entity_kind === 'todo') return <Icons.Check size={12} />;
+  if (entity_kind === 'note') return <Icons.Note size={12} />;
+  return <Icons.Doc size={12} />;
 }
 
 export function ActivityRow({ activity, showEntityKind = false, onClick }: Props) {
@@ -46,7 +52,7 @@ export function ActivityRow({ activity, showEntityKind = false, onClick }: Props
       } : undefined}
     >
       <span className={cls('activity-icon', a.kind)}>
-        <KindIcon kind={a.kind} />
+        <EntityIcon kind={a.kind} entity_kind={a.entity_kind} />
       </span>
       <span className="text">
         {KIND_LABEL[a.kind]} <b>{a.title}</b>
