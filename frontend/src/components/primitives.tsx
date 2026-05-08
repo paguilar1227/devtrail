@@ -207,7 +207,7 @@ export function Drawer({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className={cls('drawer', expanded && 'drawer-expanded')}>
+    <div className={cls('drawer', expanded && 'drawer-expanded')} role="dialog" aria-modal="true">
       <div className="drawer-head">
         <span className="ti">{title}</span>
         <button

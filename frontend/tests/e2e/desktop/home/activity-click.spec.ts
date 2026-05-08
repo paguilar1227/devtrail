@@ -9,12 +9,12 @@ test('home activity: clicking a row opens the underlying entity modal', async ({
   // Wait for the activity card to finish loading — its rows render after
   // the listActivity query resolves, so a bare .arow query can race with
   // the SPA's first paint on cold start.
-  await expect(page.locator('.stat-activity .arows')).toBeVisible();
-  const firstRow = page.locator('.stat-activity .arow').first();
+  await expect(page.locator('.stat-activity .activity-list-compact')).toBeVisible();
+  const firstRow = page.locator('.stat-activity .activity-row').first();
   await expect(firstRow).toBeVisible();
 
   // Capture the title text so we can verify the right entity opened.
-  const title = (await firstRow.locator('.atext b').innerText()).trim();
+  const title = (await firstRow.locator('.text b').innerText()).trim();
   expect(title.length).toBeGreaterThan(0);
 
   await firstRow.click();

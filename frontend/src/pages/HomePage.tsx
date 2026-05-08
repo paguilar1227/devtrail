@@ -17,6 +17,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { Checkbox, Priority } from '../components/primitives';
 import {
@@ -218,30 +219,13 @@ export function HomePage({ onRoute, onAction }: Props) {
           {activity.length === 0 ? (
             <div className="page-subtle">No recent activity.</div>
           ) : (
-            <div className="arows">
+            <div className="activity-list activity-list-compact">
               {activity.map((a) => (
-                <div
+                <ActivityRow
                   key={a.id}
-                  className="arow"
-                  role="button"
-                  tabIndex={0}
+                  activity={a}
                   onClick={() => openActivityTarget(a, onAction)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      openActivityTarget(a, onAction);
-                    }
-                  }}
-                >
-                  <span className={cls('activity-icon', a.kind)}>
-                    {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
-                  </span>
-                  <span className="atext">
-                    {a.kind === 'ingest' ? 'Ingested' : a.kind === 'edit' ? 'Edited' : 'Commented on'} <b>{a.title}</b>
-                    <span className="subtle"> · {a.project}</span>
-                  </span>
-                  <span className="ats">{fmtRel(a.at)}</span>
-                </div>
+                />
               ))}
             </div>
           )}

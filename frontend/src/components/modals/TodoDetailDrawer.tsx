@@ -146,7 +146,7 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
         <div className="page-subtle">No comments yet.</div>
       ) : (
         comments.map(c => (
-          <div key={c.id} className="comment">
+          <div key={c.id} className="todo-comment">
             <div className="meta">
               <b>alex</b> · {fmtRel(c.created_at)}
             </div>

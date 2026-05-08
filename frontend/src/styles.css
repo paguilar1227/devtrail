@@ -1542,8 +1542,8 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   box-shadow: 0 1px 1px rgba(0,0,0,0.08);
 }
 
-/* ── Comments ── */
-.comment {
+/* ── Todo comments ── */
+.todo-comment {
   padding: 10px 12px;
   border-radius: 10px;
   background: var(--glass-bg-soft);
@@ -1552,7 +1552,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-size: var(--type-body);
   line-height: 1.55;
 }
-.comment .meta {
+.todo-comment .meta {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 4px;
   font-size: var(--type-meta); color: var(--fg-subtle);
@@ -1596,10 +1596,19 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .activity-icon.ingest  { color: oklch(0.78 0.10 220); }
 .activity-icon.edit    { color: oklch(0.78 0.11 80); }
 .activity-icon.comment { color: oklch(0.78 0.10 295); }
-.activity-icon.comment svg { transform: translateY(-1px); }
-.activity-row .text { font-size: var(--type-body); }
+.activity-row .text { font-size: var(--type-body); min-width: 0; }
 .activity-row .text b { font-weight: 600; }
-.activity-row .ts { font-size: var(--type-meta); color: var(--fg-subtle); }
+.activity-row .ts {
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+/* Compact list (Home widget) wants single-line truncation since the
+   activity card is narrower than the dedicated /activity page. */
+.activity-list-compact .activity-row .text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-muted);
+}
+.activity-list-compact .activity-row .text b { color: var(--fg); font-weight: 500; }
 
 /* ── Dot pulse ── */
 .dots { display: inline-flex; gap: 4px; }
@@ -1752,28 +1761,20 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 8px;
 }
-.stat-activity .arows { display: flex; flex-direction: column; }
-.stat-activity .arow {
-  display: grid; grid-template-columns: 24px 1fr auto;
-  align-items: center; gap: 10px;
+/* Compact activity list — used in the Recent Activity widget on Home.
+   Tightens padding, drops the row card chrome, and adds a per-row
+   hairline separator. The row markup itself is the same .activity-row
+   used on the dedicated /activity page (see ActivityRow component). */
+.activity-list-compact {
+  display: flex; flex-direction: column;
+}
+.activity-list-compact .activity-row {
   padding: 7px 6px;
   margin: 0 -6px;
-  border-radius: 6px;
-  cursor: pointer;
   font-size: var(--type-body);
-  transition: background 120ms;
 }
-.stat-activity .arow:hover { background: var(--glass-bg-soft); }
-.stat-activity .arow:focus-visible {
-  outline: 2px solid var(--accent-1);
-  outline-offset: 1px;
-}
-.stat-activity .arow + .arow { border-top: 0.5px solid var(--hairline); }
-.stat-activity .arow .atext { color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stat-activity .arow .atext b { color: var(--fg); font-weight: 500; }
-.stat-activity .arow .ats {
-  font-size: var(--type-meta); color: var(--fg-subtle);
-  font-variant-numeric: tabular-nums;
+.activity-list-compact .activity-row + .activity-row {
+  border-top: 0.5px solid var(--hairline);
 }
 
 .home-personal-h {
@@ -2100,7 +2101,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .project-row-count { font-size: var(--type-meta); }
 .row-meta { font-size: var(--type-meta); margin-top: 2px; }
-.activity-row-meta { font-size: var(--type-meta); margin-left: 8px; }
+.activity-row-meta { font-size: var(--type-meta); }
 .proj-eyebrow-row { margin-bottom: 8px; }
 .proj-dot-lg { width: 12px; height: 12px; }
 .eyebrow {

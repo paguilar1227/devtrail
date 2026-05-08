@@ -1,11 +1,10 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { Icons } from '../components/Icons';
+import { ActivityRow } from '../components/ActivityRow';
 import { FilterChip } from '../components/primitives';
 import { listActivity, listProjects } from '../lib/api';
 import { toUiActivity } from '../lib/view';
 import { openActivityTarget } from '../lib/openActivity';
-import { cls, fmtRel } from '../lib/util';
 import type { ActionDispatch, ActivityEvent, ActivityKind } from '../types';
 
 type FilterKind = 'all' | ActivityKind;
@@ -90,31 +89,12 @@ export function ActivityPage({ onAction }: Props) {
             <Fragment key={day}>
               <div className="activity-day">{day}</div>
               {items.map(a => (
-                <div
+                <ActivityRow
                   key={a.id}
-                  className="activity-row"
-                  role="button"
-                  tabIndex={0}
+                  activity={a}
+                  showEntityKind
                   onClick={() => openActivityTarget(a, onAction)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      openActivityTarget(a, onAction);
-                    }
-                  }}
-                >
-                  <div className={cls('activity-icon', a.kind)}>
-                    {a.kind === 'ingest' ? <Icons.Upload size={12} /> : a.kind === 'edit' ? <Icons.Note size={12} /> : <Icons.Chat size={12} />}
-                  </div>
-                  <div className="text">
-                    {a.kind === 'ingest' ? 'Ingested ' : a.kind === 'edit' ? 'Edited ' : 'Commented on '}
-                    <b>{a.title}</b>
-                    <span className="subtle activity-row-meta">
-                      {a.entity_kind} · {a.project}
-                    </span>
-                  </div>
-                  <span className="ts">{fmtRel(a.at)}</span>
-                </div>
+                />
               ))}
             </Fragment>
           ))}
