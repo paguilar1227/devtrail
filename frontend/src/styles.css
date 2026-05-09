@@ -2346,7 +2346,15 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   -webkit-appearance: none; margin: 0;
 }
 .dtp-num:focus { border-color: var(--accent-1); background: var(--field-bg-focus); }
+.dtp-num.invalid { border-color: var(--st-failed); }
+.dtp-num.invalid:focus { border-color: var(--st-failed); }
 .dtp-colon { color: var(--fg-muted); font-weight: 600; }
+.dtp-error {
+  font-size: var(--type-meta);
+  color: var(--st-failed);
+  padding: 0 2px;
+  margin-top: -4px;
+}
 
 .dtp-ampm {
   display: inline-flex;
@@ -2393,5 +2401,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   color: var(--fg);
   font-weight: 600;
 }
-.dtp-foot-btn.primary:hover { filter: brightness(1.08); }
+.dtp-foot-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.dtp-foot-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 

@@ -8,13 +8,17 @@
 //   - Popover contains: month nav + 7-col date grid (Sun-Sat), time row
 //     (hour 1-12, minute 00-59, AM/PM toggle), and footer buttons:
 //     Clear, Today, Done.
-//   - The internal state is a draft that only commits on Done. Clear
-//     and Done close the popover; Esc cancels and returns focus to the
+//   - Hour/minute fields hold a raw string while the user is typing —
+//     no clamp-on-keystroke, otherwise typing "1" then "3" gets clamped
+//     to 12 before "3" can land. Invalid states render with a red
+//     border and disable Done; valid states canonicalize on blur (e.g.
+//     a typed "5" becomes "05" for the minute slot).
+//   - Internal state is a draft that only commits on Done. Clear and
+//     Done close the popover; Esc cancels and returns focus to the
 //     trigger; mousedown outside also cancels.
 //   - Keyboard nav on the grid: ←→ ±1 day, ↑↓ ±7 days, Enter commits.
-//     Tab cycles through trigger → grid → time controls → footer.
-//   - On open, focus moves to the selected day cell (or today's cell
-//     when value is null). On close, focus returns to the trigger.
+//   - On open, focus moves to the selected day cell. On close, focus
+//     returns to the trigger.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icons } from './Icons';
@@ -24,7 +28,6 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-// Single-letter weekday headers — Sun first to match the grid logic.
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 interface Props {
@@ -34,7 +37,7 @@ interface Props {
 }
 
 interface Parts {
-  date: Date;            // anchored at local midnight on the picked day
+  date: Date;
   hour: number;          // 1..12
   minute: number;        // 0..59
   ampm: 'am' | 'pm';
@@ -88,9 +91,6 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 function buildGrid(view: Date): Date[] {
-  // 6 rows × 7 cols. Start from the Sunday of the week that contains
-  // the 1st of the month — gives consistent height regardless of
-  // month length.
   const first = new Date(view.getFullYear(), view.getMonth(), 1);
   const start = new Date(first);
   start.setDate(first.getDate() - first.getDay());
@@ -103,22 +103,41 @@ function buildGrid(view: Date): Date[] {
   return cells;
 }
 
+// Accept any natural-number string while typing. Canonicalize / validate
+// only on blur or commit.
+function isValidHour(s: string): boolean {
+  if (!/^\d+$/.test(s)) return false;
+  const n = parseInt(s, 10);
+  return n >= 1 && n <= 12;
+}
+function isValidMinute(s: string): boolean {
+  if (!/^\d+$/.test(s)) return false;
+  const n = parseInt(s, 10);
+  return n >= 0 && n <= 59;
+}
+
 export function DateTimePicker({ value, onChange, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
 
-  const [draft, setDraft] = useState<Parts>(() => partsFromIso(value));
-  const [view, setView] = useState<Date>(() => partsFromIso(value).date);
+  const seed = useMemo(() => partsFromIso(value), [value]);
+  const [draftDate, setDraftDate] = useState<Date>(seed.date);
+  const [hourStr, setHourStr] = useState<string>(String(seed.hour));
+  const [minuteStr, setMinuteStr] = useState<string>(String(seed.minute).padStart(2, '0'));
+  const [ampm, setAmpm] = useState<'am' | 'pm'>(seed.ampm);
+  const [view, setView] = useState<Date>(seed.date);
 
-  // Re-seed draft from prop whenever the popover opens. Keeps the
-  // draft transient — closing without Done discards local edits.
+  // Re-seed everything from the prop whenever the popover opens. Keeps
+  // edits transient — closing without Done discards them.
   useEffect(() => {
-    if (open) {
-      const p = partsFromIso(value);
-      setDraft(p);
-      setView(p.date);
-    }
+    if (!open) return;
+    const p = partsFromIso(value);
+    setDraftDate(p.date);
+    setHourStr(String(p.hour));
+    setMinuteStr(String(p.minute).padStart(2, '0'));
+    setAmpm(p.ampm);
+    setView(p.date);
   }, [open, value]);
 
   // Close on outside click / Esc.
@@ -145,9 +164,7 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
     };
   }, [open]);
 
-  // Move focus to the selected day cell on open. Falls back to "today"
-  // if the selected day isn't in the visible grid (shouldn't happen but
-  // keeps the keyboard path resilient).
+  // Move focus to the selected day cell on open.
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => {
@@ -165,11 +182,22 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
     setView((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
 
   const setDayDraft = (d: Date) => {
-    setDraft((p) => ({ ...p, date: new Date(d.getFullYear(), d.getMonth(), d.getDate()) }));
+    setDraftDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
   };
 
+  const hourValid = isValidHour(hourStr);
+  const minuteValid = isValidMinute(minuteStr);
+  const canCommit = hourValid && minuteValid;
+
   const commit = () => {
-    onChange(isoFromParts(draft));
+    if (!canCommit) return;
+    const iso = isoFromParts({
+      date: draftDate,
+      hour: parseInt(hourStr, 10),
+      minute: parseInt(minuteStr, 10),
+      ampm,
+    });
+    onChange(iso);
     setOpen(false);
     triggerRef.current?.focus();
   };
@@ -186,6 +214,16 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
     setDayDraft(t);
   };
 
+  // Canonicalize on blur — pad minutes to two digits when the typed
+  // value is a valid single digit. Hour stays as typed (12 vs "12" is
+  // the same; "3" stays "3"). Invalid states are left alone so the
+  // user sees their input + the error highlight.
+  const onMinuteBlur = () => {
+    if (isValidMinute(minuteStr) && minuteStr.length === 1) {
+      setMinuteStr(minuteStr.padStart(2, '0'));
+    }
+  };
+
   const onGridKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const handled = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', ' '];
     if (!handled.includes(e.key)) return;
@@ -198,7 +236,7 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
       e.key === 'ArrowLeft' ? -1 :
       e.key === 'ArrowRight' ? 1 :
       e.key === 'ArrowUp' ? -7 : 7;
-    const next = new Date(draft.date);
+    const next = new Date(draftDate);
     next.setDate(next.getDate() + delta);
     setDayDraft(next);
     if (next.getMonth() !== view.getMonth() || next.getFullYear() !== view.getFullYear()) {
@@ -207,17 +245,6 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
     requestAnimationFrame(() => {
       popRef.current?.querySelector<HTMLButtonElement>('.dtp-day.selected')?.focus();
     });
-  };
-
-  const onHourChange = (raw: string) => {
-    const n = parseInt(raw, 10);
-    if (!Number.isFinite(n)) return;
-    setDraft((p) => ({ ...p, hour: Math.max(1, Math.min(12, n)) }));
-  };
-  const onMinuteChange = (raw: string) => {
-    const n = parseInt(raw, 10);
-    if (!Number.isFinite(n)) return;
-    setDraft((p) => ({ ...p, minute: Math.max(0, Math.min(59, n)) }));
   };
 
   return (
@@ -269,7 +296,7 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
           </div>
           <div className="dtp-grid" onKeyDown={onGridKey} role="grid">
             {grid.map((d, i) => {
-              const sel = isSameDay(d, draft.date);
+              const sel = isSameDay(d, draftDate);
               const dim = d.getMonth() !== view.getMonth();
               const isToday = isSameDay(d, today);
               return (
@@ -292,23 +319,32 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
           <div className="dtp-time">
             <span className="dtp-time-label">Time</span>
             <input
-              type="number"
-              className="dtp-num"
-              min={1}
-              max={12}
-              value={draft.hour}
-              onChange={(e) => onHourChange(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className={cls('dtp-num', !hourValid && 'invalid')}
+              value={hourStr}
+              onChange={(e) => setHourStr(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              onFocus={(e) => e.currentTarget.select()}
+              onMouseUp={(e) => e.currentTarget.select()}
               aria-label="Hour"
+              aria-invalid={!hourValid}
+              maxLength={2}
             />
             <span className="dtp-colon">:</span>
             <input
-              type="number"
-              className="dtp-num"
-              min={0}
-              max={59}
-              value={draft.minute.toString().padStart(2, '0')}
-              onChange={(e) => onMinuteChange(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className={cls('dtp-num', !minuteValid && 'invalid')}
+              value={minuteStr}
+              onChange={(e) => setMinuteStr(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              onBlur={onMinuteBlur}
+              onFocus={(e) => e.currentTarget.select()}
+              onMouseUp={(e) => e.currentTarget.select()}
               aria-label="Minute"
+              aria-invalid={!minuteValid}
+              maxLength={2}
             />
             <div className="dtp-ampm" role="radiogroup" aria-label="AM/PM">
               {(['am', 'pm'] as const).map((m) => (
@@ -316,19 +352,31 @@ export function DateTimePicker({ value, onChange, disabled }: Props) {
                   key={m}
                   type="button"
                   role="radio"
-                  aria-checked={draft.ampm === m}
-                  className={cls('dtp-ampm-b', draft.ampm === m && 'active')}
-                  onClick={() => setDraft((p) => ({ ...p, ampm: m }))}
+                  aria-checked={ampm === m}
+                  className={cls('dtp-ampm-b', ampm === m && 'active')}
+                  onClick={() => setAmpm(m)}
                 >
                   {m.toUpperCase()}
                 </button>
               ))}
             </div>
           </div>
+          {!canCommit ? (
+            <div className="dtp-error" role="alert">
+              {!hourValid ? 'Hour must be 1–12.' : 'Minute must be 0–59.'}
+            </div>
+          ) : null}
           <div className="dtp-foot">
             <button type="button" className="dtp-foot-btn" onClick={clear}>Clear</button>
             <button type="button" className="dtp-foot-btn" onClick={goToToday}>Today</button>
-            <button type="button" className="dtp-foot-btn primary" onClick={commit}>Done</button>
+            <button
+              type="button"
+              className="dtp-foot-btn primary"
+              onClick={commit}
+              disabled={!canCommit}
+            >
+              Done
+            </button>
           </div>
         </div>
       ) : null}
