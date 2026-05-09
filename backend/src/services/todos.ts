@@ -16,6 +16,7 @@ import {
   bulkSetDueDateTodos,
   pinTodo as dbPinTodo,
   unpinTodo as dbUnpinTodo,
+  reorderTodosInGroup,
   type TodoRow, type TodoInsert, type ListTodosFilters, type TodoSearchResult,
   type BulkTodoStatus, type BulkTodoPriority, type BulkTodoResult,
 } from '../db/todos.js';
@@ -138,6 +139,23 @@ export async function pinTodo(deps: ServiceDeps, id: string): Promise<{ found: b
 
 export async function unpinTodo(deps: ServiceDeps, id: string): Promise<{ found: boolean }> {
   return dbUnpinTodo(deps.db, id);
+}
+
+/**
+ * Persist a manual ordering for a sibling group of todos. The group
+ * is identified by `parentId` (null = top-level personal); the `ids`
+ * array IS the new order, position 1..N becoming `manual_order`.
+ *
+ * Mismatched ids (wrong parent / archived / not found) cause the
+ * whole reorder to abort — partial application would be confusing
+ * and leaves the client UI in disagreement with the backend.
+ */
+export async function reorderTodos(
+  deps: ServiceDeps,
+  parentId: string | null,
+  ids: string[],
+): Promise<{ updated: number; mismatched_ids: string[] }> {
+  return reorderTodosInGroup(deps.db, parentId, ids);
 }
 
 export async function searchTodos(

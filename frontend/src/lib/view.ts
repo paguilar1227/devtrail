@@ -82,6 +82,7 @@ export function toUiTodo(t: ApiTodo): UiTodo {
     due_at: t.due_date,
     created_at: t.created_at,
     comments: t.comment_count ?? 0,
+    manual_order: t.manual_order ?? null,
   };
 }
 

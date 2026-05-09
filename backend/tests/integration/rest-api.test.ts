@@ -2042,6 +2042,78 @@ describe('Todos API', () => {
     expect(tree[childOpen].status).toBe('in_progress');
   });
 
+  it('POST /todos/reorder persists position 1..N for the named sibling group', async () => {
+    const a = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const b = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const c = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      // Validation SELECT — return all three as valid top-level rows.
+      if (/^SELECT id FROM todos WHERE id = ANY/i.test(sql)) {
+        return { rows: [{ id: a }, { id: b }, { id: c }] } as any;
+      }
+      // The actual UPDATE
+      if (/^UPDATE todos AS t/i.test(sql)) {
+        return { rows: [], rowCount: 3 } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/reorder', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: null, ids: [c, a, b] }),
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ updated: 3, mismatched_ids: [] });
+
+    // Validation query selected on parent_id IS NULL (top-level).
+    const validation = queries.find((q) => /WHERE id = ANY.*parent_id IS NULL/i.test(q.sql));
+    expect(validation).toBeTruthy();
+    // The id array is bound positionally as the new order.
+    const update = queries.find((q) => /UPDATE todos AS t/i.test(q.sql));
+    expect(update?.params[0]).toEqual([c, a, b]);
+  });
+
+  it('POST /todos/reorder rejects ids that do not all share the requested parent', async () => {
+    const a = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const b = '11111111-2222-4333-8444-555555555555';
+    const parentId = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      // Only `a` is actually a child of `parentId`; `b` is mismatched.
+      if (/^SELECT id FROM todos WHERE id = ANY.*parent_id =/i.test(sql)) {
+        return { rows: [{ id: a }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/reorder', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: parentId, ids: [a, b] }),
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/Reorder aborted/);
+    expect(body.mismatched_ids).toEqual([b]);
+  });
+
+  it('POST /todos/reorder caps batch size at 500', async () => {
+    const ids = Array.from({ length: 501 }, (_, i) =>
+      `${(i + 0x10000).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,
+    );
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos/reorder', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: null, ids }),
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/capped at 500/);
+  });
+
   it('PUT /todos/:id status change between two non-done states does NOT cascade', async () => {
     const parent = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const tree: Record<string, { status: string }> = {

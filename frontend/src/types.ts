@@ -61,6 +61,7 @@ export interface Todo {
   due_at: string | null;
   created_at: string;
   comments: number;
+  manual_order: number | null;
 }
 
 export interface TodoComment {

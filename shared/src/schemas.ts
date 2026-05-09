@@ -231,6 +231,7 @@ export const TodoSchema = z.object({
   tags: z.array(z.string()),
   archived: z.boolean(),
   pinned_at: z.string().datetime({ offset: true }).nullable().optional(),
+  manual_order: z.number().int().nullable().optional(),
   comment_count: z.number().int().nonnegative().optional(),
   similarity: z.number().optional(),
   created_at: z.string().datetime({ offset: true }),
@@ -596,6 +597,22 @@ export const BulkResponseSchema = z.object({
   missing_ids: z.array(UuidSchema),
 });
 export type BulkResponse = z.infer<typeof BulkResponseSchema>;
+
+// Manual reorder for a sibling group of todos.
+//   - parent_id null   → top-level personal todos
+//   - parent_id UUID   → children of that todo
+// `ids` IS the new order; position 1..N becomes manual_order.
+export const TodoReorderRequestSchema = z.object({
+  parent_id: UuidSchema.nullable(),
+  ids: z.array(UuidSchema).min(1),
+});
+export type TodoReorderRequest = z.infer<typeof TodoReorderRequestSchema>;
+
+export const TodoReorderResponseSchema = z.object({
+  updated: z.number().int().nonnegative(),
+  mismatched_ids: z.array(UuidSchema),
+});
+export type TodoReorderResponse = z.infer<typeof TodoReorderResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Health / errors

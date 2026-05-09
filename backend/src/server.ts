@@ -181,6 +181,18 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 007 complete.');
     }
 
+    // Migration 008: manual_order on todos
+    const m008Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'todos' AND column_name = 'manual_order'`,
+    );
+    if (parseInt(m008Check.rows[0].count) === 0) {
+      console.log('Running migration 008...');
+      const sql = readFileSync(join(__dirname, '..', 'migrations', '008_manual_order.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 008 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

@@ -49,6 +49,8 @@ import {
   TagRenameRequestSchema,
   TagRenameResponseSchema,
   TodoBulkRequestSchema,
+  TodoReorderRequestSchema,
+  TodoReorderResponseSchema,
   TodoCommentCreateRequestSchema,
   TodoCommentListResponseSchema,
   TodoCommentResponseSchema,
@@ -1293,6 +1295,40 @@ export function createApp(deps: ServiceDeps) {
         }
         throw err;
       }
+    },
+  );
+
+  // Manual reorder for a sibling group. The `ids` array IS the new
+  // order — position 1..N becomes manual_order so subsequent listings
+  // can sort the group by user intent. parent_id null = top-level
+  // personal todos; UUID = children of that todo. Mismatched ids
+  // (wrong parent / archived / not found) abort the whole reorder.
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/v1/todos/reorder',
+      tags: ['Todos'],
+      summary: 'Persist a manual ordering for a sibling group of todos',
+      request: { body: { content: { 'application/json': { schema: TodoReorderRequestSchema } } } },
+      responses: {
+        200: { description: 'Reorder result', content: { 'application/json': { schema: TodoReorderResponseSchema } } },
+        400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponseSchema } } },
+        401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponseSchema } } },
+      },
+    }),
+    async (c) => {
+      const body = c.req.valid('json');
+      if (body.ids.length > 500) {
+        return c.json({ error: 'reorder batch capped at 500 ids per request' }, 400);
+      }
+      const result = await todosSvc.reorderTodos(deps, body.parent_id, body.ids);
+      if (result.mismatched_ids.length > 0) {
+        return c.json({
+          error: `Reorder aborted: ${result.mismatched_ids.length} id(s) don't belong to this group or are archived/missing.`,
+          ...result,
+        }, 400);
+      }
+      return c.json(result, 200);
     },
   );
 

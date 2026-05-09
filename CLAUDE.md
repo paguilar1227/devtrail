@@ -48,7 +48,7 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | RAG fast path | Azure Foundry chat completions | `gpt-5-4` |
 | RAG thorough path | Azure Foundry Responses API | `gpt-5-4-pro` |
 
-## Schema (7 migrations, see `migrations/`)
+## Schema (8 migrations, see `migrations/`)
 
 - `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
 - `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
@@ -57,6 +57,7 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 - `005_backfill_control_chars.sql` — strip C0/DEL bytes from old content_items.content rows
 - `006_ingest_completed_at.sql` — `ingest_completed_at` for the polling endpoint
 - `007_pinned.sql` — nullable `pinned_at` TIMESTAMPTZ on content_items, todos, projects, with partial indexes
+- `008_manual_order.sql` — nullable INTEGER `manual_order` on todos for user-defined sort within sibling groups
 
 Auto-migration runs on container startup (`runMigrations()` in `backend/src/server.ts`). It checks for table/column existence and applies missing migrations idempotently.
 

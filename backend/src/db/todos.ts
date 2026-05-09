@@ -24,6 +24,7 @@ export interface TodoRow {
   embedding: number[] | null;
   archived: boolean;
   pinned_at: Date | null;
+  manual_order: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -323,6 +324,47 @@ export async function findChildTodos(db: DbClient, parentId: string): Promise<To
     [parentId],
   );
   return result.rows;
+}
+
+/**
+ * Apply a manual ordering to a group of sibling todos. The group is
+ * identified by `parentId` (NULL = top-level personal todos). Each
+ * id in `ids` gets `manual_order` set to its position 0..N-1 in the
+ * provided order. The query verifies all targets share the same
+ * `parent_id` so a caller can't accidentally renumber across groups.
+ *
+ * Uses `WITH ORDINALITY` so the position-to-id mapping is a single SQL
+ * UPDATE rather than N round-trips.
+ */
+export async function reorderTodosInGroup(
+  db: DbClient,
+  parentId: string | null,
+  ids: string[],
+): Promise<{ updated: number; mismatched_ids: string[] }> {
+  if (ids.length === 0) return { updated: 0, mismatched_ids: [] };
+
+  // First, verify every id is a non-archived todo whose parent matches
+  // the requested group. Reject if any are off — partial reorders
+  // silently dropping bad ids would be the wrong default.
+  const checkSql = parentId === null
+    ? `SELECT id FROM todos WHERE id = ANY($1::uuid[]) AND archived = false AND parent_id IS NULL`
+    : `SELECT id FROM todos WHERE id = ANY($1::uuid[]) AND archived = false AND parent_id = $2`;
+  const checkParams: unknown[] = parentId === null ? [ids] : [ids, parentId];
+  const check = await db.query(checkSql, checkParams);
+  const validIds = new Set(check.rows.map((r: { id: string }) => r.id));
+  const mismatched = ids.filter((id) => !validIds.has(id));
+  if (mismatched.length > 0) {
+    return { updated: 0, mismatched_ids: mismatched };
+  }
+
+  const updateRes = await db.query(
+    `UPDATE todos AS t
+        SET manual_order = src.pos
+       FROM (SELECT * FROM unnest($1::uuid[]) WITH ORDINALITY AS u(id, pos)) AS src
+      WHERE t.id = src.id`,
+    [ids],
+  );
+  return { updated: updateRes.rowCount ?? 0, mismatched_ids: [] };
 }
 
 /**

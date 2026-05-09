@@ -9,8 +9,13 @@
 //   2. Active        — anything else not done
 //   3. Done          — pushed to the bottom; recently completed first
 //
-// Within each band, secondary sort is priority asc (P1 most urgent),
-// then due asc (sooner first), then created desc (newest first).
+// Within each band, secondary sort is:
+//   1. manual_order asc — when the user has dragged this group into a
+//      custom order, that order takes precedence over the natural keys
+//      below. NULLS LAST so unranked rows fall to natural sort.
+//   2. due asc (sooner first), null-due last
+//   3. priority asc (P1 most urgent)
+//   4. created desc (newest first inside the same priority/due bucket)
 //
 // Subtasks always emit immediately after their parent, regardless of
 // their own band. Children are emitted recursively, so grandchildren
@@ -53,11 +58,15 @@ function bandRank(t: Todo): number {
   return 2;
 }
 
-function withinBandRank(t: Todo): [number, number, number] {
-  const p = PRIORITY_RANK[t.priority] ?? 9;
+function withinBandRank(t: Todo): [number, number, number, number] {
+  // manual_order ASC NULLS LAST: rows the user has positioned win
+  // over the natural keys; unranked rows (null) fall to the back of
+  // this tier and are decided by due / priority / created.
+  const m = t.manual_order ?? Number.MAX_SAFE_INTEGER;
   const dueMs = t.due_at ? new Date(t.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+  const p = PRIORITY_RANK[t.priority] ?? 9;
   const createdMs = -new Date(t.created_at).getTime();
-  return [p, dueMs, createdMs];
+  return [m, dueMs, p, createdMs];
 }
 
 function compare(a: Todo, b: Todo): number {
@@ -66,7 +75,7 @@ function compare(a: Todo, b: Todo): number {
   if (ba !== bb) return ba - bb;
   const wa = withinBandRank(a);
   const wb = withinBandRank(b);
-  return wa[0] - wb[0] || wa[1] - wb[1] || wa[2] - wb[2];
+  return wa[0] - wb[0] || wa[1] - wb[1] || wa[2] - wb[2] || wa[3] - wb[3];
 }
 
 export interface SortOptions {
