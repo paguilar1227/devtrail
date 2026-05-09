@@ -1846,7 +1846,23 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .prow:hover { background: var(--glass-bg-soft); }
 .prow + .prow { border-top: 0.5px solid var(--hairline); }
-.prow-todo { grid-template-columns: 14px 18px 1fr auto auto auto; }
+.prow-todo { grid-template-columns: 14px 14px 18px 1fr auto auto auto; }
+.prow-grip {
+  width: 14px; height: 18px;
+  display: inline-grid; place-items: center;
+  cursor: grab;
+  color: var(--fg-subtle);
+  opacity: 0;
+  border-radius: 4px;
+  transition: opacity 100ms, color 100ms, background 100ms;
+  touch-action: none;
+}
+.prow-grip:active { cursor: grabbing; }
+.prow-grip:hover { color: var(--fg); background: var(--glass-bg-soft); }
+.prow:hover .prow-grip { opacity: 1; }
+.prow-grip:focus-visible { opacity: 1; outline: 0.5px solid var(--accent-1); }
+.prow-grip-spacer { width: 14px; height: 14px; display: inline-block; }
+.prow-dragging { opacity: 0.5; box-shadow: var(--shadow-pop); }
 .prow-chev {
   appearance: none; border: 0; cursor: pointer; padding: 0;
   background: transparent; color: var(--fg-subtle);

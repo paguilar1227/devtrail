@@ -20,7 +20,7 @@ import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
-import { TodoRow } from '../components/TodoRow';
+import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
@@ -276,24 +276,19 @@ export function HomePage({ onRoute, onAction }: Props) {
             <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
           ) : (
             <>
-              {personalTodos.slice(0, 6).map((s) => (
-                <TodoRow
-                  key={s.todo.id}
-                  todo={s.todo}
-                  depth={s.depth}
-                  childCount={s.childCount}
-                  expanded={isExpanded(s.todo.id)}
-                  hiddenDescendants={s.hiddenDescendants}
-                  onClick={() => onAction({ kind: 'todo-detail', payload: s.todo })}
-                  onToggleExpand={() => toggleExpand(s.todo.id)}
-                  onToggleDone={() =>
-                    todoToggle.mutate({
-                      id: s.todo.id,
-                      status: s.todo.status === 'done' ? 'not_started' : 'done',
-                    })
-                  }
-                />
-              ))}
+              <SortableTodoList
+                rows={personalTodos.slice(0, 6)}
+                allRows={personalTodos}
+                isExpanded={isExpanded}
+                onToggleExpand={toggleExpand}
+                onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
+                onToggleDone={(t) =>
+                  todoToggle.mutate({
+                    id: t.id,
+                    status: t.status === 'done' ? 'not_started' : 'done',
+                  })
+                }
+              />
               {personalTodos.length > 6 ? (
                 <button
                   className="pcol-more"

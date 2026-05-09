@@ -2,8 +2,8 @@
 // shows the top 6; this is the "see everything" escape valve. Reuses:
 //   - <Drawer/> primitive (mobile fullscreen, expand-to-center toggle,
 //     role="dialog", slide-in animation)
-//   - <TodoRow/> for row markup, so the drawer and the Home column
-//     stay in lockstep
+//   - <SortableTodoList/> for rendering + drag-to-reorder, so the
+//     drawer and the Home column stay in lockstep
 //   - existing TodoDetailDrawer for row click → detail (we hand off
 //     by closing this drawer and dispatching todo-detail)
 //   - useTodoExpansion so collapse state is shared with the column
@@ -13,7 +13,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Drawer } from '../primitives';
-import { TodoRow } from '../TodoRow';
+import { SortableTodoList } from '../SortableTodoList';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { sortPersonalTodos } from '../../lib/todoSort';
@@ -55,27 +55,22 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
         <div className="page-subtle">No personal todos yet.</div>
       ) : (
         <div className="todo-list-drawer-rows">
-          {todos.map((s) => (
-            <TodoRow
-              key={s.todo.id}
-              todo={s.todo}
-              depth={s.depth}
-              childCount={s.childCount}
-              expanded={isExpanded(s.todo.id)}
-              hiddenDescendants={s.hiddenDescendants}
-              onClick={() => {
-                onClose();
-                onAction({ kind: 'todo-detail', payload: s.todo });
-              }}
-              onToggleExpand={() => toggleExpand(s.todo.id)}
-              onToggleDone={() =>
-                toggle.mutate({
-                  id: s.todo.id,
-                  status: s.todo.status === 'done' ? 'not_started' : 'done',
-                })
-              }
-            />
-          ))}
+          <SortableTodoList
+            rows={todos}
+            allRows={todos}
+            isExpanded={isExpanded}
+            onToggleExpand={toggleExpand}
+            onClickRow={(t) => {
+              onClose();
+              onAction({ kind: 'todo-detail', payload: t });
+            }}
+            onToggleDone={(t) =>
+              toggle.mutate({
+                id: t.id,
+                status: t.status === 'done' ? 'not_started' : 'done',
+              })
+            }
+          />
         </div>
       )}
     </Drawer>

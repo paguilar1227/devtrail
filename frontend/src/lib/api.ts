@@ -32,6 +32,8 @@ import {
   TodoCreateRequestSchema,
   TodoGetResponseSchema,
   TodoUpdateRequestSchema,
+  TodoReorderRequestSchema,
+  TodoReorderResponseSchema,
   RagRequestSchema,
   RagResponseSchema,
   SearchRequestSchema,
@@ -59,6 +61,8 @@ import {
   type TodoCommentCreateRequest,
   type TodoCreateRequest,
   type TodoUpdateRequest,
+  type TodoReorderRequest,
+  type TodoReorderResponse,
   type Stats,
   type Tag,
   type Todo,
@@ -289,6 +293,15 @@ export async function pinTodo(id: string): Promise<void> {
 }
 export async function unpinTodo(id: string): Promise<void> {
   await fetchOk(`/todos/${id}/unpin`, { method: 'POST' });
+}
+
+// Persist a manual ordering for a sibling group of todos. The `ids`
+// array IS the new order — position 1..N becomes manual_order.
+export async function reorderTodos(req: TodoReorderRequest): Promise<TodoReorderResponse> {
+  return request('/todos/reorder', TodoReorderResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify(TodoReorderRequestSchema.parse(req)),
+  });
 }
 
 export async function listTodoComments(todoId: string): Promise<TodoComment[]> {

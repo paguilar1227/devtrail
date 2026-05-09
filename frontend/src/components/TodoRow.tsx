@@ -26,6 +26,13 @@ interface Props {
   childCount?: number;
   expanded?: boolean;
   hiddenDescendants?: number;
+  /**
+   * Drag-handle props from `useSortable` ({...attributes, ...listeners}).
+   * When provided, a grip cell renders to the left of the chevron column
+   * and is the only surface that initiates a drag — the row body still
+   * routes clicks to onClick. Omit to render a non-draggable row.
+   */
+  dragHandleProps?: Record<string, unknown>;
   onClick?: () => void;
   onToggleDone?: () => void;
   onToggleExpand?: () => void;
@@ -37,6 +44,7 @@ export function TodoRow({
   childCount = 0,
   expanded = false,
   hiddenDescendants = 0,
+  dragHandleProps,
   onClick,
   onToggleDone,
   onToggleExpand,
@@ -49,7 +57,7 @@ export function TodoRow({
   const showDeeperHint = !expandable && hiddenDescendants > 0;
   return (
     <div
-      className={cls('prow', 'prow-todo', done && 'prow-done')}
+      className={cls('prow', 'prow-todo', done && 'prow-done', dragHandleProps && 'prow-draggable')}
       data-depth={depth}
       style={{ '--depth': depth } as React.CSSProperties}
       role={onClick ? 'button' : undefined}
@@ -62,6 +70,19 @@ export function TodoRow({
         }
       } : undefined}
     >
+      {dragHandleProps ? (
+        <span
+          className="prow-grip"
+          role="button"
+          aria-label="Reorder this todo"
+          {...dragHandleProps}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Icons.Grip size={14} />
+        </span>
+      ) : (
+        <span className="prow-grip-spacer" aria-hidden="true" />
+      )}
       {expandable ? (
         <button
           type="button"

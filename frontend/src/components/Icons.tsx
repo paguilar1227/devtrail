@@ -61,6 +61,18 @@ export const Icons = {
       <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" />
     </>,
   ),
+  Grip: make(
+    // Filled dots — override the default fill="none" so the grip
+    // reads as solid pegs rather than tiny circle outlines.
+    <g fill="currentColor" stroke="none">
+      <circle cx="6" cy="4" r="1.1" />
+      <circle cx="10" cy="4" r="1.1" />
+      <circle cx="6" cy="8" r="1.1" />
+      <circle cx="10" cy="8" r="1.1" />
+      <circle cx="6" cy="12" r="1.1" />
+      <circle cx="10" cy="12" r="1.1" />
+    </g>,
+  ),
   Chat: make(<path d="M3 11.5V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L3 13.5v-2z" />),
   Cog: make(
     <>

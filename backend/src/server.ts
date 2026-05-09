@@ -4,7 +4,7 @@
 import './telemetry.js';
 
 import { serve } from '@hono/node-server';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createDbClient } from './db/client.js';
@@ -93,6 +93,15 @@ const deps: ServiceDeps = {
 async function runMigrations(): Promise<void> {
   try {
     const __dirname = dirname(fileURLToPath(import.meta.url));
+    // The Dockerfile copies migrations to backend/migrations/, so prod
+    // resolves via __dirname/.. — which is what existing readFileSync
+    // calls below assume. In local dev we run `tsx watch src/server.ts`
+    // and the migrations live at the project root, one level up. Fall
+    // back to that when the prod path doesn't exist.
+    const migrationsRoot = existsSync(join(__dirname, '..', 'migrations'))
+      ? join(__dirname, '..', 'migrations')
+      : join(__dirname, '..', '..', 'migrations');
+    const migration = (name: string) => join(migrationsRoot, name);
 
     // Migration 001: initial schema
     const existsResult = await deps.db.pool.query(
@@ -100,7 +109,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(existsResult.rows[0].count) === 0) {
       console.log('Running migration 001...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '001_schema.sql'), 'utf-8');
+      const sql = readFileSync(migration('001_schema.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 001 complete.');
     } else {
@@ -114,7 +123,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m002Check.rows[0].count) === 0) {
       console.log('Running migration 002...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '002_source_url.sql'), 'utf-8');
+      const sql = readFileSync(migration('002_source_url.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 002 complete.');
     }
@@ -125,7 +134,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m003Check.rows[0].count) === 0) {
       console.log('Running migration 003...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '003_entities_graph.sql'), 'utf-8');
+      const sql = readFileSync(migration('003_entities_graph.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 003 complete.');
     }
@@ -137,7 +146,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m004Check.rows[0].count) === 0) {
       console.log('Running migration 004...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '004_processing_status.sql'), 'utf-8');
+      const sql = readFileSync(migration('004_processing_status.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 004 complete.');
     }
@@ -152,7 +161,7 @@ async function runMigrations(): Promise<void> {
     const m005Count = parseInt(m005Check.rows[0].count);
     if (m005Count > 0) {
       console.log(`Running migration 005 — control-char backfill (${m005Count} affected rows)...`);
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '005_backfill_control_chars.sql'), 'utf-8');
+      const sql = readFileSync(migration('005_backfill_control_chars.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 005 complete.');
     }
@@ -164,7 +173,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m006Check.rows[0].count) === 0) {
       console.log('Running migration 006...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '006_ingest_completed_at.sql'), 'utf-8');
+      const sql = readFileSync(migration('006_ingest_completed_at.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 006 complete.');
     }
@@ -176,7 +185,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m007Check.rows[0].count) === 0) {
       console.log('Running migration 007...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '007_pinned.sql'), 'utf-8');
+      const sql = readFileSync(migration('007_pinned.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 007 complete.');
     }
@@ -188,7 +197,7 @@ async function runMigrations(): Promise<void> {
     );
     if (parseInt(m008Check.rows[0].count) === 0) {
       console.log('Running migration 008...');
-      const sql = readFileSync(join(__dirname, '..', 'migrations', '008_manual_order.sql'), 'utf-8');
+      const sql = readFileSync(migration('008_manual_order.sql'), 'utf-8');
       await deps.db.pool.query(sql);
       console.log('Migration 008 complete.');
     }
