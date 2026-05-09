@@ -55,6 +55,12 @@ export const Icons = {
       <path d="M8 5v3l2 1.5" />
     </>,
   ),
+  Calendar: make(
+    <>
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+      <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" />
+    </>,
+  ),
   Chat: make(<path d="M3 11.5V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L3 13.5v-2z" />),
   Cog: make(
     <>

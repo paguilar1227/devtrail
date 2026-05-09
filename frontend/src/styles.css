@@ -2211,4 +2211,187 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .tag-actions { opacity: 0; transition: opacity 100ms; }
 .tag-row:hover .tag-actions { opacity: 1; }
 
+/* ── DateTimePicker ─────────────────────────────────────────
+   Hand-rolled replacement for native <input type="datetime-local">.
+   Uses the same glass tokens as the rest of the app so it doesn't
+   feel like a foreign popup grafted onto the screen.
+   ──────────────────────────────────────────────────────── */
+.dtp-wrap { position: relative; display: inline-flex; }
+.dtp-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: var(--field-bg);
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 9px;
+  color: var(--fg);
+  font: inherit; font-size: var(--type-body);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+  min-width: 220px;
+}
+.dtp-trigger:hover:not(:disabled) {
+  background: var(--field-bg-focus);
+  border-color: var(--glass-border-strong);
+}
+.dtp-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent-1);
+}
+.dtp-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.dtp-trigger.empty .dtp-trigger-text { color: var(--fg-subtle); }
+.dtp-trigger-text { flex: 1; text-align: left; font-variant-numeric: tabular-nums; }
+
+.dtp-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 100;
+  width: 296px;
+  padding: 14px;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+.dtp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+.dtp-month {
+  font-size: var(--type-h); font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.005em;
+}
+.dtp-nav {
+  appearance: none; background: transparent; border: 0; cursor: pointer;
+  width: 24px; height: 24px;
+  display: inline-grid; place-items: center;
+  border-radius: 6px;
+  color: var(--fg-muted);
+  transition: background 100ms, color 100ms;
+}
+.dtp-nav:hover { background: var(--glass-bg-soft); color: var(--fg); }
+
+.dtp-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  text-align: center;
+  padding: 0 2px;
+}
+.dtp-weekdays span { font-weight: 500; }
+
+.dtp-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.dtp-day {
+  appearance: none; border: 0; cursor: pointer;
+  background: transparent; color: var(--fg);
+  font: inherit; font-size: var(--type-body);
+  font-variant-numeric: tabular-nums;
+  height: 32px;
+  border-radius: 7px;
+  display: inline-grid; place-items: center;
+  transition: background 100ms, color 100ms, border-color 100ms;
+  border: 0.5px solid transparent;
+}
+.dtp-day:hover:not(.selected) {
+  background: var(--glass-bg-soft);
+}
+.dtp-day:focus-visible {
+  outline: none;
+  border-color: var(--accent-1);
+}
+.dtp-day.dim { color: var(--fg-subtle); opacity: 0.55; }
+.dtp-day.today:not(.selected) {
+  border-color: var(--glass-border-strong);
+}
+.dtp-day.selected {
+  background: var(--accent-grad);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.dtp-time {
+  display: flex; align-items: center; gap: 8px;
+  padding-top: 4px;
+  border-top: 0.5px solid var(--hairline);
+}
+.dtp-time-label {
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+.dtp-num {
+  width: 40px;
+  padding: 5px 6px;
+  background: var(--field-bg);
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit; font-size: var(--type-body);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  transition: border-color 120ms, background 120ms;
+  /* Hide spinner controls — the layout is tight, stepper buttons add
+     visual noise. Keyboard up/down still increments. */
+  -moz-appearance: textfield;
+}
+.dtp-num::-webkit-outer-spin-button,
+.dtp-num::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.dtp-num:focus { border-color: var(--accent-1); background: var(--field-bg-focus); }
+.dtp-colon { color: var(--fg-muted); font-weight: 600; }
+
+.dtp-ampm {
+  display: inline-flex;
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-left: auto;
+}
+.dtp-ampm-b {
+  appearance: none; background: transparent; border: 0; cursor: pointer;
+  padding: 5px 9px;
+  color: var(--fg-muted);
+  font: inherit; font-size: var(--type-meta); font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: background 100ms, color 100ms;
+}
+.dtp-ampm-b + .dtp-ampm-b { border-left: 0.5px solid var(--glass-border-strong); }
+.dtp-ampm-b:hover:not(.active) { background: var(--glass-bg-soft); color: var(--fg); }
+.dtp-ampm-b.active {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.dtp-foot {
+  display: flex; gap: 6px;
+  padding-top: 4px;
+  border-top: 0.5px solid var(--hairline);
+}
+.dtp-foot-btn {
+  appearance: none; cursor: pointer;
+  padding: 7px 12px;
+  background: transparent;
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 7px;
+  color: var(--fg-muted);
+  font: inherit; font-size: var(--type-meta); font-weight: 500;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+.dtp-foot-btn:hover { background: var(--glass-bg-soft); color: var(--fg); }
+.dtp-foot-btn.primary {
+  margin-left: auto;
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: var(--fg);
+  font-weight: 600;
+}
+.dtp-foot-btn.primary:hover { filter: brightness(1.08); }
 

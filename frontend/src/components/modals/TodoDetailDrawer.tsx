@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DateTimePicker } from '../DateTimePicker';
 import { Icons } from '../Icons';
 import { Drawer, EntityLink, Priority, Tag } from '../primitives';
 import { createComment, getTodo, listTodoComments, updateTodo } from '../../lib/api';
-import { cls, fmtDue, fmtRel, toDatetimeLocal } from '../../lib/util';
+import { cls, fmtRel } from '../../lib/util';
 import type { Todo } from '../../types';
 
 type PriorityVal = 'p1' | 'p2' | 'p3';
@@ -17,7 +18,11 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
   const qc = useQueryClient();
   const [draft, setDraft] = useState('');
   const [priority, setPriority] = useState<PriorityVal>(todo.priority);
-  const [dueLocal, setDueLocal] = useState<string>(toDatetimeLocal(todo.due_at));
+  // Local mirror so the trigger reflects the user's edit immediately
+  // — the drawer receives `todo` as a prop snapshot (parent doesn't
+  // refetch it on update) so we can't rely on todo.due_at after a
+  // mutation. Same pattern priority uses.
+  const [dueIso, setDueIso] = useState<string | null>(todo.due_at);
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -68,22 +73,13 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
     updateMut.mutate({ priority: p });
   };
 
-  // Save closes the drawer after pending edits. Priority fires
-  // optimistically on chip click; due-date fires on input blur or
-  // Save click. `dirty` reflects either is unsaved.
-  const dueDirty = toDatetimeLocal(todo.due_at) !== dueLocal;
-  const dirty = priority !== todo.priority || dueDirty;
-  const dueWirePayload = (): string | null => {
-    if (!dueLocal) return null;
-    const ms = new Date(dueLocal).getTime();
-    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
-  };
+  // Save closes the drawer after pending edits. Priority + due fire
+  // optimistically on chip / picker-Done click; this button is the
+  // user's "I'm done here" gesture.
+  const dirty = priority !== todo.priority;
   const onSave = () => {
     if (dirty && !updateMut.isPending) {
-      const patch: { priority?: PriorityVal; due_date?: string | null } = {};
-      if (priority !== todo.priority) patch.priority = priority;
-      if (dueDirty) patch.due_date = dueWirePayload();
-      updateMut.mutate(patch, { onSuccess: () => onClose() });
+      updateMut.mutate({ priority }, { onSuccess: () => onClose() });
     } else {
       onClose();
     }
@@ -126,29 +122,14 @@ export function TodoDetailDrawer({ todo, onClose }: { todo: Todo; onClose: () =>
           ))}
         </div>
         <span className="subtle">due</span>
-        <div className="row-flex gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            type="datetime-local"
-            className="input input-sm"
-            value={dueLocal}
-            onChange={(e) => setDueLocal(e.target.value)}
-            disabled={updateMut.isPending}
-          />
-          {dueLocal ? (
-            <>
-              <span className="subtle">{fmtDue(dueWirePayload() ?? new Date(dueLocal).toISOString())}</span>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setDueLocal('')}
-                disabled={updateMut.isPending}
-                title="Clear due date"
-              >
-                clear
-              </button>
-            </>
-          ) : null}
-        </div>
+        <DateTimePicker
+          value={dueIso}
+          onChange={(iso) => {
+            setDueIso(iso);
+            updateMut.mutate({ due_date: iso });
+          }}
+          disabled={updateMut.isPending}
+        />
         <span className="subtle">created</span>
         <span>{fmtRel(todo.created_at)}</span>
         <span className="subtle">project</span>
