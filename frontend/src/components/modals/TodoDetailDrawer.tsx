@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { MAX_TODO_DEPTH } from '@open-brain/shared';
 import { DateTimePicker } from '../DateTimePicker';
 import { Icons } from '../Icons';
 import { Drawer, Checkbox, EntityLink, Priority, Tag } from '../primitives';
@@ -9,6 +10,7 @@ import {
 } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { cls, fmtRel } from '../../lib/util';
+import { useTodoDepth } from '../../lib/useTodoDepth';
 import type { ActionDispatch, Todo } from '../../types';
 
 type PriorityVal = 'p1' | 'p2' | 'p3';
@@ -143,6 +145,10 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
 
   const comments = commentsQ.data ?? [];
   const subtasks = subtasksQ.data ?? [];
+  const { depth: ownDepth } = useTodoDepth(todo);
+  // We can only add a subtask if doing so wouldn't push the new child
+  // past MAX_TODO_DEPTH. New child sits at ownDepth + 1.
+  const canAddSubtask = ownDepth + 1 <= MAX_TODO_DEPTH;
 
   return (
     <Drawer
@@ -277,26 +283,32 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
           })}
         </div>
       )}
-      <div className="todo-input-row" style={{ marginTop: 8 }}>
-        <div className="field">
-          <Icons.Plus size={13} />
-          <input
-            placeholder="Add a subtask…"
-            value={subtaskDraft}
-            onChange={(e) => setSubtaskDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submitSubtask()}
-            disabled={addSubtaskMut.isPending}
-          />
+      {canAddSubtask ? (
+        <div className="todo-input-row" style={{ marginTop: 8 }}>
+          <div className="field">
+            <Icons.Plus size={13} />
+            <input
+              placeholder="Add a subtask…"
+              value={subtaskDraft}
+              onChange={(e) => setSubtaskDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitSubtask()}
+              disabled={addSubtaskMut.isPending}
+            />
+          </div>
+          <button
+            className="btn btn-primary btn-icon"
+            onClick={submitSubtask}
+            disabled={!subtaskDraft.trim() || addSubtaskMut.isPending}
+            aria-label="Add subtask"
+          >
+            <Icons.Plus />
+          </button>
         </div>
-        <button
-          className="btn btn-primary btn-icon"
-          onClick={submitSubtask}
-          disabled={!subtaskDraft.trim() || addSubtaskMut.isPending}
-          aria-label="Add subtask"
-        >
-          <Icons.Plus />
-        </button>
-      </div>
+      ) : (
+        <div className="todo-subtask-cap-notice" style={{ marginTop: 8 }}>
+          {`Max nesting reached (${MAX_TODO_DEPTH + 1} levels). Split this task or add a sibling instead of going deeper.`}
+        </div>
+      )}
 
       <div className="divider" />
       <label className="field-label">

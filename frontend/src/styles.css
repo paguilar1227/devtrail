@@ -2471,3 +2471,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .todo-subtask-row.done { opacity: 0.65; }
 
+.todo-subtask-cap-notice {
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  font-style: italic;
+  padding: 8px 12px;
+  border: 0.5px dashed var(--hairline);
+  border-radius: 9px;
+  background: var(--glass-bg-soft);
+}
+

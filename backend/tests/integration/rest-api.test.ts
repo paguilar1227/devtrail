@@ -2101,6 +2101,74 @@ describe('Todos API', () => {
     expect(body.mismatched_ids).toEqual([b]);
   });
 
+  it('POST /todos rejects subtasks that would exceed the 3-level depth cap', async () => {
+    // Parent's depth = 2 (already a grandchild). A new child under it
+    // would be depth 3 → reject. The recursive-CTE depth probe is the
+    // gate, so the mock returns max(depth)=2 and the create call
+    // never reaches the embedding/INSERT.
+    const grandchildId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/WITH RECURSIVE chain/i.test(sql)) {
+        return { rows: [{ depth: 2, exists: true }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'too deep', parent_id: grandchildId }),
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/Subtask nesting too deep.*depth 3/);
+  });
+
+  it('POST /todos accepts a subtask one level above the cap (depth 2 grandchild)', async () => {
+    // Parent at depth 1 → child at depth 2 is allowed (the cap).
+    const childId = '22222222-2222-4222-8222-222222222222';
+    const newId = '33333333-3333-4333-8333-333333333333';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/WITH RECURSIVE chain/i.test(sql)) {
+        return { rows: [{ depth: 1, exists: true }] } as any;
+      }
+      if (/^INSERT INTO todos/i.test(sql)) {
+        return { rows: [{
+          id: newId, content: 'ok', project_id: null, section: null, parent_id: childId,
+          priority: null, status: 'not_started', due_date: null, tags: [], archived: false,
+          pinned_at: null, manual_order: null, created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/todos', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'ok', parent_id: childId }),
+    }));
+    expect(res.status).toBe(201);
+    expect((await res.json()).todo.id).toBe(newId);
+  });
+
+  it('PUT /todos/:id rejects re-parenting that would exceed the depth cap', async () => {
+    const id = '44444444-4444-4444-8444-444444444444';
+    const newParent = '55555555-5555-4555-8555-555555555555';
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/WITH RECURSIVE chain/i.test(sql)) {
+        return { rows: [{ depth: 2, exists: true }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${id}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: newParent }),
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/Subtask nesting too deep/);
+  });
+
   it('POST /todos/reorder caps batch size at 500', async () => {
     const ids = Array.from({ length: 501 }, (_, i) =>
       `${(i + 0x10000).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,

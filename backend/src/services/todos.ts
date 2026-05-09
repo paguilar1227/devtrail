@@ -1,10 +1,12 @@
 import type { ServiceDeps } from './index.js';
+import { MAX_TODO_DEPTH as SHARED_MAX_TODO_DEPTH } from '@open-brain/shared';
 import { countCommentsByTodoIds } from '../db/todo-comments.js';
 import {
   insertTodo, listTodos as dbListTodos, getTodoById,
   updateTodo as dbUpdateTodo,
   archiveTodo, unarchiveTodo, deleteTodoHard,
   findChildTodos, findSimilarTodos,
+  getTodoDepth,
   bulkArchiveTodos,
   bulkRestoreTodos,
   bulkDeleteTodosHard,
@@ -21,6 +23,33 @@ import {
   type BulkTodoStatus, type BulkTodoPriority, type BulkTodoResult,
 } from '../db/todos.js';
 
+/**
+ * Hard cap on todo nesting depth — re-exported from shared so frontend
+ * UI gating and backend enforcement use the same number. See the
+ * docblock on MAX_TODO_DEPTH in shared/src/schemas.ts.
+ */
+export const MAX_TODO_DEPTH = SHARED_MAX_TODO_DEPTH;
+
+/** Thrown when a write would exceed MAX_TODO_DEPTH. REST translates
+ *  to 400; MCP surfaces the message verbatim. */
+export class TodoDepthExceededError extends Error {
+  constructor(public readonly attemptedDepth: number) {
+    super(
+      `Subtask nesting too deep: would land at depth ${attemptedDepth} (max ${MAX_TODO_DEPTH}). ` +
+      `Personal todos cap at ${MAX_TODO_DEPTH + 1} levels — split the task or use a sibling instead.`,
+    );
+    this.name = 'TodoDepthExceededError';
+  }
+}
+
+async function assertParentDepthAllowed(deps: ServiceDeps, parentId: string): Promise<void> {
+  const parentDepth = await getTodoDepth(deps.db, parentId);
+  if (parentDepth === null) return; // parent missing — let the FK / not-found path handle it
+  if (parentDepth + 1 > MAX_TODO_DEPTH) {
+    throw new TodoDepthExceededError(parentDepth + 1);
+  }
+}
+
 export async function createTodo(
   deps: ServiceDeps,
   input: {
@@ -33,6 +62,9 @@ export async function createTodo(
     tags?: string[];
   },
 ): Promise<TodoRow> {
+  if (input.parentId) {
+    await assertParentDepthAllowed(deps, input.parentId);
+  }
   const embedding = await deps.embeddingProvider.embed(input.content);
   const todo: TodoInsert = {
     content: input.content,
@@ -74,6 +106,12 @@ export async function updateTodo(
     tags?: string[];
   },
 ): Promise<TodoRow | null> {
+  // Re-parenting must respect the depth cap. Reject before any other
+  // work so the embedding call doesn't run for an ultimately-failed
+  // update. patch.parentId === null clears the parent (always safe).
+  if (patch.parentId !== undefined && patch.parentId !== null) {
+    await assertParentDepthAllowed(deps, patch.parentId);
+  }
   let embedding: number[] | null | undefined;
   if (patch.content !== undefined) {
     embedding = await deps.embeddingProvider.embed(patch.content);

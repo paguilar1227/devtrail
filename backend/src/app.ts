@@ -1072,16 +1072,23 @@ export function createApp(deps: ServiceDeps) {
     }),
     async (c) => {
       const body = c.req.valid('json');
-      const todo = await todosSvc.createTodo(deps, {
-        content: body.content,
-        projectId: body.project_id ?? null,
-        section: body.section ?? null,
-        parentId: body.parent_id ?? null,
-        priority: body.priority ?? null,
-        dueDate: body.due_date ? new Date(body.due_date) : null,
-        tags: body.tags,
-      });
-      return c.json({ todo: serializeTodo(todo) }, 201);
+      try {
+        const todo = await todosSvc.createTodo(deps, {
+          content: body.content,
+          projectId: body.project_id ?? null,
+          section: body.section ?? null,
+          parentId: body.parent_id ?? null,
+          priority: body.priority ?? null,
+          dueDate: body.due_date ? new Date(body.due_date) : null,
+          tags: body.tags,
+        });
+        return c.json({ todo: serializeTodo(todo) }, 201);
+      } catch (err) {
+        if (err instanceof todosSvc.TodoDepthExceededError) {
+          return c.json({ error: err.message }, 400);
+        }
+        throw err;
+      }
     },
   );
 
@@ -1127,25 +1134,32 @@ export function createApp(deps: ServiceDeps) {
     async (c) => {
       const { id } = c.req.valid('param');
       const body = c.req.valid('json');
-      const todo = await todosSvc.updateTodo(deps, id, {
-        content: body.content,
-        projectId: body.project_id === null ? null : body.project_id,
-        section: body.section ?? undefined,
-        parentId: body.parent_id === null ? null : body.parent_id,
-        status: body.status,
-        priority: body.priority,
-        // Distinguish "clear" (null) from "don't touch" (undefined). The
-        // earlier shortcut `body.due_date ? ... : undefined` collapsed
-        // null into undefined and silently dropped clear requests.
-        dueDate: body.due_date === undefined
-          ? undefined
-          : body.due_date === null
-            ? null
-            : new Date(body.due_date),
-        tags: body.tags,
-      });
-      if (!todo) return c.json({ error: 'Not found' }, 404);
-      return c.json({ todo: serializeTodo(todo) }, 200);
+      try {
+        const todo = await todosSvc.updateTodo(deps, id, {
+          content: body.content,
+          projectId: body.project_id === null ? null : body.project_id,
+          section: body.section ?? undefined,
+          parentId: body.parent_id === null ? null : body.parent_id,
+          status: body.status,
+          priority: body.priority,
+          // Distinguish "clear" (null) from "don't touch" (undefined). The
+          // earlier shortcut `body.due_date ? ... : undefined` collapsed
+          // null into undefined and silently dropped clear requests.
+          dueDate: body.due_date === undefined
+            ? undefined
+            : body.due_date === null
+              ? null
+              : new Date(body.due_date),
+          tags: body.tags,
+        });
+        if (!todo) return c.json({ error: 'Not found' }, 404);
+        return c.json({ todo: serializeTodo(todo) }, 200);
+      } catch (err) {
+        if (err instanceof todosSvc.TodoDepthExceededError) {
+          return c.json({ error: err.message }, 400);
+        }
+        throw err;
+      }
     },
   );
 

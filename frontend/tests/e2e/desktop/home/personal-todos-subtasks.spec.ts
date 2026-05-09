@@ -79,6 +79,43 @@ test('todo detail: toggle a subtask done via its checkbox', async ({ page }) => 
   }).toBe('done');
 });
 
+test('todo detail: subtask input is gated at the depth cap (max 3 levels)', async ({ page }) => {
+  // Build a 3-level chain: root → child → grandchild. Drilling into
+  // the grandchild's detail should hide the "Add subtask" input and
+  // show a notice instead. Pushing past the cap via REST also fails.
+  const rootContent = stamp() + ' Root';
+  const childContent = stamp() + ' Child';
+  const grandContent = stamp() + ' Grand';
+  const root = await createTodo(rootContent, null);
+  const child = await createTodo(childContent, null, { parent_id: root.id });
+  const grand = await createTodo(grandContent, null, { parent_id: child.id });
+
+  await page.reload();
+  await waitForAppReady(page);
+
+  // Open the grandchild detail directly via the parent chain.
+  await page.locator(`${TODOS_COL} .pcol-more`).click();
+  const listDrawer = page.locator('.drawer');
+  await expect(listDrawer).toBeVisible({ timeout: 15000 });
+  // Open root → click child → click grandchild.
+  await listDrawer.locator('.prow', { hasText: rootContent }).click();
+  const detail = page.locator('.drawer');
+  await detail.locator('.todo-subtask-row', { hasText: childContent }).click();
+  await expect(detail.locator('.drawer-head .ti', { hasText: childContent })).toBeVisible({ timeout: 5000 });
+  await detail.locator('.todo-subtask-row', { hasText: grandContent }).click();
+  await expect(detail.locator('.drawer-head .ti', { hasText: grandContent })).toBeVisible({ timeout: 5000 });
+
+  // Subtask input is gone; the cap notice replaces it.
+  await expect(detail.getByPlaceholder('Add a subtask…')).toHaveCount(0);
+  await expect(detail.locator('.todo-subtask-cap-notice')).toContainText(/Max nesting reached/);
+
+  // Direct REST attempt to push past the cap also fails. Use the
+  // helper's createTodo wrapper and assert it throws ApiError(400).
+  await expect(
+    createTodo('too-deep', null, { parent_id: grand.id }),
+  ).rejects.toThrow(/Subtask nesting too deep/);
+});
+
 test('todo detail: clicking the parent meta link navigates UP to the parent', async ({ page }) => {
   // Open a subtask's detail directly, then click its `parent` chip
   // and verify the drawer flips to the parent's detail. Closes the

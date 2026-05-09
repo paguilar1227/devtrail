@@ -327,6 +327,34 @@ export async function findChildTodos(db: DbClient, parentId: string): Promise<To
 }
 
 /**
+ * Depth of a todo measured by ancestor count: a top-level todo has
+ * depth 0, a direct child has depth 1, a grandchild has depth 2, etc.
+ *
+ * Returns null when the id doesn't exist. Caps the recursive walk at
+ * 16 levels — guards against pathological cycles even though the FK
+ * shape doesn't formally allow them.
+ */
+export async function getTodoDepth(db: DbClient, id: string): Promise<number | null> {
+  const result = await db.query(
+    `WITH RECURSIVE chain AS (
+       SELECT id, parent_id, 0 AS depth
+         FROM todos
+        WHERE id = $1
+       UNION ALL
+       SELECT t.id, t.parent_id, c.depth + 1
+         FROM todos t
+         JOIN chain c ON c.parent_id = t.id
+        WHERE c.depth < 16
+     )
+     SELECT MAX(depth) AS depth, (COUNT(*) > 0) AS exists FROM chain`,
+    [id],
+  );
+  const row = result.rows[0] as { depth: number | null; exists: boolean } | undefined;
+  if (!row?.exists) return null;
+  return row.depth ?? 0;
+}
+
+/**
  * Apply a manual ordering to a group of sibling todos. The group is
  * identified by `parentId` (NULL = top-level personal todos). Each
  * id in `ids` gets `manual_order` set to its position 0..N-1 in the

@@ -285,16 +285,23 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
     async (input) => {
       const { type } = input;
       if (type === 'todo') {
-        const result = await todosSvc.createTodo(deps, {
-          content: input.content,
-          projectId: input.project_id ?? null,
-          parentId: input.parent_id ?? null,
-          section: input.section ?? null,
-          priority: input.priority,
-          dueDate: input.due_date ? new Date(input.due_date) : null,
-          tags: input.tags,
-        });
-        return { content: [{ type: 'text', text: JSON.stringify({ id: result.id, type: 'todo' }, null, 2) }] };
+        try {
+          const result = await todosSvc.createTodo(deps, {
+            content: input.content,
+            projectId: input.project_id ?? null,
+            parentId: input.parent_id ?? null,
+            section: input.section ?? null,
+            priority: input.priority,
+            dueDate: input.due_date ? new Date(input.due_date) : null,
+            tags: input.tags,
+          });
+          return { content: [{ type: 'text', text: JSON.stringify({ id: result.id, type: 'todo' }, null, 2) }] };
+        } catch (err) {
+          if (err instanceof todosSvc.TodoDepthExceededError) {
+            return { content: [{ type: 'text', text: err.message }], isError: true };
+          }
+          throw err;
+        }
       }
 
       // document, note, quick_note all flow through content-items
@@ -419,20 +426,27 @@ Returns the updated record.`,
       }
 
       if (input.kind === 'todo') {
-        const updated = await todosSvc.updateTodo(deps, input.id, {
-          content: input.content,
-          projectId: input.project_id,
-          section: input.section,
-          parentId: input.parent_id,
-          status: input.status,
-          priority: input.priority,
-          dueDate: input.due_date === null ? null : (input.due_date ? new Date(input.due_date) : undefined),
-          tags: input.tags,
-        });
-        if (!updated) {
-          return { content: [{ type: 'text', text: `No todo found with id ${input.id}` }], isError: true };
+        try {
+          const updated = await todosSvc.updateTodo(deps, input.id, {
+            content: input.content,
+            projectId: input.project_id,
+            section: input.section,
+            parentId: input.parent_id,
+            status: input.status,
+            priority: input.priority,
+            dueDate: input.due_date === null ? null : (input.due_date ? new Date(input.due_date) : undefined),
+            tags: input.tags,
+          });
+          if (!updated) {
+            return { content: [{ type: 'text', text: `No todo found with id ${input.id}` }], isError: true };
+          }
+          return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
+        } catch (err) {
+          if (err instanceof todosSvc.TodoDepthExceededError) {
+            return { content: [{ type: 'text', text: err.message }], isError: true };
+          }
+          throw err;
         }
-        return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
       }
 
       if (input.kind === 'content') {
