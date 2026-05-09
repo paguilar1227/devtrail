@@ -2423,3 +2423,39 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   cursor: not-allowed;
 }
 
+/* ── Todo detail drawer: subtasks list ─────────────────────
+   Compact rows under the meta-grid, before Comments. Mirrors
+   the tone of .todo-comment but tighter — checkbox + title +
+   priority chip, full row clickable to navigate.
+   ──────────────────────────────────────────────────────── */
+.todo-subtask-list {
+  display: flex; flex-direction: column;
+  margin-top: 6px;
+  border: 0.5px solid var(--hairline);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.todo-subtask-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background 100ms;
+}
+.todo-subtask-row + .todo-subtask-row {
+  border-top: 0.5px solid var(--hairline);
+}
+.todo-subtask-row:hover { background: var(--glass-bg-soft); }
+.todo-subtask-title {
+  font-size: var(--type-body);
+  color: var(--fg);
+  line-height: 1.35;
+}
+.todo-subtask-row.done .todo-subtask-title {
+  text-decoration: line-through;
+  color: var(--fg-muted);
+}
+.todo-subtask-row.done { opacity: 0.65; }
+
