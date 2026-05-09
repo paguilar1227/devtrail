@@ -77,16 +77,42 @@ export async function updateTodo(
   if (patch.content !== undefined) {
     embedding = await deps.embeddingProvider.embed(patch.content);
   }
+  // Peek at the previous status so we can detect transitions in/out of
+  // 'done' and cascade in either direction. Skipping the SELECT when
+  // status isn't changing keeps the no-op path single-roundtrip.
+  let prevStatus: string | undefined;
+  if (patch.status !== undefined) {
+    const cur = await getTodoById(deps.db, id);
+    prevStatus = cur?.status;
+  }
   const result = await dbUpdateTodo(deps.db, id, { ...patch, embedding });
-  // Marking a parent done implies the work below it is finished too —
-  // cascade to all descendants. We don't cascade un-completion: clearing
-  // a parent's done state is a "this isn't actually finished" signal,
-  // not a claim about each child's state.
-  if (patch.status === 'done') {
-    const children = await findChildTodos(deps.db, id);
-    for (const child of children) {
-      if (child.status !== 'done') {
-        await updateTodo(deps, child.id, { status: 'done' });
+
+  // Cascade is symmetric:
+  //   done   ← (any non-done) → mark non-done descendants done
+  //   any    ← (done)         → flip done descendants to the parent's
+  //                              new status so the subtree no longer
+  //                              reads as finished.
+  // The cost of bidirectional cascade is that descendants don't
+  // remember their pre-cascade status — reopening a parent doesn't
+  // restore "this child was originally not_started, that one was
+  // in_progress." The user accepts that tradeoff in exchange for
+  // "toggle the parent → the subtree follows."
+  if (patch.status !== undefined) {
+    const becameDone = patch.status === 'done' && prevStatus !== 'done';
+    const becameOpen = patch.status !== 'done' && prevStatus === 'done';
+    if (becameDone) {
+      const children = await findChildTodos(deps.db, id);
+      for (const child of children) {
+        if (child.status !== 'done') {
+          await updateTodo(deps, child.id, { status: 'done' });
+        }
+      }
+    } else if (becameOpen) {
+      const children = await findChildTodos(deps.db, id);
+      for (const child of children) {
+        if (child.status === 'done') {
+          await updateTodo(deps, child.id, { status: patch.status });
+        }
       }
     }
   }

@@ -40,6 +40,58 @@ test('home personal todos: toggling the row checkbox marks the todo done in the 
   }).toBe('done');
 });
 
+test('home personal todos: reopening a done parent cascades back to descendants', async ({ page }) => {
+  // Symmetric to the cascade-done test. Build a parent + 2 children +
+  // 1 grandchild, mark the whole subtree done via cascade, then untick
+  // the parent — descendants should flip out of done.
+  const parentContent = stamp() + ' Reopen parent';
+  const c1 = stamp() + ' Reopen c1';
+  const c2 = stamp() + ' Reopen c2';
+  const gcContent = stamp() + ' Reopen gc';
+
+  const parent = await createTodo(parentContent, null);
+  const child1 = await createTodo(c1, null, { parent_id: parent.id });
+  const child2 = await createTodo(c2, null, { parent_id: parent.id });
+  const gc = await createTodo(gcContent, null, { parent_id: child1.id });
+
+  // Cascade-done: completing the parent flips everyone done.
+  await updateTodo(parent.id, { status: 'done' });
+  await expect.poll(async () => {
+    const todos = await listTodos({ project_id: 'null' });
+    const byId = new Map(todos.map((t) => [t.id, t]));
+    return [byId.get(parent.id)?.status, byId.get(child1.id)?.status,
+            byId.get(child2.id)?.status, byId.get(gc.id)?.status];
+  }).toEqual(['done', 'done', 'done', 'done']);
+
+  // Now untick via the UI. Done todos sit at the bottom of the column,
+  // so we use the drawer (full list) to reach the parent row reliably.
+  await page.reload();
+  await waitForAppReady(page);
+  await page.locator(`${TODOS_COL} .pcol-more`).click();
+  const drawer = page.locator('.drawer');
+  await expect(drawer).toBeVisible({ timeout: 15000 });
+  const parentRow = drawer.locator('.prow', { hasText: parentContent });
+  await expect(parentRow).toBeVisible();
+  await parentRow.locator('.checkbox').first().click();
+
+  // Cascade-undone: parent moves to not_started; descendants follow.
+  await expect.poll(async () => {
+    const todos = await listTodos({ project_id: 'null' });
+    const byId = new Map(todos.map((t) => [t.id, t]));
+    return {
+      parent: byId.get(parent.id)?.status,
+      child1: byId.get(child1.id)?.status,
+      child2: byId.get(child2.id)?.status,
+      grandchild: byId.get(gc.id)?.status,
+    };
+  }, { timeout: 10000 }).toEqual({
+    parent: 'not_started',
+    child1: 'not_started',
+    child2: 'not_started',
+    grandchild: 'not_started',
+  });
+});
+
 test('home personal todos: completing a parent cascades to non-done descendants', async ({ page }) => {
   // Build a 3-level tree with a mix of statuses so we exercise both
   // the cascade (touches in_progress + not_started) and the skip

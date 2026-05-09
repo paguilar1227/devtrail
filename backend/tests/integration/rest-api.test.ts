@@ -1869,30 +1869,49 @@ describe('Todos API', () => {
     const child2 = '44444444-4444-4444-8444-444444444444';
     const grandchild = '55555555-5555-4555-8555-555555555555';
 
-    // updateTodo's cascade fans out: UPDATE parent → SELECT children →
-    // UPDATE each non-done child (recursing). Mock the SQL traffic so
-    // we can assert the right rows got updated and the already-done
-    // child1 was skipped (no redundant UPDATE).
+    // Tree shape. Status is mutable in this map so the recursive
+    // updateTodo calls observe the cascade-in-progress state.
+    const tree: Record<string, { status: string }> = {
+      [parent]: { status: 'in_progress' },
+      [child1]: { status: 'done' },         // already done — should be skipped
+      [child2]: { status: 'in_progress' },
+      [grandchild]: { status: 'not_started' },
+    };
+    const childrenOf: Record<string, string[]> = {
+      [parent]: [child1, child2],
+      [child2]: [grandchild],
+    };
+
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
       queries.push({ sql, params: params ?? [] });
-      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
-        if (params?.[0] === parent) {
-          return { rows: [
-            { id: child1, content: 'c1', status: 'done', archived: false },
-            { id: child2, content: 'c2', status: 'in_progress', archived: false },
-          ] } as any;
-        }
-        if (params?.[0] === child2) {
-          return { rows: [
-            { id: grandchild, content: 'gc', status: 'not_started', archived: false },
-          ] } as any;
-        }
-        if (params?.[0] === grandchild) return { rows: [] } as any;
-        return { rows: [] } as any;
+      // getTodoById — returns current status for prevStatus check.
+      if (/^SELECT \* FROM todos WHERE id = \$1/i.test(sql)) {
+        const id = params?.[0] as string;
+        return { rows: tree[id] ? [{ id, status: tree[id].status, archived: false }] : [] } as any;
       }
-      // UPDATE returns the patched row.
-      return { rows: [{ id: params?.[params.length - 1], status: 'done' }] } as any;
+      // findChildTodos
+      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
+        const pid = params?.[0] as string;
+        const ids = childrenOf[pid] ?? [];
+        return { rows: ids.map((id) => ({ id, content: id, status: tree[id].status, archived: false })) } as any;
+      }
+      // dbUpdateTodo — apply patch, return updated row. Status is the
+      // first param in the SET clause (see db/todos.ts).
+      if (/^UPDATE\s+todos\b/i.test(sql)) {
+        const updatedId = params?.[params.length - 1] as string;
+        // Pluck status off params if present in the SET clause.
+        const sIdx = sql.indexOf('status =');
+        if (sIdx !== -1) {
+          const m = sql.slice(sIdx).match(/\$(\d+)/);
+          if (m) {
+            const newStatus = params?.[parseInt(m[1], 10) - 1] as string;
+            if (tree[updatedId]) tree[updatedId].status = newStatus;
+          }
+        }
+        return { rows: [{ id: updatedId, status: tree[updatedId]?.status }] } as any;
+      }
+      return { rows: [] } as any;
     });
 
     const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
@@ -1902,9 +1921,15 @@ describe('Todos API', () => {
     }));
     expect(res.status).toBe(200);
 
-    // The id values bound to UPDATE statements tell the cascade story:
-    // parent + child2 + grandchild were updated; child1 (already done)
-    // was skipped.
+    // After the cascade, every node in the tree should be 'done'
+    // (child1 was already done — no redundant write, but state still
+    // 'done').
+    expect(tree[parent].status).toBe('done');
+    expect(tree[child1].status).toBe('done');
+    expect(tree[child2].status).toBe('done');
+    expect(tree[grandchild].status).toBe('done');
+
+    // child1 was skipped: no UPDATE bound its id.
     const updatedIds = queries
       .filter((q) => /UPDATE\s+todos\b/i.test(q.sql))
       .map((q) => q.params[q.params.length - 1]);
@@ -1914,12 +1939,45 @@ describe('Todos API', () => {
     expect(updatedIds).not.toContain(child1);
   });
 
-  it('PUT /todos/:id un-completing a parent (status != done) does NOT cascade', async () => {
+  it('PUT /todos/:id reopening a done parent cascades to its done descendants', async () => {
     const parent = '66666666-6666-4666-8666-666666666666';
-    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const child1 = '77777777-7777-4777-8777-777777777777';
+    const child2 = '88888888-8888-4888-8888-888888888888';
+
+    // Tree before reopen: parent + child1 + child2 all done. child2
+    // happens to be the result of a prior cascade — we don't track
+    // that, the model just says "if a descendant is done when a
+    // parent reopens, undone it."
+    const tree: Record<string, { status: string }> = {
+      [parent]: { status: 'done' },
+      [child1]: { status: 'done' },
+      [child2]: { status: 'done' },
+    };
+    const childrenOf: Record<string, string[]> = { [parent]: [child1, child2] };
+
     vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
-      queries.push({ sql, params: params ?? [] });
-      return { rows: [{ id: parent, status: 'in_progress' }] } as any;
+      if (/^SELECT \* FROM todos WHERE id = \$1/i.test(sql)) {
+        const id = params?.[0] as string;
+        return { rows: tree[id] ? [{ id, status: tree[id].status, archived: false }] : [] } as any;
+      }
+      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
+        const pid = params?.[0] as string;
+        const ids = childrenOf[pid] ?? [];
+        return { rows: ids.map((id) => ({ id, content: id, status: tree[id].status, archived: false })) } as any;
+      }
+      if (/^UPDATE\s+todos\b/i.test(sql)) {
+        const updatedId = params?.[params.length - 1] as string;
+        const sIdx = sql.indexOf('status =');
+        if (sIdx !== -1) {
+          const m = sql.slice(sIdx).match(/\$(\d+)/);
+          if (m) {
+            const newStatus = params?.[parseInt(m[1], 10) - 1] as string;
+            if (tree[updatedId]) tree[updatedId].status = newStatus;
+          }
+        }
+        return { rows: [{ id: updatedId, status: tree[updatedId]?.status }] } as any;
+      }
+      return { rows: [] } as any;
     });
 
     const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
@@ -1929,11 +1987,92 @@ describe('Todos API', () => {
     }));
     expect(res.status).toBe(200);
 
-    // Single UPDATE on the parent. No SELECT for children, no fan-out.
-    const selectChildren = queries.filter((q) => /SELECT \* FROM todos WHERE parent_id/i.test(q.sql));
-    expect(selectChildren).toHaveLength(0);
-    const updates = queries.filter((q) => /UPDATE\s+todos\b/i.test(q.sql));
-    expect(updates).toHaveLength(1);
+    // Cascade flips done descendants to the parent's new status.
+    expect(tree[parent].status).toBe('in_progress');
+    expect(tree[child1].status).toBe('in_progress');
+    expect(tree[child2].status).toBe('in_progress');
+  });
+
+  it('PUT /todos/:id reopen does NOT touch already-non-done descendants', async () => {
+    const parent = '99999999-9999-4999-8999-999999999999';
+    const childOpen = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    const tree: Record<string, { status: string }> = {
+      [parent]: { status: 'done' },
+      [childOpen]: { status: 'in_progress' }, // never was done
+    };
+    const childrenOf: Record<string, string[]> = { [parent]: [childOpen] };
+    const updates: string[] = [];
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (/^SELECT \* FROM todos WHERE id = \$1/i.test(sql)) {
+        const id = params?.[0] as string;
+        return { rows: tree[id] ? [{ id, status: tree[id].status, archived: false }] : [] } as any;
+      }
+      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
+        const pid = params?.[0] as string;
+        const ids = childrenOf[pid] ?? [];
+        return { rows: ids.map((id) => ({ id, content: id, status: tree[id].status, archived: false })) } as any;
+      }
+      if (/^UPDATE\s+todos\b/i.test(sql)) {
+        const updatedId = params?.[params.length - 1] as string;
+        updates.push(updatedId);
+        const sIdx = sql.indexOf('status =');
+        if (sIdx !== -1) {
+          const m = sql.slice(sIdx).match(/\$(\d+)/);
+          if (m) {
+            const newStatus = params?.[parseInt(m[1], 10) - 1] as string;
+            if (tree[updatedId]) tree[updatedId].status = newStatus;
+          }
+        }
+        return { rows: [{ id: updatedId, status: tree[updatedId]?.status }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'not_started' }),
+    }));
+    expect(res.status).toBe(200);
+    // Only the parent was updated. The already-non-done child stays
+    // put — its progress wasn't claimed by the cascade.
+    expect(updates).toEqual([parent]);
+    expect(tree[childOpen].status).toBe('in_progress');
+  });
+
+  it('PUT /todos/:id status change between two non-done states does NOT cascade', async () => {
+    const parent = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const tree: Record<string, { status: string }> = {
+      [parent]: { status: 'in_progress' }, // never was done
+    };
+    const updates: string[] = [];
+
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (/^SELECT \* FROM todos WHERE id = \$1/i.test(sql)) {
+        const id = params?.[0] as string;
+        return { rows: tree[id] ? [{ id, status: tree[id].status, archived: false }] : [] } as any;
+      }
+      if (/^SELECT \* FROM todos WHERE parent_id/i.test(sql)) {
+        return { rows: [] } as any;
+      }
+      if (/^UPDATE\s+todos\b/i.test(sql)) {
+        const updatedId = params?.[params.length - 1] as string;
+        updates.push(updatedId);
+        return { rows: [{ id: updatedId, status: 'not_started' }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${parent}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'not_started' }),
+    }));
+    expect(res.status).toBe(200);
+    // No fan-out since neither side of the transition is 'done'.
+    expect(updates).toEqual([parent]);
   });
 
   it('PUT /todos/:id with due_date=null clears the column (does not silently drop)', async () => {
