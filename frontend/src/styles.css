@@ -661,6 +661,18 @@ input, textarea { font-size: inherit; color: inherit; }
 }
 .entity-link:hover { color: var(--fg); border-color: oklch(0.62 0.14 295 / 0.5); }
 .entity-link::before { content: "↗"; font-size: var(--type-meta); color: var(--fg-subtle); }
+/* Clickable variant — used for navigation links (e.g. parent todo).
+   Strips browser button defaults; same hover affordance + cursor as
+   a real link. */
+.entity-link-button {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+}
+.entity-link-button:focus-visible {
+  outline: none;
+  border-color: var(--accent-1);
+}
 
 /* ── Status badge ── */
 .status {

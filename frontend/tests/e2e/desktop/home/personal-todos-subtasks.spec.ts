@@ -79,6 +79,32 @@ test('todo detail: toggle a subtask done via its checkbox', async ({ page }) => 
   }).toBe('done');
 });
 
+test('todo detail: clicking the parent meta link navigates UP to the parent', async ({ page }) => {
+  // Open a subtask's detail directly, then click its `parent` chip
+  // and verify the drawer flips to the parent's detail. Closes the
+  // navigation loop with the existing subtask-click test below.
+  const parentContent = stamp() + ' Parent up-nav';
+  const subContent = stamp() + ' Sub up-nav';
+  const parent = await createTodo(parentContent, null);
+  await createTodo(subContent, null, { parent_id: parent.id });
+  await page.reload();
+  await waitForAppReady(page);
+
+  // Open the drawer + drill to subtask via parent → subtask click.
+  await page.locator(`${TODOS_COL} .pcol-more`).click();
+  const listDrawer = page.locator('.drawer');
+  await expect(listDrawer).toBeVisible({ timeout: 15000 });
+  await listDrawer.locator('.prow', { hasText: parentContent }).click();
+  const detail = page.locator('.drawer');
+  await expect(detail.locator('.drawer-head .ti', { hasText: parentContent })).toBeVisible();
+  await detail.locator('.todo-subtask-row', { hasText: subContent }).click();
+  await expect(detail.locator('.drawer-head .ti', { hasText: subContent })).toBeVisible({ timeout: 5000 });
+
+  // Click the parent meta link — the drawer should flip back UP.
+  await detail.locator('.entity-link-button', { hasText: parentContent }).click();
+  await expect(detail.locator('.drawer-head .ti', { hasText: parentContent })).toBeVisible({ timeout: 5000 });
+});
+
 test('todo detail: clicking a subtask navigates to its detail drawer', async ({ page }) => {
   const parentContent = stamp() + ' Parent for nav';
   const subContent = stamp() + ' Sub for nav';

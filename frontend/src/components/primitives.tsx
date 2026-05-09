@@ -29,7 +29,25 @@ export function Tag({
   );
 }
 
-export function EntityLink({ kind, children }: { kind: string; children: ReactNode }) {
+export function EntityLink({
+  kind,
+  children,
+  onClick,
+}: {
+  kind: string;
+  children: ReactNode;
+  /** When provided, the link renders as a button and acts as a real
+   *  navigation affordance (Enter / Space + click). Without onClick
+   *  it's a plain styled span — used as a non-interactive label. */
+  onClick?: () => void;
+}) {
+  if (onClick) {
+    return (
+      <button type="button" className="entity-link entity-link-button" onClick={onClick}>
+        {kind}: {children}
+      </button>
+    );
+  }
   return (
     <span className="entity-link">
       {kind}: {children}

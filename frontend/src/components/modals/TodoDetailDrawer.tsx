@@ -193,9 +193,20 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
         <span>{todo.project_id ?? 'Inbox'}</span>
         <span className="subtle">parent</span>
         <span>
-          {todo.parent_id
-            ? <EntityLink kind="todo">{parentQ.data?.content ?? (parentQ.isLoading ? '…' : todo.parent_id)}</EntityLink>
-            : '—'}
+          {todo.parent_id ? (
+            <EntityLink
+              kind="todo"
+              // Navigate up: close this drawer, then dispatch detail
+              // for the parent. App reopens the drawer one frame
+              // later — same pattern as the subtask click below.
+              onClick={onAction && parentQ.data ? () => {
+                onClose();
+                onAction({ kind: 'todo-detail', payload: toUiTodo(parentQ.data!) });
+              } : undefined}
+            >
+              {parentQ.data?.content ?? (parentQ.isLoading ? '…' : todo.parent_id)}
+            </EntityLink>
+          ) : '—'}
         </span>
       </div>
       {updateMut.error ? (
