@@ -2101,15 +2101,16 @@ describe('Todos API', () => {
     expect(body.mismatched_ids).toEqual([b]);
   });
 
-  it('POST /todos rejects subtasks that would exceed the 3-level depth cap', async () => {
-    // Parent's depth = 2 (already a grandchild). A new child under it
-    // would be depth 3 → reject. The recursive-CTE depth probe is the
-    // gate, so the mock returns max(depth)=2 and the create call
-    // never reaches the embedding/INSERT.
-    const grandchildId = '11111111-1111-4111-8111-111111111111';
+  it('POST /todos rejects subtasks that would exceed the 4-level depth cap', async () => {
+    // Parent's depth = 3 (great-grandchild — already at the cap).
+    // A new child under it would be depth 4 → reject. The
+    // recursive-CTE depth probe is the gate, so the mock returns
+    // max(depth)=3 and the create call never reaches embedding /
+    // INSERT.
+    const greatGrandId = '11111111-1111-4111-8111-111111111111';
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (/WITH RECURSIVE chain/i.test(sql)) {
-        return { rows: [{ depth: 2, exists: true }] } as any;
+        return { rows: [{ depth: 3, exists: true }] } as any;
       }
       return { rows: [] } as any;
     });
@@ -2117,23 +2118,23 @@ describe('Todos API', () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/todos', {
       method: 'POST',
       headers: { ...AUTH, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'too deep', parent_id: grandchildId }),
+      body: JSON.stringify({ content: 'too deep', parent_id: greatGrandId }),
     }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/Subtask nesting too deep.*depth 3/);
+    expect((await res.json()).error).toMatch(/Subtask nesting too deep.*depth 4/);
   });
 
-  it('POST /todos accepts a subtask one level above the cap (depth 2 grandchild)', async () => {
-    // Parent at depth 1 → child at depth 2 is allowed (the cap).
-    const childId = '22222222-2222-4222-8222-222222222222';
+  it('POST /todos accepts a subtask at the depth cap (parent at depth 2 → child at depth 3)', async () => {
+    // Parent at depth 2 → child at depth 3 is allowed (the cap).
+    const grandchildId = '22222222-2222-4222-8222-222222222222';
     const newId = '33333333-3333-4333-8333-333333333333';
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (/WITH RECURSIVE chain/i.test(sql)) {
-        return { rows: [{ depth: 1, exists: true }] } as any;
+        return { rows: [{ depth: 2, exists: true }] } as any;
       }
       if (/^INSERT INTO todos/i.test(sql)) {
         return { rows: [{
-          id: newId, content: 'ok', project_id: null, section: null, parent_id: childId,
+          id: newId, content: 'ok', project_id: null, section: null, parent_id: grandchildId,
           priority: null, status: 'not_started', due_date: null, tags: [], archived: false,
           pinned_at: null, manual_order: null, created_at: new Date(), updated_at: new Date(),
         }] } as any;
@@ -2144,7 +2145,7 @@ describe('Todos API', () => {
     const res = await app.fetch(new Request('http://localhost/api/v1/todos', {
       method: 'POST',
       headers: { ...AUTH, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'ok', parent_id: childId }),
+      body: JSON.stringify({ content: 'ok', parent_id: grandchildId }),
     }));
     expect(res.status).toBe(201);
     expect((await res.json()).todo.id).toBe(newId);
@@ -2155,7 +2156,7 @@ describe('Todos API', () => {
     const newParent = '55555555-5555-4555-8555-555555555555';
     vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
       if (/WITH RECURSIVE chain/i.test(sql)) {
-        return { rows: [{ depth: 2, exists: true }] } as any;
+        return { rows: [{ depth: 3, exists: true }] } as any;
       }
       return { rows: [] } as any;
     });

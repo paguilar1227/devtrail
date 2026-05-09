@@ -79,31 +79,36 @@ test('todo detail: toggle a subtask done via its checkbox', async ({ page }) => 
   }).toBe('done');
 });
 
-test('todo detail: subtask input is gated at the depth cap (max 3 levels)', async ({ page }) => {
-  // Build a 3-level chain: root → child → grandchild. Drilling into
-  // the grandchild's detail should hide the "Add subtask" input and
-  // show a notice instead. Pushing past the cap via REST also fails.
+test('todo detail: subtask input is gated at the depth cap (max 4 levels)', async ({ page }) => {
+  // Build a 4-level chain: root → child → grand → great-grand. Drilling
+  // into the great-grandchild's detail should hide the "Add subtask"
+  // input and show a notice instead. Pushing past the cap via REST also
+  // fails. The cap is 4 total including the root (MAX_TODO_DEPTH=3).
   const rootContent = stamp() + ' Root';
   const childContent = stamp() + ' Child';
   const grandContent = stamp() + ' Grand';
+  const greatContent = stamp() + ' Great';
   const root = await createTodo(rootContent, null);
   const child = await createTodo(childContent, null, { parent_id: root.id });
   const grand = await createTodo(grandContent, null, { parent_id: child.id });
+  const great = await createTodo(greatContent, null, { parent_id: grand.id });
 
   await page.reload();
   await waitForAppReady(page);
 
-  // Open the grandchild detail directly via the parent chain.
+  // Open the great-grandchild detail directly via the parent chain.
   await page.locator(`${TODOS_COL} .pcol-more`).click();
   const listDrawer = page.locator('.drawer');
   await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  // Open root → click child → click grandchild.
+  // Open root → click child → click grand → click great.
   await listDrawer.locator('.prow', { hasText: rootContent }).click();
   const detail = page.locator('.drawer');
   await detail.locator('.todo-subtask-row', { hasText: childContent }).click();
   await expect(detail.locator('.drawer-head .ti', { hasText: childContent })).toBeVisible({ timeout: 5000 });
   await detail.locator('.todo-subtask-row', { hasText: grandContent }).click();
   await expect(detail.locator('.drawer-head .ti', { hasText: grandContent })).toBeVisible({ timeout: 5000 });
+  await detail.locator('.todo-subtask-row', { hasText: greatContent }).click();
+  await expect(detail.locator('.drawer-head .ti', { hasText: greatContent })).toBeVisible({ timeout: 5000 });
 
   // Subtask input is gone; the cap notice replaces it.
   await expect(detail.getByPlaceholder('Add a subtask…')).toHaveCount(0);
@@ -112,7 +117,7 @@ test('todo detail: subtask input is gated at the depth cap (max 3 levels)', asyn
   // Direct REST attempt to push past the cap also fails. Use the
   // helper's createTodo wrapper and assert it throws ApiError(400).
   await expect(
-    createTodo('too-deep', null, { parent_id: grand.id }),
+    createTodo('too-deep', null, { parent_id: great.id }),
   ).rejects.toThrow(/Subtask nesting too deep/);
 });
 

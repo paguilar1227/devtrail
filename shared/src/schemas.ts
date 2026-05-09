@@ -618,11 +618,13 @@ export type TodoReorderResponse = z.infer<typeof TodoReorderResponseSchema>;
  * Hard cap on todo nesting depth, measured in ancestors:
  *   depth 0 = top-level   (root)
  *   depth 1 = subtask
- *   depth 2 = grandchild  (deepest allowed)
- * Frontend mirrors this constant for UI gating; backend enforces it
- * on every parent_id-changing path. Source of truth is the backend.
+ *   depth 2 = grandchild
+ *   depth 3 = great-grandchild (deepest allowed)
+ * 4 levels total. Frontend mirrors this constant for UI gating;
+ * backend enforces it on every parent_id-changing path. Source of
+ * truth is the backend.
  */
-export const MAX_TODO_DEPTH = 2;
+export const MAX_TODO_DEPTH = 3;
 
 // ---------------------------------------------------------------------------
 // Health / errors
