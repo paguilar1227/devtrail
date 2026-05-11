@@ -2001,6 +2001,12 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border: 0.5px solid var(--hairline); border-radius: 14px;
   background: var(--glass-bg);
   overflow: hidden;
+  /* Flex column so the grid's row-stretch fills downward and the
+     "View N more" footer can stick to the bottom regardless of how
+     tall the visible rows are. Keeps both columns visually balanced
+     when one has heavier rows (todos with subtasks / due chips)
+     than the other (plain notes). */
+  display: flex; flex-direction: column;
 }
 .pcol .pcol-h {
   display: flex; align-items: center; gap: 8px;
@@ -2023,6 +2029,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border-top: 0.5px solid var(--hairline);
   width: 100%;
   transition: background 100ms;
+  /* Push to the bottom of the flex column so the footer aligns
+     between sibling .pcol columns even when their row counts differ. */
+  margin-top: auto;
 }
 .pcol-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
 .todo-list-drawer-rows {
