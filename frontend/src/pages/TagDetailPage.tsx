@@ -156,7 +156,7 @@ export function TagDetailPage({ name, onAction, onRoute }: Props) {
           {notes.length > 0 ? (
             <section className="tag-detail-section">
               <h2 className="tag-detail-section-h">Notes <span className="ct">{notes.length}</span></h2>
-              <div className="row-list">
+              <div className="tag-detail-list">
                 {notes.map((n) => (
                   <NoteRow
                     key={n.id}
@@ -171,7 +171,7 @@ export function TagDetailPage({ name, onAction, onRoute }: Props) {
           {documents.length > 0 ? (
             <section className="tag-detail-section">
               <h2 className="tag-detail-section-h">Documents <span className="ct">{documents.length}</span></h2>
-              <div className="row-list">
+              <div className="tag-detail-list">
                 {documents.map((d) => (
                   <div
                     key={d.id}
@@ -197,7 +197,7 @@ export function TagDetailPage({ name, onAction, onRoute }: Props) {
           {todos.length > 0 ? (
             <section className="tag-detail-section">
               <h2 className="tag-detail-section-h">Todos <span className="ct">{todos.length}</span></h2>
-              <div className="row-list">{todos.map(renderTodoRow)}</div>
+              <div className="tag-detail-list">{todos.map(renderTodoRow)}</div>
             </section>
           ) : null}
         </>

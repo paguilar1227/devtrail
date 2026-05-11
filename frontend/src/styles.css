@@ -2567,22 +2567,35 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-variant-numeric: tabular-nums;
   font-weight: 500;
 }
+/* Flat row matching the rest of the app's list aesthetic. The
+   enclosing .row-list wraps the rows in a card; rows themselves are
+   transparent and separated by a hairline. */
+.tag-detail-list {
+  border: 0.5px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--glass-bg);
+}
 .tag-detail-row {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 14px;
-  border: 0.5px solid var(--hairline); border-radius: 10px;
-  background: var(--glass-bg);
+  padding: 11px 16px;
   cursor: pointer;
-  margin-bottom: 6px;
-  transition: background 100ms, border-color 100ms;
+  transition: background 100ms;
 }
-.tag-detail-row:hover { background: var(--glass-bg-soft); border-color: var(--fg-subtle); }
-.tag-detail-row:focus-visible { outline: 2px solid var(--accent-1); outline-offset: 1px; }
-.tag-detail-row .nm { flex: 1; font-weight: 500; }
+.tag-detail-row + .tag-detail-row { border-top: 0.5px solid var(--hairline); }
+.tag-detail-row:hover { background: var(--glass-bg-soft); }
+.tag-detail-row:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: -2px;
+}
+.tag-detail-row .nm {
+  flex: 1; font-weight: 500; font-size: var(--type-body);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .tag-detail-row .subtle { color: var(--fg-subtle); font-size: var(--type-meta); white-space: nowrap; }
 .tag-detail-row.done .nm { text-decoration: line-through; color: var(--fg-subtle); }
-.tag-detail-row .due-overdue { color: var(--danger); font-size: var(--type-meta); }
-.tag-detail-row .due-soon { color: var(--fg-subtle); font-size: var(--type-meta); }
+.tag-detail-row .due-overdue { color: var(--danger); font-size: var(--type-meta); white-space: nowrap; }
+.tag-detail-row .due-soon { color: var(--fg-subtle); font-size: var(--type-meta); white-space: nowrap; }
 
 /* ── DateTimePicker ─────────────────────────────────────────
    Hand-rolled replacement for native <input type="datetime-local">.
