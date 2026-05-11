@@ -11,6 +11,7 @@ import {
 } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { cls, fmtRel } from '../../lib/util';
+import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import { useTodoDepth } from '../../lib/useTodoDepth';
 import type { ActionDispatch, Todo } from '../../types';
 
@@ -144,6 +145,15 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
     }
   };
 
+  // The drawer-level drafts (new comment, new subtask) are the only
+  // pieces of unsaved input that closing would discard — priority and
+  // due-date save on every chip / picker change, so they're never
+  // mid-flight. If either draft has text, prompt before dismissing.
+  const hasUnsavedInput =
+    commentDraft.trim().length > 0 || subtaskDraft.trim().length > 0;
+  const closePending = updateMut.isPending || addCommentMut.isPending || addSubtaskMut.isPending;
+  const tryClose = useDirtyCloseGuard(hasUnsavedInput, onClose, closePending);
+
   const comments = commentsQ.data ?? [];
   const subtasks = subtasksQ.data ?? [];
   const { depth: ownDepth } = useTodoDepth(todo);
@@ -154,10 +164,10 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
   return (
     <Drawer
       title={todo.title}
-      onClose={onClose}
+      onClose={tryClose}
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={updateMut.isPending}>Close</button>
+          <button className="btn" onClick={tryClose} disabled={updateMut.isPending}>Close</button>
           <button className="btn btn-primary" onClick={onSave} disabled={updateMut.isPending}>
             {updateMut.isPending ? 'Saving…' : dirty ? 'Save' : 'Done'}
           </button>

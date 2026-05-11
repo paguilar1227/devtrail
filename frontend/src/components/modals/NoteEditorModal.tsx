@@ -1,10 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Status, Tag } from '../primitives';
 import { MarkdownEditor } from '../MarkdownEditor';
-import { useConfirm } from '../ConfirmDialog';
 import { createNote, editContentBody, updateContent } from '../../lib/api';
+import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import { fmtRel } from '../../lib/util';
 import type { Note } from '../../types';
 
@@ -26,7 +26,6 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
   const [editingTag, setEditingTag] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
-  const confirm = useConfirm();
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
@@ -95,23 +94,9 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
         JSON.stringify(tags) !== JSON.stringify(note!.tags ?? [])
       );
 
-  // Backdrop / Escape / Cancel routes through here. If there are
-  // unsaved edits, confirm before discarding. A save-success path calls
-  // `onClose` directly so it bypasses this gate.
-  const tryClose = useCallback(async () => {
-    if (!isDirty || pending) {
-      onClose();
-      return;
-    }
-    const ok = await confirm({
-      title: 'Discard unsaved changes?',
-      body: 'You have edits that haven’t been saved. Closing will lose them.',
-      confirmLabel: 'Discard',
-      cancelLabel: 'Keep editing',
-      destructive: true,
-    });
-    if (ok) onClose();
-  }, [isDirty, pending, confirm, onClose]);
+  // Backdrop / Escape / Cancel route through here. Save-success paths
+  // call `onClose` directly so they bypass the gate.
+  const tryClose = useDirtyCloseGuard(isDirty, onClose, pending);
 
   const save = () => {
     setError(null);

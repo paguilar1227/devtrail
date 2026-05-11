@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Tag } from '../primitives';
 import { saveFromUrl, uploadFile } from '../../lib/api';
+import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import type { Project } from '../../types';
 
 type Queued =
@@ -88,14 +89,26 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
   const queuedCount = queue.filter((x) => x.status === 'queued').length;
   const busy = queue.some((x) => x.status === 'uploading');
 
+  // Dirty when anything is staged to upload but hasn't run yet, or the
+  // URL / tags drafts are non-empty (the user typed something they'd
+  // lose on close). Items already in `ready` / `failed` states have
+  // either succeeded or surfaced their error — no recovery to protect.
+  const isDirty =
+    queuedCount > 0 ||
+    urlDraft.trim().length > 0 ||
+    tagsDraft.trim().length > 0;
+  const tryClose = useDirtyCloseGuard(isDirty, onClose, busy, {
+    body: 'You have queued items or unsaved input. Closing will lose them.',
+  });
+
   return (
     <Modal
       title={`Add to ${project?.name || 'Inbox'}`}
-      onClose={onClose}
+      onClose={tryClose}
       size="lg"
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={busy}>
+          <button className="btn" onClick={tryClose} disabled={busy}>
             Close
           </button>
           <button

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../primitives';
 import { createProject } from '../../lib/api';
+import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 
 export function NewProjectModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
@@ -29,13 +30,16 @@ export function NewProjectModal({ onClose }: { onClose: () => void }) {
     mut.mutate();
   };
 
+  const isDirty = name.trim().length > 0 || description.trim().length > 0;
+  const tryClose = useDirtyCloseGuard(isDirty, onClose, mut.isPending);
+
   return (
     <Modal
       title="New project"
-      onClose={onClose}
+      onClose={tryClose}
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={mut.isPending}>Cancel</button>
+          <button className="btn" onClick={tryClose} disabled={mut.isPending}>Cancel</button>
           <button className="btn btn-primary" onClick={submit} disabled={mut.isPending || !name.trim()}>
             {mut.isPending ? 'Creating…' : 'Create'}
           </button>
