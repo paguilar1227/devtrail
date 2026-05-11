@@ -24,8 +24,20 @@ import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoSortMode } from '../lib/useTodoSortMode';
 import { useNoteSortMode, compareNotesForMode } from '../lib/useNoteSortMode';
-import { NoteSortDropdown, TodoSortDropdown } from '../components/SortDropdown';
+import { NoteSortDropdown, SortDropdown, TodoSortDropdown } from '../components/SortDropdown';
 import { PersonalColumnHeader } from '../components/PersonalColumnHeader';
+
+// Activity widget filter — maps to the backend `kinds` query param.
+// 'all' is the unfiltered passthrough; the other three match the
+// ActivityKind enum from shared/schemas.
+type ActivityFilter = 'all' | 'ingest' | 'edit' | 'comment';
+const ACTIVITY_FILTER_MODES: readonly ActivityFilter[] = ['all', 'ingest', 'edit', 'comment'];
+const ACTIVITY_FILTER_LABELS: Record<ActivityFilter, string> = {
+  all: 'All',
+  ingest: 'Ingestion',
+  edit: 'Updates',
+  comment: 'Comments',
+};
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
   createNote,
@@ -54,6 +66,9 @@ type SearchScope = 'personal' | 'all';
 
 export function HomePage({ onRoute, onAction }: Props) {
   const qc = useQueryClient();
+  // Filter the Activity widget by kind. 'all' is the passthrough.
+  // Keyed in the query cache so React Query refetches on flip.
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
 
   const queries = useQueries({
     queries: [
@@ -65,7 +80,14 @@ export function HomePage({ onRoute, onAction }: Props) {
       // membership. Server-side keeps Home fast as the corpus grows
       // instead of relying on a client-side filter over every note.
       { queryKey: ['content', 'notes', 'personal'], queryFn: () => listContent({ type: 'note', project_id: 'null' }) },
-      { queryKey: ['activity', 'recent'], queryFn: () => listActivity({ limit: 4 }) },
+      {
+        queryKey: ['activity', 'recent', activityFilter],
+        queryFn: () =>
+          listActivity({
+            limit: 4,
+            ...(activityFilter === 'all' ? {} : { kinds: activityFilter }),
+          }),
+      },
       // Top tags drive the dashboard "what am I working on" strip. We
       // pull the full list — the API doesn't paginate — and pick the
       // top 5 by total usage on the client. Cheap enough at single-user
@@ -356,12 +378,19 @@ export function HomePage({ onRoute, onAction }: Props) {
         <div className="stat-activity">
           <div className="ah">
             <div className="lb">Recent activity</div>
-            <button className="btn btn-ghost btn-sm" onClick={() => onRoute({ route: 'activity' })}>
-              Full feed →
-            </button>
+            <SortDropdown<ActivityFilter>
+              id="home-activity-filter"
+              mode={activityFilter}
+              modes={ACTIVITY_FILTER_MODES}
+              labels={ACTIVITY_FILTER_LABELS}
+              onChange={setActivityFilter}
+              label="Filter"
+            />
           </div>
           {activity.length === 0 ? (
-            <div className="page-subtle">No recent activity.</div>
+            <div className="page-subtle stat-activity-empty">
+              {activityFilter === 'all' ? 'No recent activity.' : 'No matching events.'}
+            </div>
           ) : (
             <div className="activity-list activity-list-compact">
               {activity.map((a) => (
@@ -373,6 +402,13 @@ export function HomePage({ onRoute, onAction }: Props) {
               ))}
             </div>
           )}
+          <button
+            className="stat-activity-more"
+            onClick={() => onRoute({ route: 'activity' })}
+          >
+            View full feed
+            <Icons.ChevronRight size={11} />
+          </button>
         </div>
       </div>
 

@@ -20,12 +20,16 @@ interface Props<M extends string> {
    *  readers; only matters when more than one dropdown might exist on
    *  the page. */
   id?: string;
+  /** Visible label before the select. Defaults to "Sort"; pass
+   *  "Filter" or similar when reusing the primitive for non-sort
+   *  pickers (e.g. activity kind filter). */
+  label?: string;
 }
 
-export function SortDropdown<M extends string>({ mode, modes, labels, onChange, id }: Props<M>) {
+export function SortDropdown<M extends string>({ mode, modes, labels, onChange, id, label = 'Sort' }: Props<M>) {
   return (
     <label className="todo-sort-dropdown" htmlFor={id}>
-      <span className="todo-sort-dropdown-label">Sort</span>
+      <span className="todo-sort-dropdown-label">{label}</span>
       <select
         id={id}
         className="todo-sort-dropdown-select"

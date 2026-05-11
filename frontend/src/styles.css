@@ -1843,6 +1843,26 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   padding: 14px 16px; border-radius: 14px;
   background: var(--glass-bg); border: 0.5px solid var(--hairline);
 }
+/* Activity widget — flex column so its bottom "View full feed"
+   footer can stick to the bottom of the card the same way the
+   personal column footers do. */
+.stat-activity { display: flex; flex-direction: column; }
+.stat-activity-empty { flex: 1; }
+.stat-activity-more {
+  appearance: none; border: 0; cursor: pointer;
+  background: transparent; color: var(--fg-subtle);
+  padding: 11px 16px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit;
+  font-size: var(--type-meta);
+  border-top: 0.5px solid var(--hairline);
+  /* Negative margins break out of the card's internal padding so
+     the footer spans edge-to-edge like .pcol-more does. margin-top:
+     auto pushes it to the bottom of the flex column. */
+  margin: auto -16px -14px;
+  transition: background 100ms;
+}
+.stat-activity-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
 .stat-todos .lb, .stat-activity .lb, .stat-overview .lb {
   font-size: var(--type-meta); font-weight: 500;
   letter-spacing: 0.06em; text-transform: uppercase;
