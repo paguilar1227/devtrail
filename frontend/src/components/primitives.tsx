@@ -235,24 +235,39 @@ export function Drawer({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+  // Same mousedown/click-target check as Modal: only dismiss when both
+  // ends of the press landed on the backdrop, so a text-selection drag
+  // that releases outside the panel doesn't close the drawer.
+  const downOnBackdropRef = useRef(false);
   return (
-    <div className={cls('drawer', expanded && 'drawer-expanded')} role="dialog" aria-modal="true">
-      <div className="drawer-head">
-        <span className="ti">{title}</span>
-        <button
-          className="btn btn-ghost btn-icon drawer-expand"
-          onClick={() => setExpanded((v) => !v)}
-          title={expanded ? 'Collapse' : 'Expand'}
-          aria-label={expanded ? 'Collapse drawer' : 'Expand drawer'}
-        >
-          {expanded ? <Icons.Compact /> : <Icons.Expand />}
-        </button>
-        <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">
-          <Icons.X />
-        </button>
+    <div
+      className="drawer-overlay"
+      onMouseDown={(e) => {
+        downOnBackdropRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (downOnBackdropRef.current && e.target === e.currentTarget) onClose();
+        downOnBackdropRef.current = false;
+      }}
+    >
+      <div className={cls('drawer', expanded && 'drawer-expanded')} role="dialog" aria-modal="true">
+        <div className="drawer-head">
+          <span className="ti">{title}</span>
+          <button
+            className="btn btn-ghost btn-icon drawer-expand"
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? 'Collapse' : 'Expand'}
+            aria-label={expanded ? 'Collapse drawer' : 'Expand drawer'}
+          >
+            {expanded ? <Icons.Compact /> : <Icons.Expand />}
+          </button>
+          <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">
+            <Icons.X />
+          </button>
+        </div>
+        <div className="drawer-body">{children}</div>
+        {footer ? <div className="modal-foot">{footer}</div> : null}
       </div>
-      <div className="drawer-body">{children}</div>
-      {footer ? <div className="modal-foot">{footer}</div> : null}
     </div>
   );
 }

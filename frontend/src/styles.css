@@ -1275,6 +1275,17 @@ input, textarea { font-size: inherit; color: inherit; }
 }
 
 /* ── Right rail drawer (desktop) ── */
+/* Overlay catches outside clicks so the drawer dismisses when the
+   user clicks the page behind it. Subtle scrim — drawers shouldn't
+   feel as heavyweight as a modal. The drawer panel sits inside this
+   overlay (still positioned `fixed`, so the visual layout is
+   unchanged). */
+.drawer-overlay {
+  position: fixed; inset: 0; z-index: 89;
+  background: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .drawer-overlay { background: rgba(50, 30, 50, 0.06); }
+.app[data-mobile="true"] .drawer-overlay { background: transparent; }
 .drawer {
   position: fixed; right: 12px; top: 12px; bottom: 12px;
   width: 480px; max-width: calc(100vw - 24px);
