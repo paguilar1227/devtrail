@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Status, Tag } from '../primitives';
 import { MarkdownEditor } from '../MarkdownEditor';
+import { useConfirm } from '../ConfirmDialog';
 import { createNote, editContentBody, updateContent } from '../../lib/api';
 import { fmtRel } from '../../lib/util';
 import type { Note } from '../../types';
+
+const NEW_NOTE_BODY_PLACEHOLDER = '# New note\n\nStart writing…';
+const NEW_NOTE_TITLE_PLACEHOLDER = 'Untitled note';
 
 interface Props {
   note: Note | null;
@@ -15,13 +19,14 @@ interface Props {
 
 export function NoteEditorModal({ note, projectId, onClose }: Props) {
   const isNew = !note;
-  const [body, setBody] = useState(note?.body ?? '# New note\n\nStart writing…');
-  const [title, setTitle] = useState(note?.title ?? 'Untitled note');
+  const [body, setBody] = useState(note?.body ?? NEW_NOTE_BODY_PLACEHOLDER);
+  const [title, setTitle] = useState(note?.title ?? NEW_NOTE_TITLE_PLACEHOLDER);
   const [tags, setTags] = useState<string[]>(note?.tags ?? []);
   const [tagDraft, setTagDraft] = useState('');
   const [editingTag, setEditingTag] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
+  const confirm = useConfirm();
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
@@ -72,6 +77,42 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
 
   const pending = createMut.isPending || editMut.isPending;
 
+  // Dirty = user has actually edited something compared to the initial
+  // state. For a new note that means stepping away from the placeholder
+  // defaults; for an existing note it means any field differs from the
+  // server's copy. We compare tag arrays by stringify since order is
+  // user-controlled and meaningful.
+  const cleanTitle = title.trim() || NEW_NOTE_TITLE_PLACEHOLDER;
+  const isDirty = isNew
+    ? (
+        body !== NEW_NOTE_BODY_PLACEHOLDER ||
+        cleanTitle !== NEW_NOTE_TITLE_PLACEHOLDER ||
+        tags.length > 0
+      )
+    : (
+        body !== note!.body ||
+        cleanTitle !== note!.title ||
+        JSON.stringify(tags) !== JSON.stringify(note!.tags ?? [])
+      );
+
+  // Backdrop / Escape / Cancel routes through here. If there are
+  // unsaved edits, confirm before discarding. A save-success path calls
+  // `onClose` directly so it bypasses this gate.
+  const tryClose = useCallback(async () => {
+    if (!isDirty || pending) {
+      onClose();
+      return;
+    }
+    const ok = await confirm({
+      title: 'Discard unsaved changes?',
+      body: 'You have edits that haven’t been saved. Closing will lose them.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      destructive: true,
+    });
+    if (ok) onClose();
+  }, [isDirty, pending, confirm, onClose]);
+
   const save = () => {
     setError(null);
     if (!body.trim()) {
@@ -92,13 +133,13 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
     <Modal
       title={isNew ? 'New note' : 'Edit note'}
       size="lg"
-      onClose={onClose}
+      onClose={tryClose}
       footer={
         <>
           <span className="subtle modal-foot-meta">
             {isNew ? 'draft' : `last edit ${fmtRel(note!.updated_at)}`} · {body.split(/\s+/).length} words
           </span>
-          <button className="btn" onClick={onClose} disabled={pending}>Cancel</button>
+          <button className="btn" onClick={tryClose} disabled={pending}>Cancel</button>
           <button className="btn btn-primary" onClick={save} disabled={pending}>
             {pending ? 'Saving…' : 'Save'}
           </button>
