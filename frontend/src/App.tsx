@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabbar } from './components/MobileTabbar';
@@ -25,6 +25,7 @@ import { SearchPage } from './pages/SearchPage';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TagsPage } from './pages/TagsPage';
 import { TagDetailPage } from './pages/TagDetailPage';
+import { RenameTagModal } from './components/modals/RenameTagModal';
 import { TrashPage } from './pages/TrashPage';
 import type { ModalKind, Route, SidebarMode, Theme } from './types';
 
@@ -169,19 +170,7 @@ export default function App() {
         />
       )}
       {modal?.kind === 'confirm-rename' && (
-        <ConfirmModal
-          title="Rename tag"
-          message={
-            <Fragment>
-              Renaming "{modal.payload.name}" will update {modal.payload.total} entities across all projects. This cannot be undone.
-            </Fragment>
-          }
-          confirmLabel="Rename"
-          danger={false}
-          requireType={modal.payload.name}
-          onClose={() => setModal(null)}
-          onConfirm={() => setModal(null)}
-        />
+        <RenameTagModal tag={modal.payload} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'new-project' && <NewProjectModal onClose={() => setModal(null)} />}
       {modal?.kind === 'settings' && (

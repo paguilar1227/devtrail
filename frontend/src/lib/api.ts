@@ -40,6 +40,9 @@ import {
   SearchResponseSchema,
   StatsSchema,
   TagListResponseSchema,
+  TagRenameRequestSchema,
+  TagRenameResponseSchema,
+  type TagRenameResponse,
   TodoCommentListResponseSchema,
   TodoListQuerySchema,
   TodoListResponseSchema,
@@ -455,6 +458,17 @@ export async function listTags(opts: { project_id?: string; scope?: 'personal' |
   const qs = toQueryString(opts);
   const data = await request(`/tags${qs}`, TagListResponseSchema);
   return data.tags;
+}
+
+// Rename a tag corpus-wide. The backend implicitly merges if `to`
+// already exists on a row; the response carries the affected row
+// count. Empty / unchanged `to` short-circuits to noop on the server.
+export async function renameTag(from: string, to: string): Promise<TagRenameResponse> {
+  const body = JSON.stringify(TagRenameRequestSchema.parse({ to }));
+  return request(`/tags/${encodeURIComponent(from)}`, TagRenameResponseSchema, {
+    method: 'PUT',
+    body,
+  });
 }
 
 // ---------------- Activity ----------------
