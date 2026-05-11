@@ -1,5 +1,5 @@
 // Home — the merged-Inbox landing page. Asserts the structure renders:
-// hero greeting, search row, top stat row (Todos progress + Recent
+// hero greeting, search row, top stat row (Overview card + Recent
 // activity), Personal section (Todos + Notes), and the Pinned chip strip.
 // Behavior tests for personal todo flows live in personal-todos.spec.ts.
 import { expect, test } from '@playwright/test';
@@ -15,8 +15,10 @@ test('home: structure renders — hero, search, top row, personal columns, pinne
   await expect(personalTab).toHaveClass(/active/);
   await expect(allTab).not.toHaveClass(/active/);
 
-  // Top row: Todos progress card + Recent activity card.
-  await expect(page.locator('.stat-todos .vl')).toBeVisible();
+  // Top row: Overview card (replaced the old .stat-todos) + Recent
+  // activity card. The Overview card always shows the "X open" count
+  // pill — even at 0 — so it's the most stable thing to assert on.
+  await expect(page.locator('.stat-overview .stat-overview-count').first()).toBeVisible();
   await expect(page.locator('.stat-activity')).toBeVisible();
 
   // Personal section: two columns each with a quick-add input.
