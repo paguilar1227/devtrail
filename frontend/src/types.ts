@@ -1,3 +1,5 @@
+import type { TodoSortMode } from './lib/todoSort';
+
 export type ProjectAccent = 'magenta' | 'violet' | 'indigo' | 'cyan' | 'neutral';
 export type ProjectStatus = 'active' | 'archived' | 'completed';
 
@@ -159,7 +161,7 @@ export type ModalKind =
   | { kind: 'new-project' }
   | { kind: 'settings' }
   | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
-  | { kind: 'personal-todos' }
+  | { kind: 'personal-todos'; sort?: TodoSortMode }
   | { kind: 'personal-notes' };
 
 export type ActionDispatch = (modal: ModalKind) => void;

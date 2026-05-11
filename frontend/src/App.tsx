@@ -191,7 +191,7 @@ export default function App() {
         />
       )}
       {modal?.kind === 'personal-todos' && (
-        <TodoListDrawer onClose={() => setModal(null)} onAction={onAction} />
+        <TodoListDrawer initialSort={modal.sort} onClose={() => setModal(null)} onAction={onAction} />
       )}
       {modal?.kind === 'personal-notes' && (
         <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} />

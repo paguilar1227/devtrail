@@ -25,7 +25,7 @@ import { SortableTodoList } from '../SortableTodoList';
 import { SearchBox } from '../SearchBox';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
-import { sortPersonalTodos } from '../../lib/todoSort';
+import { sortPersonalTodos, type TodoSortMode } from '../../lib/todoSort';
 import { useTodoExpansion } from '../../lib/useTodoExpansion';
 import { useTodoSortMode } from '../../lib/useTodoSortMode';
 import { useInView } from '../../lib/useInView';
@@ -35,15 +35,31 @@ import type { ActionDispatch, Todo } from '../../types';
 interface Props {
   onClose: () => void;
   onAction: ActionDispatch;
+  /** Force-set the sort mode on open (e.g. clicking the "overdue"
+   *  pill on Home routes here with `initialSort='due'`). Once set,
+   *  the user can still override via the dropdown. */
+  initialSort?: TodoSortMode;
 }
 
 const PAGE_SIZE = 20;
 
-export function TodoListDrawer({ onClose, onAction }: Props) {
+export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
   const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('inbox');
+
+  // Apply the caller-requested initial sort once on mount. We persist
+  // it through useTodoSortMode's setter so the choice sticks if the
+  // user reopens the drawer later — matches their intent of "clicking
+  // overdue means I want a due-date view." Empty dependency array so
+  // re-renders don't keep re-applying the same value.
+  useEffect(() => {
+    if (initialSort && initialSort !== sortMode) {
+      setSortMode(initialSort);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pages = useInfiniteQuery({
     queryKey: ['todos', 'inbox', 'infinite', q],

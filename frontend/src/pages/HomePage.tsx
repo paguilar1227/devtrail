@@ -268,7 +268,7 @@ export function HomePage({ onRoute, onAction }: Props) {
               <button
                 type="button"
                 className="stat-overview-count"
-                onClick={() => onAction({ kind: 'personal-todos' })}
+                onClick={() => onAction({ kind: 'personal-todos', sort: 'smart' })}
               >
                 <strong>{openCount}</strong> open
               </button>
@@ -276,7 +276,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                 <button
                   type="button"
                   className="stat-overview-count stat-overview-count-warn"
-                  onClick={() => onAction({ kind: 'personal-todos' })}
+                  onClick={() => onAction({ kind: 'personal-todos', sort: 'due' })}
                 >
                   <strong>{overdueCount}</strong> overdue
                 </button>
@@ -285,7 +285,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                 <button
                   type="button"
                   className="stat-overview-count"
-                  onClick={() => onAction({ kind: 'personal-todos' })}
+                  onClick={() => onAction({ kind: 'personal-todos', sort: 'due' })}
                 >
                   <strong>{dueThisWeekCount}</strong> this week
                 </button>
