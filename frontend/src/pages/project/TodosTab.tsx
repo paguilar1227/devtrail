@@ -2,7 +2,8 @@ import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
 import { BulkCheckbox, Checkbox, FilterChip, Priority, Tag } from '../../components/primitives';
-import { SortDropdown } from '../../components/SortDropdown';
+import { TodoSortDropdown } from '../../components/SortDropdown';
+import { SearchBox } from '../../components/SearchBox';
 import { archiveTodo, createTodo, listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { compareForMode } from '../../lib/todoSort';
@@ -19,9 +20,10 @@ type HierMode = 'hierarchy' | 'flat';
 
 export function TodosTab({ project, onAction }: Props) {
   const qc = useQueryClient();
+  const [q, setQ] = useState('');
   const { data, isLoading, error } = useQuery({
-    queryKey: ['todos', 'project', project.id],
-    queryFn: () => listTodos({ project_id: project.id }),
+    queryKey: ['todos', 'project', project.id, q],
+    queryFn: () => listTodos({ project_id: project.id, ...(q ? { q } : {}) }),
   });
   const all = useMemo(() => (data ?? []).map(toUiTodo), [data]);
 
@@ -209,7 +211,8 @@ export function TodosTab({ project, onAction }: Props) {
         <FilterChip>Today</FilterChip>
         <FilterChip>P1</FilterChip>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <SortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
+          <SearchBox value={q} onChange={setQ} placeholder="Search todos…" />
+          <TodoSortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
           <span className="seg-toggle">
             <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
               Hierarchy
@@ -222,7 +225,7 @@ export function TodosTab({ project, onAction }: Props) {
       </div>
 
       {all.length === 0 ? (
-        <div className="page-subtle">No todos in this project yet.</div>
+        <div className="page-subtle">{q ? 'No todos match.' : 'No todos in this project yet.'}</div>
       ) : (
         <>
           <div className="todo-group">

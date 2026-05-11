@@ -1886,9 +1886,43 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .todo-list-drawer-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
 .todo-list-drawer-toolbar {
-  display: flex; justify-content: flex-end;
+  display: flex; align-items: center; gap: 10px;
   padding: 0 0 10px 0;
 }
+.todo-list-drawer-toolbar .search-box { flex: 1; min-width: 0; }
+.todo-list-drawer-toolbar .todo-sort-dropdown { flex-shrink: 0; }
+
+/* Search box — debounced input used in personal/project drawer
+   toolbars and project tab filter bars. Matches the home search box
+   visually but smaller. */
+.search-box {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--glass-bg-soft);
+  border: 0.5px solid var(--hairline);
+  color: var(--fg-subtle);
+  min-width: 0;
+  transition: border-color 100ms, background 100ms;
+}
+.search-box:focus-within {
+  background: var(--glass-bg);
+  border-color: var(--fg-subtle);
+}
+.search-box-input {
+  flex: 1; min-width: 0;
+  background: transparent; border: 0; outline: 0;
+  color: var(--fg); font-family: var(--font-sans);
+  font-size: var(--type-meta); font-weight: 500;
+}
+.search-box-input::placeholder { color: var(--fg-subtle); }
+.search-box-input::-webkit-search-cancel-button { display: none; }
+.search-box-clear {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border: 0; background: transparent; color: var(--fg-subtle);
+  border-radius: 4px; cursor: pointer; padding: 0;
+}
+.search-box-clear:hover { background: var(--glass-bg); color: var(--fg); }
 /* IntersectionObserver target. Needs a non-zero height so an
    observer fires on a scrolled drawer that's just barely longer
    than the viewport. */

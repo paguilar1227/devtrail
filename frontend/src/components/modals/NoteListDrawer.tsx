@@ -6,14 +6,22 @@
 // IntersectionObserver sentinel at the bottom of the scroll area
 // triggers fetchNextPage; guards on isFetchingNextPage so fast scrolls
 // don't fire overlapping requests.
+//
+// Search (`q`) is part of the query key, so changing it resets the
+// infinite cursor instead of appending mismatched pages. Sort is
+// client-side — backend always returns created_at DESC, the caller
+// re-orders the flattened rows.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Drawer } from '../primitives';
 import { NoteRow } from '../NoteRow';
+import { SearchBox } from '../SearchBox';
+import { NoteSortDropdown } from '../SortDropdown';
 import { listContent } from '../../lib/api';
 import { toUiNote } from '../../lib/view';
 import { useInView } from '../../lib/useInView';
+import { useNoteSortMode, compareNotesForMode } from '../../lib/useNoteSortMode';
 import type { ActionDispatch } from '../../types';
 
 interface Props {
@@ -24,8 +32,11 @@ interface Props {
 const PAGE_SIZE = 20;
 
 export function NoteListDrawer({ onClose, onAction }: Props) {
+  const [q, setQ] = useState('');
+  const { mode: sortMode, setMode: setSortMode } = useNoteSortMode('inbox');
+
   const pages = useInfiniteQuery({
-    queryKey: ['content', 'notes', 'personal', 'infinite'],
+    queryKey: ['content', 'notes', 'personal', 'infinite', q],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       listContent({
@@ -33,6 +44,7 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
         project_id: 'null',
         limit: PAGE_SIZE,
         ...(pageParam ? { before: pageParam } : {}),
+        ...(q ? { q } : {}),
       }),
     getNextPageParam: (lastPage) => {
       if (lastPage.length < PAGE_SIZE) return undefined;
@@ -40,7 +52,10 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
     },
   });
 
-  const notes = useMemo(() => (pages.data?.pages ?? []).flat(), [pages.data]);
+  const notes = useMemo(() => {
+    const flat = (pages.data?.pages ?? []).flat();
+    return [...flat].sort(compareNotesForMode(sortMode));
+  }, [pages.data, sortMode]);
 
   const { ref: sentinelRef, inView } = useInView<HTMLDivElement>();
   useEffect(() => {
@@ -51,6 +66,10 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
 
   return (
     <Drawer title={`Personal notes · ${notes.length}${pages.hasNextPage ? '+' : ''}`} onClose={onClose}>
+      <div className="todo-list-drawer-toolbar">
+        <SearchBox value={q} onChange={setQ} placeholder="Search notes…" />
+        <NoteSortDropdown id="inbox-notes-sort" mode={sortMode} onChange={setSortMode} />
+      </div>
       {pages.error ? (
         <div className="page-subtle search-drawer-error">
           Failed to load: {pages.error instanceof Error ? pages.error.message : String(pages.error)}
@@ -58,7 +77,7 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
       ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
       ) : notes.length === 0 ? (
-        <div className="page-subtle">No personal notes yet.</div>
+        <div className="page-subtle">{q ? 'No notes match.' : 'No personal notes yet.'}</div>
       ) : (
         <div className="todo-list-drawer-rows">
           {notes.map((n) => (

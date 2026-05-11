@@ -46,6 +46,8 @@ export interface ListTodosFilters {
    *  this `created_at`. Used by the Inbox / project todos infinite
    *  scroll. Matches `ORDER BY created_at DESC`. */
   before?: Date;
+  /** Substring filter — case-insensitive ILIKE against `content`. */
+  q?: string;
 }
 
 export async function insertTodo(db: DbClient, todo: TodoInsert): Promise<TodoRow> {
@@ -110,6 +112,10 @@ export async function listTodos(
   if (filters.before) {
     conditions.push(`created_at < $${i++}`);
     params.push(filters.before);
+  }
+  if (filters.q && filters.q.trim()) {
+    conditions.push(`content ILIKE $${i++}`);
+    params.push(`%${filters.q.trim()}%`);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

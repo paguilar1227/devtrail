@@ -1010,6 +1010,45 @@ describe('Content items API', () => {
     expect(listQ!.params.some((p) => p instanceof Date && p.toISOString() === cursor)).toBe(true);
   });
 
+  it('GET /content?q=<term> forwards a case-insensitive title/content ILIKE filter', async () => {
+    // Drawer search box: the wire param `q` becomes an ILIKE on both
+    // title and content, wrapped with %…% by the handler so the
+    // frontend sends a raw substring (not a SQL pattern).
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?type=note&q=Lisbon',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/title ILIKE.*OR content ILIKE/i);
+    expect(listQ!.params).toContain('%Lisbon%');
+  });
+
+  it('GET /content?q=   (whitespace) is treated as no filter', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/content?type=note&q=%20%20',
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ!.sql).not.toMatch(/ILIKE/i);
+  });
+
   it('GET /content?project_id=not-a-uuid-and-not-null returns 400', async () => {
     // Schema accepts UUID or the literal 'null'; anything else is invalid.
     const res = await app.fetch(new Request(
@@ -1843,6 +1882,28 @@ describe('Todos API', () => {
     expect(listQ!.sql).toMatch(/created_at\s*<\s*\$/i);
     expect(listQ!.sql).toMatch(/LIMIT 20/i);
     expect(listQ!.params.some((p) => p instanceof Date && p.toISOString() === cursor)).toBe(true);
+  });
+
+  it('GET /todos?q=<term> forwards a case-insensitive content ILIKE filter', async () => {
+    // Drawer search on todos matches `content` only (todos have no
+    // separate title). Wrapper handles %…% so the frontend sends a
+    // raw substring.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      'http://localhost/api/v1/todos?q=Sebastian',
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/content ILIKE/i);
+    expect(listQ!.params).toContain('%Sebastian%');
   });
 
   it('GET /todos rejects malformed due_before/due_after with 400', async () => {

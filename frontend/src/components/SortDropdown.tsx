@@ -1,21 +1,28 @@
-// Compact sort-mode picker for todo lists. Native <select> styled to
-// match the rest of the chrome — no a11y wrapper needed, keyboard +
-// screen reader support comes free. Used by Home column, Inbox drawer,
-// and project todos panels (all three keep their own surface key in
-// localStorage via useTodoSortMode).
+// Compact sort-mode picker for list surfaces. Native <select> styled
+// to match the rest of the chrome — keyboard + screen reader support
+// comes free. Generic over the mode union so todos and notes can share
+// the same component with their own mode vocabularies.
+//
+// Pre-configured variants live alongside this primitive: TodoSortDropdown
+// reads from useTodoSortMode, NoteSortDropdown reads from
+// useNoteSortMode. Surfaces compose those instead of touching the
+// underlying primitive directly.
 
 import { TODO_SORT_LABELS, TODO_SORT_MODES, type TodoSortMode } from '../lib/todoSort';
+import { NOTE_SORT_LABELS, NOTE_SORT_MODES, type NoteSortMode } from '../lib/useNoteSortMode';
 
-interface Props {
-  mode: TodoSortMode;
-  onChange: (m: TodoSortMode) => void;
-  /** Optional id used by the visually-hidden label that pairs with the
-   *  select for screen readers; only matters when more than one
-   *  dropdown might exist on the page. */
+interface Props<M extends string> {
+  mode: M;
+  modes: readonly M[];
+  labels: Record<M, string>;
+  onChange: (m: M) => void;
+  /** Optional id used to pair the select with its label for screen
+   *  readers; only matters when more than one dropdown might exist on
+   *  the page. */
   id?: string;
 }
 
-export function SortDropdown({ mode, onChange, id }: Props) {
+export function SortDropdown<M extends string>({ mode, modes, labels, onChange, id }: Props<M>) {
   return (
     <label className="todo-sort-dropdown" htmlFor={id}>
       <span className="todo-sort-dropdown-label">Sort</span>
@@ -23,12 +30,43 @@ export function SortDropdown({ mode, onChange, id }: Props) {
         id={id}
         className="todo-sort-dropdown-select"
         value={mode}
-        onChange={(e) => onChange(e.target.value as TodoSortMode)}
+        onChange={(e) => onChange(e.target.value as M)}
       >
-        {TODO_SORT_MODES.map((m) => (
-          <option key={m} value={m}>{TODO_SORT_LABELS[m]}</option>
+        {modes.map((m) => (
+          <option key={m} value={m}>{labels[m]}</option>
         ))}
       </select>
     </label>
+  );
+}
+
+/** Pre-bound to the todo sort vocabulary. Use this in callers that
+ *  pair with useTodoSortMode. */
+export function TodoSortDropdown({
+  mode, onChange, id,
+}: { mode: TodoSortMode; onChange: (m: TodoSortMode) => void; id?: string }) {
+  return (
+    <SortDropdown<TodoSortMode>
+      mode={mode}
+      modes={TODO_SORT_MODES}
+      labels={TODO_SORT_LABELS}
+      onChange={onChange}
+      id={id}
+    />
+  );
+}
+
+/** Pre-bound to the note sort vocabulary. */
+export function NoteSortDropdown({
+  mode, onChange, id,
+}: { mode: NoteSortMode; onChange: (m: NoteSortMode) => void; id?: string }) {
+  return (
+    <SortDropdown<NoteSortMode>
+      mode={mode}
+      modes={NOTE_SORT_MODES}
+      labels={NOTE_SORT_LABELS}
+      onChange={onChange}
+      id={id}
+    />
   );
 }

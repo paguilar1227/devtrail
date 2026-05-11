@@ -75,6 +75,10 @@ export interface ListContentItemsFilters {
    *  this `created_at`. The frontend reads it from the last row of the
    *  previous page; matches the default `ORDER BY created_at DESC`. */
   before?: Date;
+  /** Substring filter — case-insensitive ILIKE against title OR content.
+   *  Used by the drawer search boxes. Plain substring is intentional;
+   *  semantic search lives on a separate endpoint. */
+  q?: string;
 }
 
 export async function insertContentItem(
@@ -177,6 +181,11 @@ export async function listContentItems(
   if (filters.before) {
     conditions.push(`created_at < $${i++}`);
     params.push(filters.before);
+  }
+  if (filters.q && filters.q.trim()) {
+    conditions.push(`(title ILIKE $${i} OR content ILIKE $${i})`);
+    params.push(`%${filters.q.trim()}%`);
+    i++;
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

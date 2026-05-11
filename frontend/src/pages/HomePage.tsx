@@ -23,7 +23,7 @@ import { NoteRow } from '../components/NoteRow';
 import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoSortMode } from '../lib/useTodoSortMode';
-import { SortDropdown } from '../components/SortDropdown';
+import { TodoSortDropdown } from '../components/SortDropdown';
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
   createNote,
@@ -277,7 +277,7 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Todos</h3>
             <span className="ct">{personalTodos.length}</span>
-            <SortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />
+            <TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />
           </div>
           <div className="pcol-add">
             <input

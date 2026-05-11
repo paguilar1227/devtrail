@@ -18,17 +18,18 @@
 // before passing to sortPersonalTodos so the bias-based reorder (smart
 // mode) treats them as a single corpus.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Drawer } from '../primitives';
 import { SortableTodoList } from '../SortableTodoList';
+import { SearchBox } from '../SearchBox';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { sortPersonalTodos } from '../../lib/todoSort';
 import { useTodoExpansion } from '../../lib/useTodoExpansion';
 import { useTodoSortMode } from '../../lib/useTodoSortMode';
 import { useInView } from '../../lib/useInView';
-import { SortDropdown } from '../SortDropdown';
+import { TodoSortDropdown } from '../SortDropdown';
 import type { ActionDispatch, Todo } from '../../types';
 
 interface Props {
@@ -40,14 +41,20 @@ const PAGE_SIZE = 20;
 
 export function TodoListDrawer({ onClose, onAction }: Props) {
   const qc = useQueryClient();
+  const [q, setQ] = useState('');
   const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('inbox');
 
   const pages = useInfiniteQuery({
-    queryKey: ['todos', 'inbox', 'infinite'],
+    queryKey: ['todos', 'inbox', 'infinite', q],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
-      listTodos({ project_id: 'null', limit: PAGE_SIZE, ...(pageParam ? { before: pageParam } : {}) }),
+      listTodos({
+        project_id: 'null',
+        limit: PAGE_SIZE,
+        ...(pageParam ? { before: pageParam } : {}),
+        ...(q ? { q } : {}),
+      }),
     getNextPageParam: (lastPage) => {
       if (lastPage.length < PAGE_SIZE) return undefined; // exhausted
       return lastPage[lastPage.length - 1].created_at;
@@ -84,7 +91,8 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
   return (
     <Drawer title={`Personal todos · ${totalLoaded}${pages.hasNextPage ? '+' : ''}`} onClose={onClose}>
       <div className="todo-list-drawer-toolbar">
-        <SortDropdown id="inbox-sort" mode={sortMode} onChange={setSortMode} />
+        <SearchBox value={q} onChange={setQ} placeholder="Search todos…" />
+        <TodoSortDropdown id="inbox-sort" mode={sortMode} onChange={setSortMode} />
       </div>
       {pages.error ? (
         <div className="page-subtle search-drawer-error">
@@ -93,7 +101,7 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
       ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
       ) : todos.length === 0 ? (
-        <div className="page-subtle">No personal todos yet.</div>
+        <div className="page-subtle">{q ? 'No todos match.' : 'No personal todos yet.'}</div>
       ) : (
         <div className="todo-list-drawer-rows">
           <SortableTodoList

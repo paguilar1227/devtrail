@@ -194,6 +194,9 @@ export const ContentListQuerySchema = z.object({
    *  older than this `created_at`. Pair with `limit` for infinite
    *  scroll. Independent of `pinned` ordering (which uses pinned_at). */
   before: z.string().datetime({ offset: true }).optional(),
+  /** Substring filter — case-insensitive match against title OR content.
+   *  Empty / whitespace-only is treated as "no filter" by the handler. */
+  q: z.string().optional(),
 });
 export type ContentListQuery = z.infer<typeof ContentListQuerySchema>;
 
@@ -295,6 +298,9 @@ export const TodoListQuerySchema = z.object({
    *  older than this `created_at`. Pair with `limit` for infinite
    *  scroll. */
   before: z.string().datetime({ offset: true }).optional(),
+  /** Substring filter — case-insensitive match against `content`.
+   *  Empty / whitespace-only is treated as "no filter" by the handler. */
+  q: z.string().optional(),
 });
 export type TodoListQuery = z.infer<typeof TodoListQuerySchema>;
 
