@@ -1333,6 +1333,39 @@ input, textarea { font-size: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px;
 }
 .drawer-head .ti { font-size: var(--type-h); font-weight: 600; flex: 1; }
+
+/* Click-to-edit todo title in the drawer header. View mode is a span
+   that looks like the static title but reveals an underline on hover
+   to hint at editability; edit mode is a transparent input sized to
+   match. */
+.todo-title-edit-view {
+  display: inline-block;
+  cursor: text;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  transition: background 100ms;
+}
+.todo-title-edit-view:hover { background: var(--glass-bg-soft); }
+.todo-title-edit-view:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: 1px;
+}
+.todo-title-edit-input {
+  flex: 1;
+  font: inherit;
+  font-size: var(--type-h);
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--glass-bg-soft);
+  border: 0.5px solid var(--hairline);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  outline: none;
+  width: 100%;
+}
+.todo-title-edit-input:focus { border-color: var(--accent-1); }
 .drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
 
 /* ── Form fields ── */

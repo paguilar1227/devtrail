@@ -44,6 +44,9 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
   // refetch it on update) so we can't rely on todo.due_at after a
   // mutation. Same pattern priority uses.
   const [dueIso, setDueIso] = useState<string | null>(todo.due_at);
+  // Title is also locally mirrored so the inline-edit affordance can
+  // show the user's saved value immediately without a parent refetch.
+  const [title, setTitle] = useState(todo.title);
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -87,6 +90,15 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
       qc.invalidateQueries({ queryKey: ['todos'] });
       qc.invalidateQueries({ queryKey: ['activity'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
+    },
+  });
+
+  const renameMut = useMutation({
+    mutationFn: (content: string) => updateTodo(todo.id, { content }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['todos'] });
+      qc.invalidateQueries({ queryKey: ['todo-comments', todo.id] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 
@@ -163,7 +175,16 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
 
   return (
     <Drawer
-      title={todo.title}
+      title={
+        <EditableTitle
+          value={title}
+          pending={renameMut.isPending}
+          onSave={(next) => {
+            setTitle(next);
+            renameMut.mutate(next);
+          }}
+        />
+      }
       onClose={tryClose}
       footer={
         <>
@@ -370,6 +391,87 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
         </button>
       </div>
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EditableTitle — click-to-edit affordance for the drawer's title slot.
+// View mode shows the title styled like the existing drawer header
+// label, with a subtle hover state hinting it's interactive. Click (or
+// Enter / Space when focused) switches to an input; Enter or blur saves
+// the trimmed value, Escape reverts. Empty saves are rejected so the
+// user can't accidentally blank the title.
+// ---------------------------------------------------------------------------
+
+interface EditableTitleProps {
+  value: string;
+  pending: boolean;
+  onSave: (next: string) => void;
+}
+
+function EditableTitle({ value, pending, onSave }: EditableTitleProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  const begin = () => {
+    setDraft(value);
+    setEditing(true);
+  };
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || next === value) {
+      setEditing(false);
+      return;
+    }
+    onSave(next);
+    setEditing(false);
+  };
+  const cancel = () => {
+    setDraft(value);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="todo-title-edit-input"
+        value={draft}
+        autoFocus
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Escape') {
+            // Drawer attaches its own document-level Escape listener
+            // to close itself. Stop propagation so cancelling the title
+            // edit doesn't dismiss the whole drawer.
+            e.preventDefault();
+            e.stopPropagation();
+            cancel();
+          }
+        }}
+        disabled={pending}
+      />
+    );
+  }
+  return (
+    <span
+      className="todo-title-edit-view"
+      role="button"
+      tabIndex={0}
+      title="Click to rename"
+      onClick={begin}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          begin();
+        }
+      }}
+    >
+      {value}
+    </span>
   );
 }
 
