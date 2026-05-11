@@ -180,7 +180,7 @@ export function SortableTodoList({
     const orderById = new Map(newIds.map((id, i) => [id, i + 1]));
     const patchTodo = (t: Todo) =>
       orderById.has(t.id) ? { ...t, manual_order: orderById.get(t.id)! } : t;
-    qc.setQueriesData<unknown>({ queryKey: ['todos'] }, (data) => {
+    qc.setQueriesData<unknown>({ queryKey: ['todos'] }, (data: unknown) => {
       if (!data) return data;
       if (Array.isArray(data)) {
         return (data as Todo[]).map(patchTodo);
