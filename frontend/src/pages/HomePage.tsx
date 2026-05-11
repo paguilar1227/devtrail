@@ -33,6 +33,7 @@ import {
   listContent,
   listProjectCounts,
   listProjects,
+  listTags,
   listTodos,
   getStats,
   updateTodo,
@@ -63,9 +64,14 @@ export function HomePage({ onRoute, onAction }: Props) {
       // instead of relying on a client-side filter over every note.
       { queryKey: ['content', 'notes', 'personal'], queryFn: () => listContent({ type: 'note', project_id: 'null' }) },
       { queryKey: ['activity', 'recent'], queryFn: () => listActivity({ limit: 4 }) },
+      // Top tags drive the dashboard "what am I working on" strip. We
+      // pull the full list — the API doesn't paginate — and pick the
+      // top 5 by total usage on the client. Cheap enough at single-user
+      // corpus sizes.
+      { queryKey: ['tags', 'home'], queryFn: () => listTags() },
     ],
   });
-  const [statsQ, projectsQ, countsQ, todosQ, notesQ, activityQ] = queries;
+  const [statsQ, projectsQ, countsQ, todosQ, notesQ, activityQ, tagsQ] = queries;
 
   const projectsRaw = projectsQ.data ?? [];
   const projectsById = useMemo(
@@ -100,9 +106,11 @@ export function HomePage({ onRoute, onAction }: Props) {
   const isLoading = queries.some((q) => q.isLoading);
   const error = queries.find((q) => q.error)?.error;
 
-  const todosTotal = stats?.counts.todos.total ?? 0;
-  const todosDone = stats?.counts.todos.done ?? 0;
-  const donePct = todosTotal > 0 ? Math.round((todosDone / todosTotal) * 100) : 0;
+  // Open count is what the dashboard surfaces — "5/36 with 14% complete"
+  // told you nothing actionable. Open = total - done across personal
+  // scope (matches what clicking the count opens, the personal todos
+  // drawer).
+  const openCount = allPersonalTodos.filter((t) => t.status !== 'done').length;
   // Overdue / due-this-week counts walk the full unfiltered list so
   // grandchildren beyond the widget cap still count.
   const overdueCount = allPersonalTodos.filter(
@@ -114,6 +122,27 @@ export function HomePage({ onRoute, onAction }: Props) {
     const now = Date.now();
     return due > now && due - now < 7 * 24 * 60 * 60 * 1000;
   }).length;
+
+  // Top 5 tags by total usage. Skipping ones with zero total (the API
+  // shouldn't return those but be defensive).
+  const topTags = useMemo(() => {
+    const all = tagsQ.data ?? [];
+    return [...all]
+      .filter((t) => t.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+  }, [tagsQ.data]);
+
+  // Recently-active projects: top 3 by `updated_at` among active (not
+  // archived/completed). The sidebar shows project counts; here we
+  // answer "which projects are alive lately?" with timestamps.
+  const recentProjects = useMemo(() => {
+    return projects
+      .filter((p) => p.status === 'active')
+      .slice()
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, 3);
+  }, [projects]);
 
   // ── Search ───────────────────────────────────────────────
   const [query, setQuery] = useState('');
@@ -232,17 +261,91 @@ export function HomePage({ onRoute, onAction }: Props) {
       </div>
 
       <div className="home-top-row">
-        <div className="stat-todos">
-          <div className="lb">Todos</div>
-          <div className="vl">
-            {todosDone}
-            <span className="vl-sub">/{todosTotal}</span>
+        <div className="stat-overview">
+          <div className="stat-overview-section">
+            <div className="lb">Overview</div>
+            <div className="stat-overview-counts">
+              <button
+                type="button"
+                className="stat-overview-count"
+                onClick={() => onAction({ kind: 'personal-todos' })}
+              >
+                <strong>{openCount}</strong> open
+              </button>
+              {overdueCount > 0 ? (
+                <button
+                  type="button"
+                  className="stat-overview-count stat-overview-count-warn"
+                  onClick={() => onAction({ kind: 'personal-todos' })}
+                >
+                  <strong>{overdueCount}</strong> overdue
+                </button>
+              ) : null}
+              {dueThisWeekCount > 0 ? (
+                <button
+                  type="button"
+                  className="stat-overview-count"
+                  onClick={() => onAction({ kind: 'personal-todos' })}
+                >
+                  <strong>{dueThisWeekCount}</strong> this week
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div className="ds">
-            {donePct}% complete
-            {dueThisWeekCount > 0 ? ` · ${dueThisWeekCount} due this week` : ''}
-            {overdueCount > 0 ? ` · ${overdueCount} overdue` : ''}
-          </div>
+
+          {topTags.length > 0 ? (
+            <div className="stat-overview-section">
+              <div className="stat-overview-h">
+                <div className="lb">Top tags</div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => onRoute({ route: 'tags' })}
+                >
+                  All →
+                </button>
+              </div>
+              <div className="stat-overview-tags">
+                {topTags.map((t) => (
+                  <button
+                    key={t.name}
+                    type="button"
+                    className="stat-overview-tag"
+                    onClick={() => onRoute({ route: 'tags' })}
+                  >
+                    #{t.name}
+                    <span className="stat-overview-tag-count">{t.total}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {recentProjects.length > 0 ? (
+            <div className="stat-overview-section">
+              <div className="stat-overview-h">
+                <div className="lb">Active projects</div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => onRoute({ route: 'projects' })}
+                >
+                  All →
+                </button>
+              </div>
+              <div className="stat-overview-projects">
+                {recentProjects.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="stat-overview-project"
+                    onClick={() => onRoute({ route: 'project', project: p.id })}
+                  >
+                    <span className="nm">{p.name}</span>
+                    <span className="sub">{fmtRel(p.updated_at)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="stat-activity">
           <div className="ah">

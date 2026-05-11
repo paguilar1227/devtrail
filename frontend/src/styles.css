@@ -1839,11 +1839,11 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   margin-bottom: 24px;
 }
 .app[data-mobile="true"] .home-top-row { grid-template-columns: 1fr; }
-.stat-todos, .stat-activity {
+.stat-todos, .stat-activity, .stat-overview {
   padding: 14px 16px; border-radius: 14px;
   background: var(--glass-bg); border: 0.5px solid var(--hairline);
 }
-.stat-todos .lb, .stat-activity .lb {
+.stat-todos .lb, .stat-activity .lb, .stat-overview .lb {
   font-size: var(--type-meta); font-weight: 500;
   letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--fg-subtle);
@@ -1860,6 +1860,107 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-variant-numeric: tabular-nums;
 }
 .stat-todos .ds { font-size: var(--type-meta); color: var(--fg-muted); }
+
+/* Overview card — replaces the old stat-todos hero with three stacked
+   sections (counts → tags → recent projects). Each section is its own
+   block of related click-through affordances. */
+.stat-overview {
+  display: flex; flex-direction: column;
+}
+.stat-overview-section + .stat-overview-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--hairline);
+}
+.stat-overview-h {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.stat-overview-h .lb { margin-bottom: 0; }
+
+/* Counts row — tabular numbers in bold, smaller "open / overdue /
+   this week" label after. Each count is a button that opens the
+   personal todos drawer. */
+.stat-overview-counts {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.stat-overview-count {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 4px 8px; border-radius: 8px;
+  background: var(--glass-bg-soft);
+  border: 0.5px solid var(--hairline);
+  color: var(--fg-muted);
+  font-size: var(--type-meta);
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms, color 100ms;
+}
+.stat-overview-count:hover {
+  background: var(--glass-bg);
+  border-color: var(--fg-subtle);
+  color: var(--fg);
+}
+.stat-overview-count strong {
+  color: var(--fg);
+  font-size: var(--type-body);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stat-overview-count-warn strong { color: var(--danger); }
+
+/* Tag pills — small, dense, click-to-route. */
+.stat-overview-tags {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.stat-overview-tag {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 3px 8px;
+  border: 0.5px solid var(--hairline);
+  background: var(--glass-bg-soft);
+  color: var(--fg-muted);
+  border-radius: 99px;
+  font-size: var(--type-meta);
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms, color 100ms;
+}
+.stat-overview-tag:hover {
+  background: var(--glass-bg);
+  color: var(--fg);
+  border-color: var(--fg-subtle);
+}
+.stat-overview-tag-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+}
+
+/* Project rows — name + last-touched timestamp on the right. */
+.stat-overview-projects {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 0 -8px;
+}
+.stat-overview-project {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms;
+}
+.stat-overview-project:hover { background: var(--glass-bg-soft); }
+.stat-overview-project .nm {
+  font-size: var(--type-body);
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stat-overview-project .sub {
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .stat-activity .ah {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 8px;
