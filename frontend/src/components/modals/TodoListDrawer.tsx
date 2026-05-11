@@ -10,14 +10,25 @@
 //
 // Unlike the column, the drawer renders the FULL hierarchy — no
 // maxDepth — so grandchildren stay visible when their parent is open.
+//
+// Pagination: server returns at most PAGE_SIZE rows ordered by
+// created_at DESC. The next-page cursor is the oldest visible row's
+// `created_at`; an IntersectionObserver sentinel at the bottom of the
+// scroll area triggers fetchNextPage. We keep all loaded pages joined
+// before passing to sortPersonalTodos so the bias-based reorder (smart
+// mode) treats them as a single corpus.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Drawer } from '../primitives';
 import { SortableTodoList } from '../SortableTodoList';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { sortPersonalTodos } from '../../lib/todoSort';
 import { useTodoExpansion } from '../../lib/useTodoExpansion';
+import { useTodoSortMode } from '../../lib/useTodoSortMode';
+import { useInView } from '../../lib/useInView';
+import { SortDropdown } from '../SortDropdown';
 import type { ActionDispatch, Todo } from '../../types';
 
 interface Props {
@@ -25,14 +36,29 @@ interface Props {
   onAction: ActionDispatch;
 }
 
+const PAGE_SIZE = 20;
+
 export function TodoListDrawer({ onClose, onAction }: Props) {
   const qc = useQueryClient();
   const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['todos', 'inbox'],
-    queryFn: () => listTodos({ project_id: 'null' }),
+  const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('inbox');
+
+  const pages = useInfiniteQuery({
+    queryKey: ['todos', 'inbox', 'infinite'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      listTodos({ project_id: 'null', limit: PAGE_SIZE, ...(pageParam ? { before: pageParam } : {}) }),
+    getNextPageParam: (lastPage) => {
+      if (lastPage.length < PAGE_SIZE) return undefined; // exhausted
+      return lastPage[lastPage.length - 1].created_at;
+    },
   });
-  const todos = sortPersonalTodos((data ?? []).map(toUiTodo), { isExpanded });
+
+  const todosFlat = useMemo(
+    () => (pages.data?.pages ?? []).flat().map(toUiTodo),
+    [pages.data],
+  );
+  const todos = sortPersonalTodos(todosFlat, { mode: sortMode, isExpanded });
 
   const toggle = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
@@ -43,13 +69,28 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
     },
   });
 
+  // Sentinel — when this comes into view AND there's another page,
+  // request it. Guards on `isFetchingNextPage` so we don't fire
+  // overlapping fetches if the user scrolls fast.
+  const { ref: sentinelRef, inView } = useInView<HTMLDivElement>();
+  useEffect(() => {
+    if (inView && pages.hasNextPage && !pages.isFetchingNextPage) {
+      pages.fetchNextPage();
+    }
+  }, [inView, pages.hasNextPage, pages.isFetchingNextPage, pages.fetchNextPage]);
+
+  const totalLoaded = todos.length;
+
   return (
-    <Drawer title={`Personal todos · ${todos.length}`} onClose={onClose}>
-      {error ? (
+    <Drawer title={`Personal todos · ${totalLoaded}${pages.hasNextPage ? '+' : ''}`} onClose={onClose}>
+      <div className="todo-list-drawer-toolbar">
+        <SortDropdown id="inbox-sort" mode={sortMode} onChange={setSortMode} />
+      </div>
+      {pages.error ? (
         <div className="page-subtle search-drawer-error">
-          Failed to load: {error instanceof Error ? error.message : String(error)}
+          Failed to load: {pages.error instanceof Error ? pages.error.message : String(pages.error)}
         </div>
-      ) : isLoading ? (
+      ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
       ) : todos.length === 0 ? (
         <div className="page-subtle">No personal todos yet.</div>
@@ -71,6 +112,9 @@ export function TodoListDrawer({ onClose, onAction }: Props) {
               })
             }
           />
+          <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
+            {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
+          </div>
         </div>
       )}
     </Drawer>
