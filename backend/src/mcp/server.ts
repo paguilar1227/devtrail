@@ -37,7 +37,13 @@ Use these tools actively. The user expects you to save conversation artifacts on
 
 ## Tags
 
-Flat labels for filtering (e.g. \`reference\`, \`meeting-notes\`, \`reading\`). Optional on all entities. Use lowercase kebab-case.
+Flat, global, **user-authored** labels for filtering (e.g. \`reference\`, \`meeting-notes\`, \`reading\`). Optional on all entities. Use lowercase kebab-case.
+
+**Do not invent tags.** Tags are the user's filing system — they only have value when the user controls them. Only attach tags the user names. Never auto-tag content with categories you inferred yourself.
+
+**Do ask for tags.** When the user asks you to save something (note, document, quick_note, todo, URL ingest), briefly ask before saving: *"Any tags to add?"* — list 0-3 short, lowercase-kebab suggestions drawn from the content if it helps the user decide, but make clear they are suggestions for the user to confirm, edit, or skip. Skipping is fine; tag-less saves are normal. Lean toward asking — tags are how the user filters later, and the namespace is no longer being maintained automatically.
+
+If the user lists tags in their request ("save this with tags work, reading"), pass them directly. If they decline or ignore the tag question, save without tags and move on.
 
 ## When to use which tool
 
@@ -272,7 +278,7 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
       project_ids: z.array(z.string()).optional()
         .describe('DOCUMENT/NOTE/QUICK_NOTE ONLY. Array of project UUIDs. Item can belong to multiple projects, or none (personal/global).'),
       tags: z.array(z.string()).optional()
-        .describe('Flat organizational labels. Lowercase kebab-case conventional (e.g., "reference", "meeting-notes").'),
+        .describe('User-supplied tags only. Ask the user before saving — do not invent tags yourself. Lowercase kebab-case (e.g., "reference", "meeting-notes").'),
       priority: z.enum(['P1', 'P2', 'P3']).optional()
         .describe('TODO ONLY. P1 = urgent, P2 = normal, P3 = low. Omit for unprioritized.'),
       due_date: z.string().optional()
@@ -380,7 +386,7 @@ Returns the updated record.`,
       project_id: z.string().nullable().optional()
         .describe('TODO ONLY (single UUID). Move to a different project, or null for personal Inbox.'),
       tags: z.array(z.string()).optional()
-        .describe('TODO and CONTENT. Replaces the existing tag list (does not merge).'),
+        .describe('TODO and CONTENT. User-supplied only — do not propose tags yourself. Replaces the existing tag list (does not merge).'),
 
       // content fields
       title: z.string().optional()
@@ -1132,7 +1138,7 @@ Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
       project_ids: z.array(z.string()).optional()
         .describe('Multi-project membership (array of project UUIDs). Omit for personal/global scope.'),
       tags: z.array(z.string()).optional()
-        .describe('Flat organizational labels. Lowercase kebab-case.'),
+        .describe('User-supplied tags only. Ask the user before saving; do not invent tags yourself. Lowercase kebab-case.'),
       title: z.string().optional()
         .describe('Optional title override. If omitted, uses the page/video title or AI-generated from content.'),
     },

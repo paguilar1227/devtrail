@@ -3,10 +3,15 @@ import type { LLMProvider, LLMMessage } from '../providers/types.js';
 export interface CaptureMetadata {
   title: string;                    // auto-generated concise title
   topics: string[];
-  tags: string[];
   extracted_text: string | null;
   published_at: string | null;      // ISO-8601 publication date if explicit in the content (not the save time)
 }
+
+// Tags are deliberately NOT in the metadata payload. They are user-
+// authored only — the LLM does not propose tags during ingest. The
+// MCP `INSTRUCTIONS` string tells AI clients to prompt the user for
+// tags at capture time so the user's tag namespace stays clean and
+// curated.
 
 export interface FileInput {
   data: Buffer;
@@ -20,7 +25,6 @@ const EXTRACTION_PROMPT_WITH_MEDIA = `You analyze a piece of content (text + att
 Return JSON with these fields:
 - title: a short, descriptive title (max 80 chars) capturing the essence of the content. For media files, describe what they show. Never return an empty title.
 - topics: array of topics/subjects discussed (max 10)
-- tags: array of flat organizational labels (max 5). Examples: "reference", "meeting-notes", "recipe", "coding", "research". Use lowercase kebab-case. These are flexible — pick what would help the user find this later.
 - extracted_text: if media files contain clearly legible text (documents, signs, whiteboards, printed/handwritten text, captions in images), extract ALL of it verbatim. For audio/video, transcribe speech. Return null if media doesn't contain readable text (photos of people, animals, scenery, food, objects, etc.). Do NOT hallucinate text that isn't clearly there.
 ${PUBLISHED_AT_FIELD}
 
@@ -31,7 +35,6 @@ const EXTRACTION_PROMPT_TEXT_ONLY = `You analyze a piece of text content and pro
 Return JSON with these fields:
 - title: a short, descriptive title (max 80 chars) capturing the essence of the content. Never return an empty title.
 - topics: array of topics/subjects discussed (max 10)
-- tags: array of flat organizational labels (max 5). Examples: "reference", "meeting-notes", "recipe", "coding", "research". Use lowercase kebab-case. These are flexible — pick what would help the user find this later.
 - extracted_text: always null — the caller already has the full text.
 ${PUBLISHED_AT_FIELD}
 
@@ -40,7 +43,6 @@ Return ONLY valid JSON, no markdown formatting.`;
 const FALLBACK: CaptureMetadata = {
   title: 'Untitled',
   topics: [],
-  tags: [],
   extracted_text: null,
   published_at: null,
 };
@@ -111,7 +113,6 @@ export async function extractMetadata(
     const result: CaptureMetadata = {
       title,
       topics: Array.isArray(parsed.topics) ? parsed.topics.slice(0, 10) : [],
-      tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5).map((t: any) => String(t).toLowerCase()) : [],
       extracted_text: extractedText,
       published_at: publishedAt,
     };
@@ -127,7 +128,7 @@ export async function extractMetadata(
       );
     }
 
-    console.log(`[metadata] Result — title: "${result.title}", tags: [${result.tags.join(', ')}], extracted_text: ${extractedText ? `${extractedText.length} chars` : 'null'}, published: ${publishedAt ?? 'null'}`);
+    console.log(`[metadata] Result — title: "${result.title}", topics: [${result.topics.join(', ')}], extracted_text: ${extractedText ? `${extractedText.length} chars` : 'null'}, published: ${publishedAt ?? 'null'}`);
     return result;
   } catch (err) {
     console.error(`[metadata] Extraction failed:`, err);

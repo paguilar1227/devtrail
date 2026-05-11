@@ -346,9 +346,12 @@ async function runIngestTailImpl(
       }
     }
 
-    // Title + tags
+    // Title + tags. Tags are user-only — the metadata extractor no
+    // longer proposes them. If the caller (UI / MCP) didn't supply
+    // tags, this row starts untagged; the user adds them later via
+    // the editor.
     const finalTitle = input.title?.trim() || metadata.title || 'Untitled';
-    const finalTags = input.tags && input.tags.length > 0 ? input.tags : metadata.tags;
+    const finalTags = input.tags ?? [];
 
     // Whole-item embedding
     let wholeItemEmbedding: number[] | null = null;
