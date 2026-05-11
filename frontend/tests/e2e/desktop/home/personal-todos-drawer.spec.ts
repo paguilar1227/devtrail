@@ -40,6 +40,11 @@ test('home personal todos: "View N more" footer opens the drawer with the full l
   const drawer = page.locator('.drawer');
   await expect(drawer).toBeVisible({ timeout: 15000 });
   await expect(drawer).toContainText(/Personal todos · \d+/);
+  // Drawer pulls its data via useInfiniteQuery against a cache key
+  // distinct from the column's, so opening it forces a fresh fetch.
+  // Wait for the first row to render before counting; otherwise the
+  // count fires during the loading-skeleton window and reads zero.
+  await expect(drawer.locator('.prow-todo').first()).toBeVisible({ timeout: 10000 });
 
   const colRows = await todosCol(page).locator('.prow-todo').count();
   const drawerRows = await drawer.locator('.prow-todo').count();

@@ -116,6 +116,10 @@ test('home personal todos drawer: drag-to-reorder persists across reload', async
   await page.locator(`${TODOS_COL} .pcol-more`).click();
   const drawer2 = page.locator('.drawer');
   await expect(drawer2).toBeVisible({ timeout: 15000 });
+  // Drawer's infinite-query starts cold on each open — wait for the
+  // freshly-reordered rows to render before reading positions.
+  await expect(drawer2.locator('.prow', { hasText: A })).toBeVisible({ timeout: 10000 });
+  await expect(drawer2.locator('.prow', { hasText: B })).toBeVisible({ timeout: 10000 });
   const allRows2 = drawer2.locator('.prow-todo');
   const rowIndex2 = async (text: string) => {
     const titles = await allRows2.allTextContents();

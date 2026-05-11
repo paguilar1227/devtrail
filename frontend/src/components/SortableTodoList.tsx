@@ -171,12 +171,25 @@ export function SortableTodoList({
     // Optimistic: stamp manual_order on the cached todos so the next
     // render reflects the drag without waiting for the refetch. The
     // backend's sort tiebreaker matches the array index 1..N.
-    qc.setQueriesData<Todo[] | undefined>({ queryKey: ['todos'] }, (data) => {
+    //
+    // Cache shapes touched by this prefix: regular useQuery hits store
+    // `Todo[]`; useInfiniteQuery hits store `{ pages: Todo[][],
+    // pageParams: ... }`. Patch each shape in place so the drawer's
+    // infinite-query (TodoListDrawer) and the home column (plain query)
+    // both reflect the new order without one of them blowing up.
+    const orderById = new Map(newIds.map((id, i) => [id, i + 1]));
+    const patchTodo = (t: Todo) =>
+      orderById.has(t.id) ? { ...t, manual_order: orderById.get(t.id)! } : t;
+    qc.setQueriesData<unknown>({ queryKey: ['todos'] }, (data) => {
       if (!data) return data;
-      const orderById = new Map(newIds.map((id, i) => [id, i + 1]));
-      return data.map((t) =>
-        orderById.has(t.id) ? { ...t, manual_order: orderById.get(t.id)! } : t,
-      );
+      if (Array.isArray(data)) {
+        return (data as Todo[]).map(patchTodo);
+      }
+      if (typeof data === 'object' && 'pages' in (data as Record<string, unknown>)) {
+        const inf = data as { pages: Todo[][]; pageParams: unknown[] };
+        return { ...inf, pages: inf.pages.map((page) => page.map(patchTodo)) };
+      }
+      return data;
     });
 
     reorderMut.mutate({ parent_id: activeParent, ids: newIds });
