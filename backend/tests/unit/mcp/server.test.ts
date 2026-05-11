@@ -17,13 +17,13 @@ function mockDeps(): ServiceDeps {
     },
     metadataLLM: {
       complete: vi.fn().mockResolvedValue({
-        content: JSON.stringify({ title: 'Auto', topics: [], tags: [], extracted_text: null }),
+        content: JSON.stringify({ title: 'Auto', topics: [], extracted_text: null }),
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },
     mediaMetadataLLM: {
       complete: vi.fn().mockResolvedValue({
-        content: JSON.stringify({ title: 'Auto-generated', topics: [], tags: [], extracted_text: null }),
+        content: JSON.stringify({ title: 'Auto-generated', topics: [], extracted_text: null }),
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },

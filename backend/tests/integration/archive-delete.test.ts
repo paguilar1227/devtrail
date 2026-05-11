@@ -32,7 +32,7 @@ function mockDeps(): ServiceDeps {
     },
     mediaMetadataLLM: {
       complete: vi.fn().mockResolvedValue({
-        content: JSON.stringify({ title: 'Auto-generated', topics: [], tags: [], extracted_text: null }),
+        content: JSON.stringify({ title: 'Auto-generated', topics: [], extracted_text: null }),
         tokensUsed: { input: 0, output: 0, total: 0 },
       }),
     },

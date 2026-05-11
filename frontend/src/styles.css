@@ -2548,6 +2548,41 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .tag-counts i { font-style: normal; color: var(--fg-subtle); }
 .tag-actions { opacity: 0; transition: opacity 100ms; }
 .tag-row:hover .tag-actions { opacity: 1; }
+.tag-row-clickable { cursor: pointer; }
+.tag-row-clickable:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: -2px;
+}
+
+/* ── Tag detail page sections ── */
+.tag-detail-section { margin-top: 28px; }
+.tag-detail-section-h {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: var(--type-h); font-weight: 600;
+  margin: 0 0 8px;
+}
+.tag-detail-section-h .ct {
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  padding: 1px 7px; border: 0.5px solid var(--hairline); border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.tag-detail-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border: 0.5px solid var(--hairline); border-radius: 10px;
+  background: var(--glass-bg);
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: background 100ms, border-color 100ms;
+}
+.tag-detail-row:hover { background: var(--glass-bg-soft); border-color: var(--fg-subtle); }
+.tag-detail-row:focus-visible { outline: 2px solid var(--accent-1); outline-offset: 1px; }
+.tag-detail-row .nm { flex: 1; font-weight: 500; }
+.tag-detail-row .subtle { color: var(--fg-subtle); font-size: var(--type-meta); white-space: nowrap; }
+.tag-detail-row.done .nm { text-decoration: line-through; color: var(--fg-subtle); }
+.tag-detail-row .due-overdue { color: var(--danger); font-size: var(--type-meta); }
+.tag-detail-row .due-soon { color: var(--fg-subtle); font-size: var(--type-meta); }
 
 /* ── DateTimePicker ─────────────────────────────────────────
    Hand-rolled replacement for native <input type="datetime-local">.

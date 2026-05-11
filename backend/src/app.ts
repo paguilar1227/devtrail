@@ -1502,8 +1502,8 @@ export function createApp(deps: ServiceDeps) {
       },
     }),
     async (c) => {
-      const { project_id } = c.req.valid('query');
-      const tags = await tagsSvc.listTags(deps, { project_id });
+      const { project_id, scope } = c.req.valid('query');
+      const tags = await tagsSvc.listTags(deps, { project_id, scope });
       return c.json({ tags }, 200);
     },
   );

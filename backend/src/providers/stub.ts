@@ -94,7 +94,9 @@ function pickDispatcher(system: string, options: LLMOptions): Dispatcher {
   // Order matters — most specific first.
   if (sys.includes('classify') && sys.includes('depth')) return depthClassifierStub;
   if (sys.includes('extract') && sys.includes('entit')) return entityExtractionStub;
-  if (sys.includes('title') && sys.includes('topics') && sys.includes('tags')) return metadataExtractionStub;
+  // Metadata-extraction prompts ask for title + topics + extracted_text.
+  // Tags used to be in this list but are now user-only.
+  if (sys.includes('title') && sys.includes('topics')) return metadataExtractionStub;
 
   // Fallbacks by responseFormat
   if (options.responseFormat === 'json') return emptyJsonStub;
@@ -168,7 +170,8 @@ const metadataExtractionStub: Dispatcher = (_sys, user) => {
   return JSON.stringify({
     title,
     topics: topWords.slice(0, 4),
-    tags: topWords.slice(0, 5),
+    // Tags are user-authored only; the metadata extractor doesn't
+    // propose them. Stub mirrors the production prompt schema.
     extracted_text: text.slice(0, 4000),
     published_at: null,
   });

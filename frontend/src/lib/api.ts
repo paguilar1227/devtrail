@@ -451,8 +451,8 @@ export async function rag(req: RagRequest): Promise<RagResponse> {
 
 // ---------------- Tags ----------------
 
-export async function listTags(projectId?: string): Promise<Tag[]> {
-  const qs = toQueryString({ project_id: projectId });
+export async function listTags(opts: { project_id?: string; scope?: 'personal' | 'all' } = {}): Promise<Tag[]> {
+  const qs = toQueryString(opts);
   const data = await request(`/tags${qs}`, TagListResponseSchema);
   return data.tags;
 }

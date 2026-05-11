@@ -24,6 +24,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { SearchPage } from './pages/SearchPage';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TagsPage } from './pages/TagsPage';
+import { TagDetailPage } from './pages/TagDetailPage';
 import { TrashPage } from './pages/TrashPage';
 import type { ModalKind, Route, SidebarMode, Theme } from './types';
 
@@ -142,7 +143,10 @@ export default function App() {
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
           {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} />}
           {route.route === 'activity' && <ActivityPage onAction={onAction} />}
-          {route.route === 'tags' && <TagsPage onAction={onAction} />}
+          {route.route === 'tags' && (route.name
+            ? <TagDetailPage key={route.name} name={route.name} onAction={onAction} onRoute={setRoute} />
+            : <TagsPage onAction={onAction} onRoute={setRoute} />
+          )}
           {route.route === 'mentions' && <MentionsPage />}
           {route.route === 'search' && <SearchPage initialQuery={route.query} initialScope={route.scope} />}
           {route.route === 'trash' && <TrashPage />}

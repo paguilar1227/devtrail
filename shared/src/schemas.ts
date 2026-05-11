@@ -758,6 +758,10 @@ export const StatsQuerySchema = z.object({
 
 export const TagListQuerySchema = z.object({
   project_id: UuidSchema.optional(),
+  // Scope filter for the tag inventory. 'personal' = only tags on
+  // entities with no project membership; 'all' = no scope filter
+  // (default). If `project_id` is set it takes precedence over scope.
+  scope: z.enum(['personal', 'all']).optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -36,16 +36,18 @@ describe('StubLLMProvider', () => {
 
   it('returns metadata-shaped JSON for metadata prompts', async () => {
     const res = await stub.complete([{ role: 'user', content: 'A long article about distributed systems and consensus.' }], {
-      systemPrompt: 'Extract the title, topics, and tags from the document.',
+      systemPrompt: 'Extract the title, topics, and extracted_text from the document.',
       responseFormat: 'json',
     });
     const parsed = JSON.parse(res.content);
     expect(parsed).toMatchObject({
       title: expect.any(String),
       topics: expect.any(Array),
-      tags: expect.any(Array),
       extracted_text: expect.any(String),
     });
+    // Tags are deliberately NOT part of the metadata schema — they are
+    // user-authored only. The extractor doesn't propose them.
+    expect(parsed.tags).toBeUndefined();
     expect(parsed.published_at).toBeNull();
   });
 

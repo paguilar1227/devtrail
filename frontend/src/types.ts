@@ -139,7 +139,7 @@ export type Route =
   | { route: 'home' }
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
-  | { route: 'tags' }
+  | { route: 'tags'; name?: string }
   | { route: 'activity' }
   // Search optionally carries a query + scope from the entry point so
   // navigating from Home doesn't dump the user on an empty Search view.

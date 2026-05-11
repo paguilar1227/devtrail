@@ -88,11 +88,11 @@ export function HomePage({ onRoute, onAction }: Props) {
             ...(activityFilter === 'all' ? {} : { kinds: activityFilter }),
           }),
       },
-      // Top tags drive the dashboard "what am I working on" strip. We
-      // pull the full list — the API doesn't paginate — and pick the
-      // top 5 by total usage on the client. Cheap enough at single-user
-      // corpus sizes.
-      { queryKey: ['tags', 'home'], queryFn: () => listTags() },
+      // Top tags drive the dashboard "what am I working on" strip.
+      // Defaults to personal scope (tags on items with no project
+      // membership) so the home dashboard reflects the user's private
+      // workspace — the project pages have their own scoped strips.
+      { queryKey: ['tags', 'home', 'personal'], queryFn: () => listTags({ scope: 'personal' }) },
     ],
   });
   const [statsQ, projectsQ, countsQ, todosQ, notesQ, activityQ, tagsQ] = queries;
@@ -338,7 +338,7 @@ export function HomePage({ onRoute, onAction }: Props) {
                     key={t.name}
                     type="button"
                     className="stat-overview-tag"
-                    onClick={() => onRoute({ route: 'tags' })}
+                    onClick={() => onRoute({ route: 'tags', name: t.name })}
                   >
                     #{t.name}
                     <span className="stat-overview-tag-count">{t.total}</span>

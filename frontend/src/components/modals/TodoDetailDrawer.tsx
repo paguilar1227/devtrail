@@ -47,6 +47,13 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
   // Title is also locally mirrored so the inline-edit affordance can
   // show the user's saved value immediately without a parent refetch.
   const [title, setTitle] = useState(todo.title);
+  // Tags mirror the todo's saved list. Add / remove fire updateTodo
+  // immediately (same pattern priority/due use); the local state keeps
+  // the chip cluster current between the optimistic edit and the next
+  // refetch from the parent.
+  const [tags, setTags] = useState<string[]>(todo.tags);
+  const [tagDraft, setTagDraft] = useState('');
+  const [addingTag, setAddingTag] = useState(false);
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -81,10 +88,11 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
   });
 
   const updateMut = useMutation({
-    mutationFn: (patch: { priority?: PriorityVal; due_date?: string | null }) =>
+    mutationFn: (patch: { priority?: PriorityVal; due_date?: string | null; tags?: string[] }) =>
       updateTodo(todo.id, {
         ...(patch.priority ? { priority: toWirePriority(patch.priority) } : {}),
         ...('due_date' in patch ? { due_date: patch.due_date } : {}),
+        ...(patch.tags ? { tags: patch.tags } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['todos'] });
@@ -145,6 +153,24 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
     updateMut.mutate({ priority: p });
   };
 
+  // Tag editing — same auto-save pattern as priority / due. Lowercase
+  // and dedup on add. Each change fires updateTodo with the new full
+  // list (no merge endpoint exists, the wire contract replaces).
+  const addTag = () => {
+    const t = tagDraft.trim().toLowerCase();
+    setTagDraft('');
+    setAddingTag(false);
+    if (!t || tags.includes(t)) return;
+    const next = [...tags, t];
+    setTags(next);
+    updateMut.mutate({ tags: next });
+  };
+  const removeTag = (t: string) => {
+    const next = tags.filter((x) => x !== t);
+    setTags(next);
+    updateMut.mutate({ tags: next });
+  };
+
   // Save closes the drawer after pending edits. Priority + due fire
   // optimistically on chip / picker-Done click; this button is the
   // user's "I'm done here" gesture.
@@ -198,7 +224,7 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
         <Priority p={priority} />
         <span className="todo-status-pill">{todo.status.replace('_', ' ')}</span>
-        {todo.tags.map(t => (
+        {tags.map(t => (
           <Tag key={t}>{t}</Tag>
         ))}
       </div>
@@ -225,6 +251,47 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
           }}
           disabled={updateMut.isPending}
         />
+        <span className="subtle">tags</span>
+        <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
+          {tags.map((t) => (
+            <Tag key={t} removable onRemove={() => removeTag(t)}>
+              {t}
+            </Tag>
+          ))}
+          {addingTag ? (
+            <span className="input-tag-wrap">
+              <span className="hash">#</span>
+              <input
+                autoFocus
+                className="input-tag"
+                placeholder="add tag"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addTag();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTagDraft('');
+                    setAddingTag(false);
+                  }
+                }}
+                onBlur={addTag}
+              />
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setAddingTag(true)}
+              disabled={updateMut.isPending}
+            >
+              <Icons.Plus size={11} /> Add
+            </button>
+          )}
+        </div>
         <span className="subtle">created</span>
         <span>{fmtRel(todo.created_at)}</span>
         <span className="subtle">project</span>

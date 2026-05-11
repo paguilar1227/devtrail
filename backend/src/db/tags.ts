@@ -12,8 +12,13 @@ export interface TagRow {
 
 export interface ListTagsFilters {
   /** Restrict to tags appearing on items in this project (matches both
-   *  content_items.project_ids @> [pid] and todos.project_id = pid). */
+   *  content_items.project_ids @> [pid] and todos.project_id = pid).
+   *  Takes precedence over `scope` when set. */
   project_id?: string;
+  /** Coarse scope filter: 'personal' = only items with no project
+   *  membership (content_items.project_ids = '{}' / todos.project_id
+   *  IS NULL); 'all' (default) = no scope filter. */
+  scope?: 'personal' | 'all';
 }
 
 /**
@@ -33,13 +38,20 @@ export async function listTags(
   filters: ListTagsFilters = {},
 ): Promise<TagRow[]> {
   const params: unknown[] = [];
-  const ciScope = filters.project_id
-    ? `AND project_ids @> ARRAY[$1]::uuid[]`
-    : '';
-  const todoScope = filters.project_id
-    ? `AND project_id = $1`
-    : '';
-  if (filters.project_id) params.push(filters.project_id);
+  let ciScope = '';
+  let todoScope = '';
+  if (filters.project_id) {
+    // Specific project — narrowest filter. Takes precedence over scope.
+    ciScope = `AND project_ids @> ARRAY[$1]::uuid[]`;
+    todoScope = `AND project_id = $1`;
+    params.push(filters.project_id);
+  } else if (filters.scope === 'personal') {
+    // Personal scope — only items with no project membership. Empty
+    // array literal in pg syntax. No parameter binding needed.
+    ciScope = `AND project_ids = '{}'`;
+    todoScope = `AND project_id IS NULL`;
+  }
+  // scope === 'all' or undefined: no scope filter (current default).
 
   const result = await db.query(
     `WITH tag_rows AS (
