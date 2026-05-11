@@ -23,7 +23,9 @@ import { NoteRow } from '../components/NoteRow';
 import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoSortMode } from '../lib/useTodoSortMode';
-import { TodoSortDropdown } from '../components/SortDropdown';
+import { useNoteSortMode, compareNotesForMode } from '../lib/useNoteSortMode';
+import { NoteSortDropdown, TodoSortDropdown } from '../components/SortDropdown';
+import { PersonalColumnHeader } from '../components/PersonalColumnHeader';
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
   createNote,
@@ -96,7 +98,11 @@ export function HomePage({ onRoute, onAction }: Props) {
     () => sortPersonalTodos(allPersonalTodos, { mode: sortMode, maxDepth: 1, isExpanded }),
     [allPersonalTodos, sortMode, isExpanded],
   );
-  const personalNotes = notesQ.data ?? [];
+  const { mode: noteSortMode, setMode: setNoteSortMode } = useNoteSortMode('home');
+  const personalNotes = useMemo(() => {
+    const arr = notesQ.data ?? [];
+    return arr.slice().sort(compareNotesForMode(noteSortMode));
+  }, [notesQ.data, noteSortMode]);
   const activity = useMemo(
     () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
     [activityQ.data, projectsById],
@@ -377,11 +383,11 @@ export function HomePage({ onRoute, onAction }: Props) {
 
       <div className="home-personal-grid">
         <div className="pcol">
-          <div className="pcol-h">
-            <h3>Todos</h3>
-            <span className="ct">{personalTodos.length}</span>
-            <TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />
-          </div>
+          <PersonalColumnHeader
+            title="Todos"
+            count={personalTodos.length}
+            sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
+          />
           <div className="pcol-add">
             <input
               placeholder="+ New todo (no project) — press Enter to add"
@@ -429,10 +435,11 @@ export function HomePage({ onRoute, onAction }: Props) {
         </div>
 
         <div className="pcol">
-          <div className="pcol-h">
-            <h3>Notes</h3>
-            <span className="ct">{personalNotes.length}</span>
-          </div>
+          <PersonalColumnHeader
+            title="Notes"
+            count={personalNotes.length}
+            sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
+          />
           <div className="pcol-add">
             <input
               placeholder="+ Quick note — press Enter to capture"
