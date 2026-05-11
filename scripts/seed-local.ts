@@ -218,6 +218,62 @@ async function main() {
   }
 
   // ============================================================
+  // PERSONAL NOTES (Inbox) — projectless notes to populate the
+  // Home Notes widget + Personal Notes drawer. We seed ~30 here so
+  // the drawer's infinite-scroll (PAGE_SIZE=20) actually paginates
+  // out of the box; without this the personal Inbox feels empty and
+  // the scroll behavior can't be exercised. Topics are deliberately
+  // varied so the list reads like a real corpus instead of "Note 1,
+  // Note 2…".
+  // ============================================================
+  const personalNoteSpecs: Array<{ title: string; content: string; tags?: string[] }> = [
+    { title: 'Reading list — tech', content: '- "Designing Data-Intensive Applications" (Kleppmann)\n- "Database Internals" (Petrov)\n- "The Pragmatic Programmer" (re-read)\n\nQueue: papers on consensus + log-structured storage.', tags: ['reading'] },
+    { title: 'Reading list — non-fiction', content: 'Books to pick up next quarter:\n- "Thinking, Fast and Slow"\n- "Why We Sleep"\n- "Range: How Generalists Triumph"', tags: ['reading'] },
+    { title: 'Café shortlist for deep-work mornings', content: '1. Verve on Pacific — quiet until 10am, no music, good outlets.\n2. Ritual SOMA — too crowded after 9.\n3. Sightglass — ambient noise tolerable, slow wifi.' },
+    { title: 'Standing desk research', content: 'Uplift v2 vs Fully Jarvis vs Flexispot E7:\n- Uplift: best warranty (15y), modular accessories.\n- Jarvis: cheapest, fewer top options.\n- Flexispot: solid but assembly fiddly.\n\nLeaning Uplift in 80x30 bamboo.', tags: ['home'] },
+    { title: 'Bookshelf wishlist', content: 'Living room: walnut, 6ft, mid-century legs.\nOffice: white, modular, expandable.\n\nMeasure wall before ordering.', tags: ['home'] },
+    { title: 'Plant care notes', content: 'Monstera: water weekly, indirect light.\nSnake plant: every 2-3 weeks, tolerates neglect.\nFiddle leaf fig: SOUTH facing window only, do not move.', tags: ['home'] },
+    { title: 'Espresso recipe — Onyx Monarch', content: '18g in, 36g out, 32s.\nWater 94°C. Grind 4.5 on the Niche.\nPaper filter both sides for clarity.' },
+    { title: 'Pour-over recipe — Hario V60', content: 'Ratio 1:16. 22g coffee → 350g water.\nBloom 50g, 30s. Then 4 pulses of 75g, 30s apart. Total ~3:00.' },
+    { title: 'Weekly review template', content: '1. What moved forward?\n2. What stalled and why?\n3. Top three for next week.\n4. One thing to deprecate.' },
+    { title: 'Annual review prompts', content: 'Last year:\n- What surprised me?\n- What did I underrate?\n- What did I overrate?\n\nNext year:\n- One belief I want to test.\n- One habit I want to install.\n- One I want to drop.' },
+    { title: 'Hiking — Marin shortlist', content: 'Tennessee Valley → Pirates Cove: 5mi, moderate, ocean.\nMt. Tam East Peak: 6.5mi, steep, big payoff.\nMuir Woods → Cardiac: skip on weekends.' },
+    { title: 'Hiking — Sierra trip prep', content: 'Permits: Inyo NF lottery opens Feb.\nGear gaps: bear can (BV500), new map (Mt. Whitney zone).\nTrain: ramp to 12mi with pack by July.' },
+    { title: 'Recipe — weeknight ramen', content: 'Stock: chicken + kombu + dried shiitake, 45m.\nTare: shoyu + mirin + sake reduce.\nNoodles: Sun Noodle thin.\nToppings: ajitama, scallion, menma.' },
+    { title: 'Recipe — Sunday sourdough', content: 'Levain night before, 100% hydration.\n\n75% hydration dough, 4-fold bulk over 4h.\n\nCold retard overnight. Bake at 500°F covered 20m, 450°F uncovered 25m.' },
+    { title: 'Gift ideas — partner', content: 'Birthday in March:\n- Weekend trip up the coast.\n- Cookbook (Roy Choi or Gjelina).\n- Ceramic mug from Heath.' },
+    { title: 'Gift ideas — family', content: 'Mom: Kindle case.\nDad: leather wallet (Bellroy).\nSis: photo book of last year.\nNiece: science kit (snap circuits).' },
+    { title: 'Birthday tradition planning', content: 'Make a no-phone weekend rule the day after.\nWrite a letter to next-year-self.\nOne new restaurant, one old favorite.' },
+    { title: 'Movies queued', content: '- "Past Lives"\n- "The Holdovers"\n- "Anatomy of a Fall"\n- "Perfect Days"\n\nSkip if 90+ Rotten Tomatoes feels stale — pick by mood.' },
+    { title: 'Podcasts to try', content: '- "Acquired" (Microsoft series)\n- "Cautionary Tales" (Tim Harford)\n- "Search Engine" (PJ Vogt)' },
+    { title: 'Music — recent finds', content: 'On repeat:\n- Faye Webster — "Underdressed at the Symphony"\n- Mk.gee — "Two Star…"\n- Wednesday — "Rat Saw God"' },
+    { title: 'Workout block — Q2', content: 'Mon: heavy push.\nTue: trail run easy.\nWed: heavy pull.\nThu: mobility + zone 2 bike.\nFri: legs.\nSat: long run or hike.\nSun: rest.' },
+    { title: 'Stretches I keep forgetting', content: '- 90/90 hip rotation\n- Couch stretch (90s/side)\n- Thoracic foam roller pass\n- Shoulder dislocates with band' },
+    { title: 'Tax docs checklist', content: '- W-2 (employer)\n- 1099-INT (savings)\n- 1099-DIV (brokerage)\n- 1098 (mortgage)\n- Charitable receipts\n\nDeadline mid-April; do by end of March.', tags: ['chore'] },
+    { title: 'Home maintenance schedule', content: 'Quarterly: HVAC filter, smoke detector test.\nBi-annual: gutter clean, water heater flush.\nAnnual: chimney sweep, termite inspect.', tags: ['home', 'chore'] },
+    { title: 'Travel — Lisbon trip ideas', content: 'Time Out Market (lunch).\nAlfama walking tour at sunset.\nLX Factory (Sat).\nDay trip Sintra (Pena + Quinta da Regaleira).\nGelato at Nannarella twice.' },
+    { title: 'Travel — Tokyo bucket list', content: 'Tsukiji outer market early.\nTeamLab Borderless.\nGolden Gai (one drink, then leave).\nKomeda morning set in Shimokitazawa.\nShinjuku Gyoen for cherry blossoms.' },
+    { title: 'Networking follow-ups', content: 'People to ping:\n- Reach back to Maya re: design sync.\n- Intro request to Sam for the LLM eval consultant.\n- Thank-you note to Priya for the referral.' },
+    { title: 'Conference talk ideas', content: 'Working titles:\n- "Embedding-first product search: lessons from 1B queries"\n- "Why our agent eval harness keeps catching things humans miss"\n- "Single-user systems are an architectural advantage"' },
+    { title: 'Decision journal — May', content: '2026-05-03 — moved investment allocation toward index-heavy. Reasoning: lower stress, can\'t outperform on margins anyway.\n\n2026-05-08 — chose Uplift desk over Jarvis. Reasoning: warranty + modular accessories outweigh price gap.' },
+    { title: 'Email cleanup principles', content: 'If older than 6 months and not starred → archive.\nUnsubscribe immediately if I haven\'t opened 3 in a row.\nNo "to-read" pile; either read now or delete.' },
+    { title: 'Quotes to remember', content: '"Strong opinions, weakly held." — Saffo\n"The first draft of anything is shit." — Hemingway\n"Compare yourself to who you were yesterday, not to who someone else is today." — Peterson' },
+  ];
+
+  for (const n of personalNoteSpecs) {
+    const created = await api<{ id: string; status: string }>('POST', '/api/v1/content', {
+      type: 'note',
+      title: n.title,
+      content: n.content,
+      project_ids: [],
+      tags: n.tags ?? [],
+    });
+    console.log(`  + personal note "${n.title}"`);
+    // No-op the returned id — we don't reference these by handle.
+    void created;
+  }
+
+  // ============================================================
   // TODOS — hierarchy, status mix, priority mix, due-date mix
   // Indices below are positional — children reference parents by index.
   // ============================================================

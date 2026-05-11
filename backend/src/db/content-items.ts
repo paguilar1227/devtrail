@@ -71,6 +71,10 @@ export interface ListContentItemsFilters {
   pinned?: boolean;                  // true = only pinned, false = only not pinned, undefined = no filter
   include_archived?: boolean;
   limit?: number;
+  /** Cursor for keyset pagination. Returns rows strictly older than
+   *  this `created_at`. The frontend reads it from the last row of the
+   *  previous page; matches the default `ORDER BY created_at DESC`. */
+  before?: Date;
 }
 
 export async function insertContentItem(
@@ -170,6 +174,10 @@ export async function listContentItems(
   }
   if (filters.pinned === true) conditions.push('pinned_at IS NOT NULL');
   else if (filters.pinned === false) conditions.push('pinned_at IS NULL');
+  if (filters.before) {
+    conditions.push(`created_at < $${i++}`);
+    params.push(filters.before);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filters.limit ? `LIMIT ${filters.limit}` : '';

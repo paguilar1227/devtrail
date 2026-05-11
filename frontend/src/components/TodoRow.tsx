@@ -129,12 +129,18 @@ export function TodoRow({
           </div>
         ) : null}
       </div>
-      {t.comments > 0 ? (
-        <span className="prow-comments" title={`${t.comments} comment${t.comments === 1 ? '' : 's'}`}>
-          <Icons.Chat size={11} />
-          <span>{t.comments}</span>
-        </span>
-      ) : null}
+      {/* Comments is always rendered as a fixed-width slot so the
+          priority pill sits at a consistent X across rows; when there
+          are no comments the slot is invisible but still occupies its
+          width. */}
+      <span className="prow-comments-slot" aria-hidden={t.comments === 0 ? 'true' : undefined}>
+        {t.comments > 0 ? (
+          <span className="prow-comments" title={`${t.comments} comment${t.comments === 1 ? '' : 's'}`}>
+            <Icons.Chat size={11} />
+            <span>{t.comments}</span>
+          </span>
+        ) : null}
+      </span>
       <Priority p={t.priority} />
       <span className="ats">{fmtRel(t.created_at)}</span>
     </div>

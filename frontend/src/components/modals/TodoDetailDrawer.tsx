@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MAX_TODO_DEPTH } from '@open-brain/shared';
+import { MAX_TODO_DEPTH, type TodoComment } from '@open-brain/shared';
 import { DateTimePicker } from '../DateTimePicker';
 import { Icons } from '../Icons';
 import { Drawer, Checkbox, EntityLink, Priority, Tag } from '../primitives';
+import { useConfirm } from '../ConfirmDialog';
 import {
-  createComment, createTodo as apiCreateTodo, getTodo, listTodoComments,
-  listTodos, updateTodo,
+  createComment, createTodo as apiCreateTodo, deleteComment, getTodo,
+  listTodoComments, listTodos, updateComment, updateTodo,
 } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { cls, fmtRel } from '../../lib/util';
@@ -276,7 +277,17 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
                     });
                   }}
                 />
-                <span className="todo-subtask-title">{s.content}</span>
+                <span className="todo-subtask-title">
+                  {s.content}
+                  {s.subtask_count && s.subtask_count > 0 ? (
+                    <span
+                      className="todo-subtask-childcount"
+                      title={`${s.subtask_count} subtask${s.subtask_count === 1 ? '' : 's'}`}
+                    >
+                      ({s.subtask_count})
+                    </span>
+                  ) : null}
+                </span>
                 {s.priority ? <Priority p={ui.priority} /> : null}
               </div>
             );
@@ -325,12 +336,7 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
         <div className="page-subtle">No comments yet.</div>
       ) : (
         comments.map(c => (
-          <div key={c.id} className="todo-comment">
-            <div className="meta">
-              <b>alex</b> · {fmtRel(c.created_at)}
-            </div>
-            {c.content}
-          </div>
+          <CommentRow key={c.id} todoId={todo.id} comment={c} />
         ))
       )}
       <div className="todo-input-row" style={{ marginTop: 8 }}>
@@ -354,6 +360,160 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
         </button>
       </div>
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CommentRow — single comment with view/edit/delete affordances. Keeps
+// its own per-row state (mode + draft) so editing one doesn't blow
+// away another's draft. Mutations invalidate the parent query so the
+// `updated_at` timestamp on the row refreshes after a save.
+// ---------------------------------------------------------------------------
+
+interface CommentRowProps {
+  todoId: string;
+  comment: TodoComment;
+}
+
+function CommentRow({ todoId, comment }: CommentRowProps) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
+  const [draft, setDraft] = useState(comment.content);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['todo-comments', todoId] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+
+  const updateMut = useMutation({
+    mutationFn: (content: string) => updateComment(todoId, comment.id, content),
+    onSuccess: () => {
+      invalidate();
+      setMode('view');
+    },
+  });
+  const deleteMut = useMutation({
+    mutationFn: () => deleteComment(todoId, comment.id),
+    onSuccess: invalidate,
+  });
+
+  const startEdit = () => {
+    setDraft(comment.content);
+    setMode('edit');
+  };
+  const cancelEdit = () => {
+    setDraft(comment.content);
+    setMode('view');
+  };
+  const saveEdit = () => {
+    const c = draft.trim();
+    if (!c || c === comment.content || updateMut.isPending) return;
+    updateMut.mutate(c);
+  };
+  const onDelete = async () => {
+    if (deleteMut.isPending) return;
+    const ok = await confirm({
+      title: 'Delete this comment?',
+      body: 'This can’t be undone.',
+      destructive: true,
+      confirmLabel: 'Delete',
+    });
+    if (ok) deleteMut.mutate();
+  };
+
+  // Hide the "Updated …" line when create == update (within a second's
+  // tolerance — Postgres stamps both columns to now() on insert and the
+  // values can disagree by microseconds, which would surface a useless
+  // "Updated 0s ago" line on every freshly-created row).
+  const wasEdited =
+    Math.abs(new Date(comment.updated_at).getTime() - new Date(comment.created_at).getTime()) > 1000;
+
+  return (
+    <div className={cls('todo-comment', mode === 'edit' && 'editing')}>
+      <div className="meta">
+        <b>alex</b> · {fmtRel(comment.created_at)}
+        {wasEdited ? (
+          <span className="todo-comment-updated" title={new Date(comment.updated_at).toLocaleString()}>
+            · Updated {fmtRel(comment.updated_at)}
+          </span>
+        ) : null}
+        {mode === 'view' ? (
+          <span className="todo-comment-actions">
+            <button
+              type="button"
+              className="todo-comment-action"
+              onClick={startEdit}
+              aria-label="Edit comment"
+              title="Edit"
+            >
+              <Icons.Pencil size={12} />
+            </button>
+            <button
+              type="button"
+              className="todo-comment-action todo-comment-action-danger"
+              onClick={onDelete}
+              disabled={deleteMut.isPending}
+              aria-label="Delete comment"
+              title="Delete"
+            >
+              <Icons.Trash size={12} />
+            </button>
+          </span>
+        ) : null}
+      </div>
+      {mode === 'view' ? (
+        <div className="todo-comment-body">{comment.content}</div>
+      ) : (
+        <div className="todo-comment-edit">
+          <textarea
+            className="todo-comment-edit-input"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // Cmd/Ctrl+Enter saves; plain Enter inserts newline so
+              // multi-line edits don't fight the keyboard.
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                saveEdit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+          />
+          <div className="todo-comment-edit-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={cancelEdit}
+              disabled={updateMut.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={saveEdit}
+              disabled={!draft.trim() || draft.trim() === comment.content || updateMut.isPending}
+            >
+              Save
+            </button>
+          </div>
+          {updateMut.error ? (
+            <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 4 }}>
+              {updateMut.error instanceof Error ? updateMut.error.message : String(updateMut.error)}
+            </div>
+          ) : null}
+        </div>
+      )}
+      {deleteMut.error ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+          Failed to delete: {deleteMut.error instanceof Error ? deleteMut.error.message : String(deleteMut.error)}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

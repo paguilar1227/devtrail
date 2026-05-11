@@ -474,6 +474,7 @@ export function createApp(deps: ServiceDeps) {
         pinned,
         limit: q.limit,
         include_archived: q.include_archived,
+        before: q.before ? new Date(q.before) : undefined,
       });
       return c.json({ items: items.map((it) => serializeContentItem(it as never, deps.blobStorage)) }, 200);
     },
@@ -1052,6 +1053,7 @@ export function createApp(deps: ServiceDeps) {
         pinned,
         limit: q.limit,
         include_archived: q.include_archived,
+        before: q.before ? new Date(q.before) : undefined,
       });
       return c.json({ todos: todos.map((t) => serializeTodo(t)) }, 200);
     },

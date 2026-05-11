@@ -1,26 +1,26 @@
-// Hierarchical sort for personal todos. Used by both the Home column
-// (top 6, depth-capped, default-collapsed) and the personal todos
-// drawer (full tree, default-collapsed).
+// Hierarchical sort for personal todos. Used by the Home column (top 6,
+// depth-capped, default-collapsed), the personal todos drawer (full
+// tree, default-collapsed), and the project todos panel.
 //
-// Top-level sort bands, in order:
-//   0. Overdue       — anything active with a due_at in the past;
-//                      bubbled to the absolute top so action items lead
-//   1. Pinned        — sticky context the user marked as important
-//   2. Active        — anything else not done
-//   3. Done          — pushed to the bottom; recently completed first
+// Five sort modes:
+//   - 'smart'    (default) — band-driven bias: overdue → pinned →
+//                            active → done; within band manual / due /
+//                            priority / created.
+//   - 'due'      — strictly by due_at asc, no-due last; ties by
+//                  priority then created desc.
+//   - 'priority' — strictly by priority (P1 first); ties by due then
+//                  created desc.
+//   - 'manual'   — strictly by manual_order asc, NULLS LAST; unranked
+//                  rows fall to created desc.
+//   - 'recent'   — created desc (newest first).
 //
-// Within each band, secondary sort is:
-//   1. manual_order asc — when the user has dragged this group into a
-//      custom order, that order takes precedence over the natural keys
-//      below. NULLS LAST so unranked rows fall to natural sort.
-//   2. due asc (sooner first), null-due last
-//   3. priority asc (P1 most urgent)
-//   4. created desc (newest first inside the same priority/due bucket)
+// In every mode except 'smart', status is ignored — done rows
+// intermingle with active by the chosen key. The user explicitly
+// picked the lens; we don't second-guess it.
 //
-// Subtasks always emit immediately after their parent, regardless of
-// their own band. Children are emitted recursively, so grandchildren
-// (depth=2) sit under their parent (depth=1) sit under their grandparent
-// (depth=0) — the visual hierarchy beats sort score for descendants.
+// Subtasks always emit immediately after their parent regardless of
+// mode — the visual hierarchy beats sort score for descendants.
+// Grandchildren sit under children sit under top-level rows.
 //
 // Two knobs control what's actually emitted:
 //   - `maxDepth`  — descendants beyond this depth are omitted and
@@ -37,6 +37,18 @@
 
 import type { Todo } from '../types';
 
+export type TodoSortMode = 'smart' | 'due' | 'priority' | 'manual' | 'recent';
+
+export const TODO_SORT_MODES: TodoSortMode[] = ['smart', 'due', 'priority', 'manual', 'recent'];
+
+export const TODO_SORT_LABELS: Record<TodoSortMode, string> = {
+  smart: 'Smart',
+  due: 'Due date',
+  priority: 'Priority',
+  manual: 'Manual',
+  recent: 'Recently created',
+};
+
 export interface SortedTodo {
   todo: Todo;
   depth: number;
@@ -45,6 +57,7 @@ export interface SortedTodo {
 }
 
 const PRIORITY_RANK: Record<Todo['priority'], number> = { p1: 0, p2: 1, p3: 2 };
+const FAR_FUTURE = Number.MAX_SAFE_INTEGER;
 
 function isOverdueAt(d: string | null): boolean {
   if (!d) return false;
@@ -58,27 +71,71 @@ function bandRank(t: Todo): number {
   return 2;
 }
 
-function withinBandRank(t: Todo): [number, number, number, number] {
-  // manual_order ASC NULLS LAST: rows the user has positioned win
-  // over the natural keys; unranked rows (null) fall to the back of
-  // this tier and are decided by due / priority / created.
-  const m = t.manual_order ?? Number.MAX_SAFE_INTEGER;
-  const dueMs = t.due_at ? new Date(t.due_at).getTime() : Number.MAX_SAFE_INTEGER;
-  const p = PRIORITY_RANK[t.priority] ?? 9;
-  const createdMs = -new Date(t.created_at).getTime();
-  return [m, dueMs, p, createdMs];
+function dueMs(t: Todo): number {
+  return t.due_at ? new Date(t.due_at).getTime() : FAR_FUTURE;
+}
+function priorityRank(t: Todo): number {
+  return PRIORITY_RANK[t.priority] ?? 9;
+}
+function manualKey(t: Todo): number {
+  // NULLS LAST: unranked rows fall behind anything the user dragged.
+  return t.manual_order ?? FAR_FUTURE;
+}
+function createdDescMs(t: Todo): number {
+  return -new Date(t.created_at).getTime();
 }
 
-function compare(a: Todo, b: Todo): number {
+function compareSmart(a: Todo, b: Todo): number {
   const ba = bandRank(a);
   const bb = bandRank(b);
   if (ba !== bb) return ba - bb;
-  const wa = withinBandRank(a);
-  const wb = withinBandRank(b);
-  return wa[0] - wb[0] || wa[1] - wb[1] || wa[2] - wb[2] || wa[3] - wb[3];
+  return (
+    manualKey(a) - manualKey(b)
+    || dueMs(a) - dueMs(b)
+    || priorityRank(a) - priorityRank(b)
+    || createdDescMs(a) - createdDescMs(b)
+  );
+}
+
+function compareByDue(a: Todo, b: Todo): number {
+  return (
+    dueMs(a) - dueMs(b)
+    || priorityRank(a) - priorityRank(b)
+    || createdDescMs(a) - createdDescMs(b)
+  );
+}
+
+function compareByPriority(a: Todo, b: Todo): number {
+  return (
+    priorityRank(a) - priorityRank(b)
+    || dueMs(a) - dueMs(b)
+    || createdDescMs(a) - createdDescMs(b)
+  );
+}
+
+function compareByManual(a: Todo, b: Todo): number {
+  return manualKey(a) - manualKey(b) || createdDescMs(a) - createdDescMs(b);
+}
+
+function compareByCreated(a: Todo, b: Todo): number {
+  return createdDescMs(a) - createdDescMs(b);
+}
+
+/** Comparator factory — exported so flat-render surfaces (project
+ *  TodosTab) can apply the same ordering without going through the
+ *  hierarchical emit path. */
+export function compareForMode(mode: TodoSortMode): (a: Todo, b: Todo) => number {
+  switch (mode) {
+    case 'smart': return compareSmart;
+    case 'due': return compareByDue;
+    case 'priority': return compareByPriority;
+    case 'manual': return compareByManual;
+    case 'recent': return compareByCreated;
+  }
 }
 
 export interface SortOptions {
+  mode?: TodoSortMode;
   maxDepth?: number;
   isExpanded?: (id: string) => boolean;
 }
@@ -87,7 +144,8 @@ export function sortPersonalTodos(
   todos: Todo[],
   opts: SortOptions = {},
 ): SortedTodo[] {
-  const { maxDepth = Infinity, isExpanded } = opts;
+  const { mode = 'smart', maxDepth = Infinity, isExpanded } = opts;
+  const compare = compareForMode(mode);
   const byParent = new Map<string, Todo[]>();
   const tops: Todo[] = [];
   for (const t of todos) {

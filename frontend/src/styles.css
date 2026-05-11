@@ -1569,6 +1569,53 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   margin-bottom: 4px;
   font-size: var(--type-meta); color: var(--fg-subtle);
 }
+.todo-comment-updated {
+  color: var(--fg-subtle);
+  font-style: italic;
+}
+.todo-comment-actions {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 2px;
+  opacity: 0;
+  transition: opacity 100ms;
+}
+.todo-comment:hover .todo-comment-actions,
+.todo-comment:focus-within .todo-comment-actions { opacity: 1; }
+.todo-comment-action {
+  appearance: none; border: 0; background: transparent;
+  color: var(--fg-subtle);
+  width: 22px; height: 22px;
+  display: inline-grid; place-items: center;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: color 100ms, background 100ms;
+}
+.todo-comment-action:hover { color: var(--fg); background: var(--glass-bg); }
+.todo-comment-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.todo-comment-action-danger:hover { color: oklch(0.72 0.14 25); }
+.todo-comment-body { white-space: pre-wrap; word-break: break-word; }
+.todo-comment.editing { background: var(--glass-bg); border-color: var(--accent-1); }
+.todo-comment-edit { display: flex; flex-direction: column; gap: 6px; }
+.todo-comment-edit-input {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--type-body);
+  color: var(--fg);
+  background: var(--glass-bg-soft);
+  border: 0.5px solid var(--hairline);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+.todo-comment-edit-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.todo-comment-edit-actions {
+  display: flex; justify-content: flex-end; gap: 6px;
+}
 
 /* ── Activity feed ── */
 .activity-day {
@@ -1838,6 +1885,51 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   margin: -8px -18px;
 }
 .todo-list-drawer-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
+.todo-list-drawer-toolbar {
+  display: flex; justify-content: flex-end;
+  padding: 0 0 10px 0;
+}
+/* IntersectionObserver target. Needs a non-zero height so an
+   observer fires on a scrolled drawer that's just barely longer
+   than the viewport. */
+.todo-list-drawer-sentinel {
+  min-height: 24px;
+  padding: 12px 0;
+  display: flex; justify-content: center;
+}
+
+/* Sort dropdown — used in Home column header, Inbox drawer toolbar,
+   and project todos panel filter bar. Native <select> styled to match
+   the existing chrome (FilterChip / seg-toggle). */
+.todo-sort-dropdown {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  cursor: pointer;
+}
+.todo-sort-dropdown-label {
+  font-size: var(--type-meta); color: var(--fg-subtle);
+  font-weight: 500;
+}
+.todo-sort-dropdown-select {
+  appearance: none; -webkit-appearance: none;
+  background: var(--glass-bg-soft);
+  color: var(--fg);
+  border: 0.5px solid var(--hairline);
+  border-radius: 6px;
+  padding: 4px 22px 4px 8px;
+  font: inherit;
+  font-size: var(--type-meta);
+  font-weight: 500;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'><path d='M3 4.5l3 3 3-3' fill='none' stroke='%23888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  transition: background 100ms, border-color 100ms;
+}
+.todo-sort-dropdown-select:hover { background-color: var(--glass-bg); border-color: var(--fg-subtle); }
+.todo-sort-dropdown-select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
 .pcol .pcol-add {
   padding: 12px 16px;
   border-bottom: 0.5px solid var(--hairline);
@@ -1914,6 +2006,16 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 /* Done todos read as background context — struck through + dimmed. */
 .prow-done .ti { text-decoration: line-through; color: var(--fg-muted); }
 .prow-done { opacity: 0.65; }
+/* Slot is rendered on every row (even comment-less ones) so the
+   priority pill sits at the same X across rows. Width is reserved for
+   a 2-digit count + chat icon — generous enough that real content fits
+   inside without expanding the column on a row-by-row basis. */
+.prow-comments-slot {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 32px;
+}
 .prow-comments {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--type-meta); color: var(--fg-subtle);
@@ -2470,6 +2572,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   color: var(--fg-muted);
 }
 .todo-subtask-row.done { opacity: 0.65; }
+.todo-subtask-childcount {
+  margin-left: 6px;
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.todo-subtask-row.done .todo-subtask-childcount { text-decoration: none; }
 
 .todo-subtask-cap-notice {
   font-size: var(--type-meta);

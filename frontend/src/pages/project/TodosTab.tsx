@@ -2,8 +2,11 @@ import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
 import { BulkCheckbox, Checkbox, FilterChip, Priority, Tag } from '../../components/primitives';
+import { SortDropdown } from '../../components/SortDropdown';
 import { archiveTodo, createTodo, listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
+import { compareForMode } from '../../lib/todoSort';
+import { useTodoSortMode } from '../../lib/useTodoSortMode';
 import { cls, fmtRel, isOverdue } from '../../lib/util';
 import type { ActionDispatch, Project, Todo } from '../../types';
 
@@ -26,6 +29,9 @@ export function TodosTab({ project, onAction }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState('');
+  // Per-project sort key — the owner's "Project X is distinct from Home"
+  // requirement. Switching projects re-reads localStorage via the hook.
+  const { mode: sortMode, setMode: setSortMode } = useTodoSortMode(`project:${project.id}`);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['todos'] });
@@ -47,11 +53,15 @@ export function TodosTab({ project, onAction }: Props) {
     onSuccess: invalidate,
   });
 
+  // Sort the project's open and done lists by the chosen mode. The
+  // open/done split is structural (the panel renders two collapsible
+  // groups), so the sort applies inside each group.
   const groups = useMemo(() => {
-    const open = all.filter(t => t.status !== 'done');
-    const done = all.filter(t => t.status === 'done');
+    const cmp = compareForMode(sortMode);
+    const open = all.filter(t => t.status !== 'done').slice().sort(cmp);
+    const done = all.filter(t => t.status === 'done').slice().sort(cmp);
     return { open, done };
-  }, [all]);
+  }, [all, sortMode]);
 
   const overdueCount = all.filter(t => t.status !== 'done' && t.due_at && isOverdue(t.due_at)).length;
 
@@ -198,13 +208,16 @@ export function TodosTab({ project, onAction }: Props) {
         </FilterChip>
         <FilterChip>Today</FilterChip>
         <FilterChip>P1</FilterChip>
-        <span style={{ marginLeft: 'auto' }} className="seg-toggle">
-          <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
-            Hierarchy
-          </button>
-          <button className={hierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
-            Flat
-          </button>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <SortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
+          <span className="seg-toggle">
+            <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
+              Hierarchy
+            </button>
+            <button className={hierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
+              Flat
+            </button>
+          </span>
         </span>
       </div>
 

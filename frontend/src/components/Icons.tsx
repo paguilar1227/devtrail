@@ -40,6 +40,7 @@ export const Icons = {
     </>,
   ),
   Trash: make(<path d="M2.5 4h11M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M3.5 4l.7 8.5c0 .6.4 1 1 1h5.6c.5 0 1-.4 1-1l.7-8.5M6.5 7v4M9.5 7v4" />),
+  Pencil: make(<path d="M11 2.5l2.5 2.5L5 13.5H2.5V11L11 2.5z" />),
   Plus: make(<path d="M8 3v10M3 8h10" />),
   Doc: make(<path d="M3.5 2.5h6L13 6v7c0 .6-.4 1-1 1H3.5c-.6 0-1-.4-1-1V3.5c0-.6.4-1 1-1zM9 2.5V6h4M5 9h6M5 11h4" />),
   Note: make(

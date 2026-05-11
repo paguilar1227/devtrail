@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icons } from './Icons';
 import { cls } from '../lib/util';
 import type { ProcessingStatus, TodoPriority } from '../types';
@@ -179,11 +179,22 @@ export function Modal({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+  // Track whether the mousedown originated on the backdrop. A click is
+  // delivered to the common ancestor of mousedown and mouseup, so a
+  // text-selection drag that starts inside the modal and releases over
+  // the overlay would otherwise trigger this handler and dismiss the
+  // modal — losing in-progress edits. Only dismiss when both ends of
+  // the press are on the backdrop.
+  const downOnBackdropRef = useRef(false);
   return (
     <div
       className="modal-overlay"
-      onClick={e => {
-        if (e.target === e.currentTarget) onClose();
+      onMouseDown={(e) => {
+        downOnBackdropRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (downOnBackdropRef.current && e.target === e.currentTarget) onClose();
+        downOnBackdropRef.current = false;
       }}
     >
       <div className={cls('modal', size === 'lg' && 'lg')} role="dialog" aria-modal="true">

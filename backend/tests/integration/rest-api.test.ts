@@ -985,6 +985,31 @@ describe('Content items API', () => {
     expect(listQ!.params).toContain(projectId);
   });
 
+  it('GET /content?before=<iso>&limit=N applies keyset pagination', async () => {
+    // Infinite-scroll contract: the drawer requests page N by passing
+    // the oldest visible row's created_at. The handler must translate
+    // that into a `created_at < $param` predicate; combined with
+    // ORDER BY created_at DESC + LIMIT N it gives stable keyset paging.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const cursor = '2026-05-09T00:00:00.000Z';
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content?type=note&project_id=null&before=${encodeURIComponent(cursor)}&limit=20`,
+      { headers: { ...AUTH } },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM content_items/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/created_at\s*<\s*\$/i);
+    expect(listQ!.sql).toMatch(/LIMIT 20/i);
+    expect(listQ!.params.some((p) => p instanceof Date && p.toISOString() === cursor)).toBe(true);
+  });
+
   it('GET /content?project_id=not-a-uuid-and-not-null returns 400', async () => {
     // Schema accepts UUID or the literal 'null'; anything else is invalid.
     const res = await app.fetch(new Request(
@@ -1679,13 +1704,24 @@ describe('Todos API', () => {
   });
 
   it('lists todos', async () => {
-    // listTodos issues two queries: the list itself, then a batched
-    // comment-count lookup. Mock both so we don't NPE on the second.
-    vi.mocked(deps.db.query)
-      .mockResolvedValueOnce({
-        rows: [{ id: 't1', content: 'Thing', status: 'not_started', tags: [], embedding: null, archived: false, created_at: new Date(), updated_at: new Date() }],
-      } as any)
-      .mockResolvedValueOnce({ rows: [{ todo_id: 't1', count: 3 }] } as any);
+    // listTodos issues three queries: the list itself, then a batched
+    // comment-count lookup, then a batched subtask-count lookup. Mock
+    // each by SQL shape so call order doesn't matter (Promise.all in
+    // the service runs them concurrently and either may land first).
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM todos\b/i.test(sql)) {
+        return {
+          rows: [{ id: 't1', content: 'Thing', status: 'not_started', tags: [], embedding: null, archived: false, created_at: new Date(), updated_at: new Date() }],
+        } as any;
+      }
+      if (/FROM todo_comments/i.test(sql)) {
+        return { rows: [{ todo_id: 't1', count: 3 }] } as any;
+      }
+      if (/FROM todos\s+WHERE parent_id = ANY/i.test(sql)) {
+        return { rows: [{ parent_id: 't1', count: 2 }] } as any;
+      }
+      return { rows: [] } as any;
+    });
 
     const res = await app.fetch(new Request('http://localhost/api/v1/todos', { headers: AUTH }));
     expect(res.status).toBe(200);
@@ -1693,8 +1729,9 @@ describe('Todos API', () => {
     expect(body.todos).toHaveLength(1);
     // embedding should be stripped
     expect(body.todos[0].embedding).toBeUndefined();
-    // comment_count attached from the second query
+    // comment_count + subtask_count attached from the batched decoration queries
     expect(body.todos[0].comment_count).toBe(3);
+    expect(body.todos[0].subtask_count).toBe(2);
   });
 
   it('GET /todos?parent_id=<uuid> filters subtasks of a specific parent', async () => {
@@ -1783,6 +1820,29 @@ describe('Todos API', () => {
     expect(/due_date >=/.test(listQ!.sql)).toBe(true);
     const dateParams = listQ!.params.filter((p): p is Date => p instanceof Date);
     expect(dateParams).toHaveLength(2);
+  });
+
+  it('GET /todos?before=<iso>&limit=N applies keyset pagination', async () => {
+    // Infinite-scroll contract — symmetric with /content's `before`.
+    // Drawer requests page N+1 with the oldest visible row's created_at.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+
+    const cursor = '2026-05-09T00:00:00.000Z';
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/todos?project_id=null&before=${encodeURIComponent(cursor)}&limit=20`,
+      { headers: AUTH },
+    ));
+    expect(res.status).toBe(200);
+
+    const listQ = queries.find((q) => /SELECT \* FROM todos/i.test(q.sql));
+    expect(listQ).toBeDefined();
+    expect(listQ!.sql).toMatch(/created_at\s*<\s*\$/i);
+    expect(listQ!.sql).toMatch(/LIMIT 20/i);
+    expect(listQ!.params.some((p) => p instanceof Date && p.toISOString() === cursor)).toBe(true);
   });
 
   it('GET /todos rejects malformed due_before/due_after with 400', async () => {

@@ -6,6 +6,7 @@ import {
   updateTodo as dbUpdateTodo,
   archiveTodo, unarchiveTodo, deleteTodoHard,
   findChildTodos, findSimilarTodos,
+  countChildrenByTodoIds,
   getTodoDepth,
   bulkArchiveTodos,
   bulkRestoreTodos,
@@ -82,14 +83,37 @@ export async function createTodo(
 export async function listTodos(deps: ServiceDeps, filters: ListTodosFilters = {}): Promise<TodoRow[]> {
   const rows = await dbListTodos(deps.db, filters);
   if (rows.length === 0) return rows;
-  // Comment counts come from a single batched query — keeps the list
-  // path O(1) DB roundtrips instead of fanning out per row.
-  const counts = await countCommentsByTodoIds(deps.db, rows.map((r) => r.id));
-  return rows.map((r) => ({ ...r, comment_count: counts.get(r.id) ?? 0 }));
+  // Comment + subtask counts each come from a single batched query —
+  // keeps the list path O(1) DB roundtrips instead of fanning out per
+  // row. Both are decorations, so failing to populate them shouldn't
+  // change the row contract; the schema marks each as optional.
+  const ids = rows.map((r) => r.id);
+  const [commentCounts, childCounts] = await Promise.all([
+    countCommentsByTodoIds(deps.db, ids),
+    countChildrenByTodoIds(deps.db, ids),
+  ]);
+  return rows.map((r) => ({
+    ...r,
+    comment_count: commentCounts.get(r.id) ?? 0,
+    subtask_count: childCounts.get(r.id) ?? 0,
+  }));
 }
 
 export async function getTodo(deps: ServiceDeps, id: string): Promise<TodoRow | null> {
-  return getTodoById(deps.db, id);
+  const row = await getTodoById(deps.db, id);
+  if (!row) return null;
+  // Single-row lookup of the same decorations the list path returns.
+  // Cheap (two single-key counts) and lets every consumer treat list
+  // and detail responses uniformly.
+  const [commentCounts, childCounts] = await Promise.all([
+    countCommentsByTodoIds(deps.db, [id]),
+    countChildrenByTodoIds(deps.db, [id]),
+  ]);
+  return {
+    ...row,
+    comment_count: commentCounts.get(id) ?? 0,
+    subtask_count: childCounts.get(id) ?? 0,
+  };
 }
 
 export async function updateTodo(

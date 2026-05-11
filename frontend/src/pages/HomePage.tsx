@@ -22,10 +22,13 @@ import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
 import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
+import { useTodoSortMode } from '../lib/useTodoSortMode';
+import { SortDropdown } from '../components/SortDropdown';
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
   createNote,
   createTodo,
+  getContent,
   listActivity,
   listContent,
   listProjectCounts,
@@ -82,9 +85,10 @@ export function HomePage({ onRoute, onAction }: Props) {
     () => (todosQ.data ?? []).map(toUiTodo),
     [todosQ.data],
   );
+  const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('home');
   const personalTodos = useMemo(
-    () => sortPersonalTodos(allPersonalTodos, { maxDepth: 1, isExpanded }),
-    [allPersonalTodos, isExpanded],
+    () => sortPersonalTodos(allPersonalTodos, { mode: sortMode, maxDepth: 1, isExpanded }),
+    [allPersonalTodos, sortMode, isExpanded],
   );
   const personalNotes = notesQ.data ?? [];
   const activity = useMemo(
@@ -128,18 +132,36 @@ export function HomePage({ onRoute, onAction }: Props) {
   };
   const todoCreate = useMutation({
     mutationFn: (content: string) => createTodo({ content }),
-    onSuccess: invalidate,
+    onSuccess: (todo) => {
+      invalidate();
+      // Pop the detail drawer for the just-created todo so the user can
+      // immediately attach priority / due / tags / subtasks without an
+      // extra click. They can dismiss with ESC or the close button if
+      // the quick-capture was all they wanted.
+      onAction({ kind: 'todo-detail', payload: toUiTodo(todo) });
+    },
   });
   const noteCreate = useMutation({
     // Quick capture — first line becomes the title (capped at 80 chars),
     // full text goes into the body. Mirrors the NoteEditorModal contract
-    // but keystroke-light for the Home column.
-    mutationFn: (body: string) => {
+    // but keystroke-light for the Home column. On success, pop the
+    // editor for the just-created note so the user can flesh out the
+    // body / tags / project membership without an extra click. The
+    // editor needs the full ContentItem (toUiNote signature), so we
+    // refetch by id — POST /content only returns { id, status }.
+    mutationFn: async (body: string) => {
       const firstLine = body.split('\n')[0].trim();
       const title = (firstLine || 'Untitled note').slice(0, 80);
-      return createNote({ type: 'note', title, content: body, project_ids: [], tags: [] });
+      const created = await createNote({ type: 'note', title, content: body, project_ids: [], tags: [] });
+      const full = await getContent(created.id);
+      return full;
     },
-    onSuccess: invalidate,
+    onSuccess: (item) => {
+      invalidate();
+      if (item.type === 'note') {
+        onAction({ kind: 'note-edit', payload: toUiNote(item) });
+      }
+    },
   });
   const todoToggle = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
@@ -255,6 +277,7 @@ export function HomePage({ onRoute, onAction }: Props) {
           <div className="pcol-h">
             <h3>Todos</h3>
             <span className="ct">{personalTodos.length}</span>
+            <SortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />
           </div>
           <div className="pcol-add">
             <input

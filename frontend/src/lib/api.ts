@@ -317,6 +317,24 @@ export async function createComment(
   await fetchOk(`/todos/${todoId}/comments`, { method: 'POST', body });
 }
 
+export async function updateComment(
+  todoId: string,
+  commentId: string,
+  content: string,
+): Promise<void> {
+  // Reuses the create request schema — backend accepts `{ content }` for
+  // both POST and PUT. Validate locally so we send the same shape.
+  const body = JSON.stringify(TodoCommentCreateRequestSchema.parse({ content }));
+  await fetchOk(`/todos/${todoId}/comments/${commentId}`, { method: 'PUT', body });
+}
+
+export async function deleteComment(
+  todoId: string,
+  commentId: string,
+): Promise<void> {
+  await fetchOk(`/todos/${todoId}/comments/${commentId}`, { method: 'DELETE' });
+}
+
 // ---------------- Content ----------------
 
 export async function getContent(id: string): Promise<ContentItem> {

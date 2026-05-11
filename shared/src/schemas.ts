@@ -190,6 +190,10 @@ export const ContentListQuerySchema = z.object({
   pinned: z.string().optional(),
   include_archived: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().positive().optional(),
+  /** Keyset pagination cursor — ISO timestamp; returns rows strictly
+   *  older than this `created_at`. Pair with `limit` for infinite
+   *  scroll. Independent of `pinned` ordering (which uses pinned_at). */
+  before: z.string().datetime({ offset: true }).optional(),
 });
 export type ContentListQuery = z.infer<typeof ContentListQuerySchema>;
 
@@ -233,6 +237,7 @@ export const TodoSchema = z.object({
   pinned_at: z.string().datetime({ offset: true }).nullable().optional(),
   manual_order: z.number().int().nullable().optional(),
   comment_count: z.number().int().nonnegative().optional(),
+  subtask_count: z.number().int().nonnegative().optional(),
   similarity: z.number().optional(),
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
@@ -286,6 +291,10 @@ export const TodoListQuerySchema = z.object({
   pinned: z.string().optional(),
   include_archived: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().positive().optional(),
+  /** Keyset pagination cursor — ISO timestamp; returns rows strictly
+   *  older than this `created_at`. Pair with `limit` for infinite
+   *  scroll. */
+  before: z.string().datetime({ offset: true }).optional(),
 });
 export type TodoListQuery = z.infer<typeof TodoListQuerySchema>;
 

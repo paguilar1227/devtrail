@@ -27,6 +27,8 @@ export interface TodoRow {
   manual_order: number | null;
   created_at: Date;
   updated_at: Date;
+  comment_count?: number;
+  subtask_count?: number;
 }
 
 export interface ListTodosFilters {
@@ -40,6 +42,10 @@ export interface ListTodosFilters {
   pinned?: boolean;                  // true = only pinned, false = only not pinned, undefined = no filter
   include_archived?: boolean;
   limit?: number;
+  /** Cursor for keyset pagination. Returns rows strictly older than
+   *  this `created_at`. Used by the Inbox / project todos infinite
+   *  scroll. Matches `ORDER BY created_at DESC`. */
+  before?: Date;
 }
 
 export async function insertTodo(db: DbClient, todo: TodoInsert): Promise<TodoRow> {
@@ -101,6 +107,10 @@ export async function listTodos(
   }
   if (filters.pinned === true) conditions.push('pinned_at IS NOT NULL');
   else if (filters.pinned === false) conditions.push('pinned_at IS NULL');
+  if (filters.before) {
+    conditions.push(`created_at < $${i++}`);
+    params.push(filters.before);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filters.limit ? `LIMIT ${filters.limit}` : '';
@@ -324,6 +334,30 @@ export async function findChildTodos(db: DbClient, parentId: string): Promise<To
     [parentId],
   );
   return result.rows;
+}
+
+/**
+ * Count direct (non-archived) children for each todo id, returned as a
+ * map. Symmetric with countCommentsByTodoIds — the service layer uses
+ * this to decorate list responses with `subtask_count` so the UI can
+ * show "this row has its own subtasks" indicators without N extra
+ * round-trips per drawer open.
+ */
+export async function countChildrenByTodoIds(
+  db: DbClient,
+  parentIds: string[],
+): Promise<Map<string, number>> {
+  if (parentIds.length === 0) return new Map();
+  const result = await db.query(
+    `SELECT parent_id, count(*)::int AS count
+       FROM todos
+      WHERE parent_id = ANY($1) AND archived = false
+      GROUP BY parent_id`,
+    [parentIds],
+  );
+  const map = new Map<string, number>();
+  for (const row of result.rows) map.set(row.parent_id, row.count);
+  return map;
 }
 
 /**
