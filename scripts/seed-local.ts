@@ -24,8 +24,18 @@
 //
 // Idempotent: bails if any project already exists.
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const BASE = process.env.OPEN_BRAIN_BASE_URL ?? 'http://localhost:3001';
 const KEY = process.env.OPEN_BRAIN_API_KEY ?? 'local-dev-key-not-secret';
+
+// Fixtures shared with the e2e test plan — checked-in bytes are deterministic
+// given the sources in backend/tests/fixtures/e2e/. Same files cover seed +
+// Playwright workflows, so we don't drift between the two.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(HERE, '..', 'backend', 'tests', 'fixtures', 'e2e');
 
 type Json = Record<string, unknown>;
 
@@ -45,6 +55,55 @@ async function api<T = Json>(method: string, path: string, body?: Json): Promise
   return (await res.json()) as T;
 }
 
+// Multipart upload helper for binary documents. Same auth path, but FormData
+// instead of JSON body — Node 20+ has FormData/Blob globally.
+async function uploadFile<T = Json>(
+  fields: Record<string, string>,
+  file: { name: string; mime: string },
+): Promise<T> {
+  const bytes = readFileSync(join(FIXTURES, file.name));
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  fd.append('file', new Blob([bytes], { type: file.mime }), file.name);
+  const res = await fetch(`${BASE}/api/v1/content`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KEY}` },
+    body: fd,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`POST /api/v1/content (multipart ${file.name}) → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return (await res.json()) as T;
+}
+
+// Wait for an ingest to leave 'pending'. Ingest is async; for a believable
+// seed we want each doc fully chunked + indexed before we move on so the
+// Activity feed shows ingest events with real titles, not placeholders.
+async function waitForReady(id: string, timeoutMs = 30_000): Promise<{ status: string; error?: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const s = await api<{ processing_status: string; processing_error?: string }>('GET', `/api/v1/content/${id}/status`);
+    if (s.processing_status !== 'pending') return { status: s.processing_status, error: s.processing_error };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { status: 'timeout' };
+}
+
+async function ensureBlobContainer(): Promise<void> {
+  // The backend doesn't createIfNotExists on startup — in production the
+  // container is provisioned by infra. After `docker compose down -v` the
+  // Azurite container is gone, so the first multipart upload would 500.
+  // Bootstrap it here so seeding from a wiped local DB just works.
+  const conn = process.env.AZURE_STORAGE_CONNECTION_STRING ??
+    'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10010/devstoreaccount1;';
+  const name = process.env.AZURE_STORAGE_CONTAINER ?? 'open-brain-content';
+  const { BlobServiceClient } = await import('@azure/storage-blob');
+  const svc = BlobServiceClient.fromConnectionString(conn);
+  const result = await svc.getContainerClient(name).createIfNotExists();
+  if (result.succeeded) console.log(`  + created blob container "${name}"`);
+}
+
 async function main() {
   console.log(`→ seeding ${BASE}`);
 
@@ -55,6 +114,8 @@ async function main() {
     console.log(`  (run 'npm run dev:reset' to wipe and reseed)`);
     return;
   }
+
+  await ensureBlobContainer();
 
   // ============================================================
   // PROJECTS — 5 active + 1 archived (restored, then archived)
@@ -183,6 +244,15 @@ async function main() {
       tags: ['rag', 'research'],
     },
 
+    // ---- Open Brain 2.5 — one archived to exercise the Archived view ----
+    {
+      project: ob25,
+      title: 'Old chunking strategy (superseded)',
+      content: 'Earlier sketch where we chunked at 1000/200 with no sentence-boundary alignment. Killed in favor of 500/100 + sentence-edge align — recall on the OB 2.5 corpus dropped 6 points with the bigger windows. Kept around because future-me will forget why we made the change.',
+      tags: ['rag', 'archive'],
+      archive: true,
+    },
+
     // ---- Homelab ----
     {
       project: homelab,
@@ -271,6 +341,119 @@ async function main() {
     console.log(`  + personal note "${n.title}"`);
     // No-op the returned id — we don't reference these by handle.
     void created;
+  }
+
+  // ============================================================
+  // DOCUMENTS — bytes come from backend/tests/fixtures/e2e/ so the seed
+  // and the e2e suite share the same artifacts. Each file exercises a
+  // distinct ingest path:
+  //   sample.pdf  → pdf-parse → multi-chunk
+  //   sample.png  → image-only doc (Gemini multimodal in real mode)
+  //   sample.wav  → audio-only doc (Gemini multimodal in real mode)
+  //   sample.md   → text-only document (the note-as-doc render path)
+  // We also include one personal-scope (projectless) text-doc so the
+  // Home + Activity views show a doc that isn't tied to a project.
+  // ============================================================
+  type DocBinarySpec = {
+    kind: 'binary';
+    projectId: string | null;
+    tags: string[];
+    pin?: boolean;
+    file: { name: string; mime: string };
+  };
+  type DocTextSpec = {
+    kind: 'text';
+    projectId: string | null;
+    title: string;
+    content: string;
+    tags: string[];
+    pin?: boolean;
+  };
+  type DocSpec = DocBinarySpec | DocTextSpec;
+
+  const sampleMd = readFileSync(join(FIXTURES, 'sample.md'), 'utf8');
+
+  const docSpecs: DocSpec[] = [
+    // PDF → RAG Research: multi-page, multi-chunk, exercises chunker
+    {
+      kind: 'binary',
+      projectId: rag,
+      tags: ['reference', 'rag'],
+      file: { name: 'sample.pdf', mime: 'application/pdf' },
+    },
+    // PNG → Open Brain 2.5: image-only, no extractable text in stub mode,
+    // exercises the future image-preview path in the doc reader
+    {
+      kind: 'binary',
+      projectId: ob25,
+      tags: ['reference', 'pgvector'],
+      file: { name: 'sample.png', mime: 'image/png' },
+    },
+    // WAV → ClaudePit: audio-only, exercises the future audio-preview path.
+    // Pinned so it shows up in the Pinned card on the project page.
+    {
+      kind: 'binary',
+      projectId: claudepit,
+      tags: ['meeting-notes'],
+      pin: true,
+      file: { name: 'sample.wav', mime: 'audio/wav' },
+    },
+    // Markdown body → Open Brain 2.5: text-only document, exercises the
+    // MarkdownPreview render path in the drawer. Cross-kind tag `reference`
+    // on this + the PDF means the Tags page shows both note and doc counts.
+    {
+      kind: 'text',
+      projectId: ob25,
+      title: 'OB 2.5 — sample reference notes',
+      content: sampleMd,
+      tags: ['reference', 'rag'],
+    },
+    // Personal-scope text doc: no project, exercises Activity/Home for a
+    // projectless document. Short body so it still renders one chunk.
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Personal — quick PDF dump notes',
+      content:
+        '# Random saved snippet\n\nCopy from a PDF I wanted to keep but did not want to file under any project yet. Lives in personal scope. Tagged reading + reference so it shows up in both filter views.',
+      tags: ['reading', 'reference'],
+    },
+  ];
+
+  for (const d of docSpecs) {
+    const fields: Record<string, string> = { type: 'document' };
+    if (d.projectId) fields.project_ids = d.projectId;
+    if (d.tags.length > 0) fields.tags = d.tags.join(',');
+
+    let id: string;
+    if (d.kind === 'binary') {
+      const created = await uploadFile<{ id: string; status: string }>(fields, d.file);
+      id = created.id;
+      console.log(`  + document ${d.file.name} (${d.file.mime})${d.pin ? ' (pinned)' : ''}`);
+    } else {
+      const created = await api<{ id: string; status: string }>('POST', '/api/v1/content', {
+        type: 'document',
+        title: d.title,
+        content: d.content,
+        project_ids: d.projectId ? [d.projectId] : [],
+        tags: d.tags,
+      });
+      id = created.id;
+      console.log(`  + document "${d.title}" (text-only)${d.pin ? ' (pinned)' : ''}`);
+    }
+
+    // Wait for processing so subsequent activity events have real titles
+    // and chunks are searchable from the moment the UI loads.
+    const ready = await waitForReady(id);
+    if (ready.status === 'failed') {
+      console.warn(`    ! ingest failed: ${ready.error ?? '(no error)'}`);
+    } else if (ready.status === 'timeout') {
+      console.warn(`    ! ingest timed out after 30s — leaving as pending`);
+    }
+
+    if (d.pin) {
+      await api('POST', `/api/v1/content/${id}/pin`);
+    }
   }
 
   // ============================================================
@@ -450,6 +633,21 @@ async function main() {
       .filter(Boolean).join(' · ');
     console.log(`  + inbox todo [${labels}] "${t.content}"`);
   }
+
+  // ============================================================
+  // MANUAL ORDER — pin a non-default order on one sibling group so
+  // drag-to-reorder (migration 008) has a realistic starting state.
+  // Reordering the children of "Plan home office overhaul" to:
+  //   Cable management → Order monitor arm → Pick a standing desk
+  // (i.e., flipped relative to creation order)
+  // ============================================================
+  const inboxParent = inboxIds[0];
+  const reorderedChildren = [inboxIds[4], inboxIds[3], inboxIds[1]];
+  await api('POST', '/api/v1/todos/reorder', {
+    parent_id: inboxParent,
+    ids: reorderedChildren,
+  });
+  console.log(`  + manual order set on 3 subtasks of "Plan home office overhaul"`);
 
   console.log('\n✓ seed complete');
 }
