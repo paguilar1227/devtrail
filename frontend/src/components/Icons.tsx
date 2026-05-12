@@ -88,6 +88,7 @@ export const Icons = {
   ChevronLeft: make(<path d="m10 3-5 5 5 5" />),
   ChevronUp: make(<path d="m13 10-5-5-5 5" />),
   ExternalLink: make(<path d="M9.5 2.5h4v4M13.5 2.5 8 8M11.5 8.5v4a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h4" />),
+  Download: make(<path d="M8 2v8.5M4.5 7l3.5 3.5L11.5 7M2.5 13h11" />),
   X: make(<path d="m3.5 3.5 9 9M12.5 3.5l-9 9" />),
   More: make(
     <>

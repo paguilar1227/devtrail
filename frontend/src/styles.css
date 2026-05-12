@@ -2464,6 +2464,79 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .meta-projects { flex-wrap: wrap; }
 .doc-size-trail { margin-left: auto; font-size: var(--type-meta); }
+.doc-mime { font-family: var(--font-mono); font-size: var(--type-meta); }
+
+/* Doc preview surfaces — one block per media type, all share the same card
+   shell so the doc reader reads as a single column of consistent panels. */
+.doc-preview {
+  margin: 12px 0 8px;
+  border-radius: 10px; border: 0.5px solid var(--hairline);
+  background: var(--glass-bg-soft);
+  overflow: hidden;
+}
+.doc-preview-pdf { aspect-ratio: 4 / 5; max-height: 70vh; }
+.doc-preview-pdf object,
+.doc-preview-pdf embed { width: 100%; height: 100%; border: 0; display: block; }
+.doc-preview-fallback {
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 10px; padding: 24px; text-align: center;
+}
+/* Image is a button so click-to-enlarge is a real interactive element; the
+   wrapper has to be a button for keyboard activation and a11y. Strip the
+   default chrome so it doesn't look like a button. */
+.doc-preview-image {
+  width: 100%; padding: 0; background: transparent;
+  border: 0.5px solid var(--hairline); cursor: zoom-in;
+  position: relative; line-height: 0;
+}
+.doc-preview-image img {
+  width: 100%; height: auto; max-height: 60vh; object-fit: contain;
+  display: block; background: var(--glass-bg);
+}
+.doc-preview-zoom {
+  position: absolute; bottom: 8px; right: 8px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55); color: white;
+  font-size: var(--type-meta); line-height: 1;
+}
+.doc-preview-lightbox {
+  position: fixed; inset: 0; z-index: 1200;
+  background: rgba(10, 10, 14, 0.88);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; cursor: zoom-out;
+  animation: drawer-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.doc-preview-lightbox img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  display: block; border-radius: 6px;
+}
+.doc-preview-lightbox-close {
+  position: absolute; top: 14px; right: 14px;
+  background: rgba(0, 0, 0, 0.5); color: white;
+}
+.doc-preview-audio { padding: 14px; }
+.doc-preview-audio audio { width: 100%; display: block; }
+.doc-preview-video { background: black; }
+.doc-preview-video video {
+  width: 100%; max-height: 60vh; display: block; background: black;
+}
+.doc-preview-other {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 14px;
+}
+.doc-extracted-label {
+  margin: 14px 0 6px; font-size: var(--type-meta);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+/* Mobile — the right-rail drawer becomes full-screen, so the previews can
+   take more vertical room. Drop the 70vh cap on PDFs (it's too tall on a
+   phone) and prefer a shorter aspect ratio for image lightbox. */
+.app[data-mobile="true"] .doc-preview-pdf { aspect-ratio: 3 / 4; max-height: 60vh; }
+.app[data-mobile="true"] .doc-preview-image img { max-height: 50vh; }
+.app[data-mobile="true"] .doc-preview-lightbox { padding: 12px; }
+
 .md-preview-card {
   padding: 14px; background: var(--glass-bg-soft);
   border-radius: 10px; border: 0.5px solid var(--hairline);
