@@ -34,6 +34,7 @@ export interface BlobStorage {
 interface ConnStringParts {
   accountName: string;
   accountKey: string;
+  blobEndpoint: string | null;
 }
 
 function parseConnectionString(connStr: string): ConnStringParts {
@@ -49,18 +50,28 @@ function parseConnectionString(connStr: string): ConnStringParts {
   if (!parts.AccountName || !parts.AccountKey) {
     throw new Error('Azure Storage connection string missing AccountName or AccountKey');
   }
-  return { accountName: parts.AccountName, accountKey: parts.AccountKey };
+  return {
+    accountName: parts.AccountName,
+    accountKey: parts.AccountKey,
+    blobEndpoint: parts.BlobEndpoint ?? null,
+  };
 }
 
 export function createBlobStorage(connectionString: string, containerName: string): BlobStorage {
-  const { accountName, accountKey } = parseConnectionString(connectionString);
+  const { accountName, accountKey, blobEndpoint } = parseConnectionString(connectionString);
   const sharedKey = new StorageSharedKeyCredential(accountName, accountKey);
   const serviceClient = BlobServiceClient.fromConnectionString(connectionString);
   const containerClient = serviceClient.getContainerClient(containerName);
 
   // Pre-compute the prefix that all of our same-account blob URLs share so we
-  // can recognize them when sign-ing arbitrary URLs from the DB.
-  const accountHostPrefix = `https://${accountName}.blob.core.windows.net/${containerName}/`;
+  // can recognize them when sign-ing arbitrary URLs from the DB. In production
+  // the prefix is https://{account}.blob.core.windows.net/{container}/; against
+  // Azurite locally the connection string carries BlobEndpoint=http://host:port/
+  // {account}, so we honor that when present so dev SAS-signing works too.
+  const baseEndpoint = blobEndpoint
+    ? blobEndpoint.replace(/\/+$/, '')
+    : `https://${accountName}.blob.core.windows.net`;
+  const accountHostPrefix = `${baseEndpoint}/${containerName}/`;
 
   return {
     async upload(blobName, data, contentType) {
