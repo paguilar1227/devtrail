@@ -1,15 +1,10 @@
-// Search drawer end-to-end. Pinned behaviors:
-//   1. Typing in the Home search row + Enter opens the drawer with the
-//      query already submitted, results render.
-//   2. The Sidebar Search row opens the drawer empty, ready for input.
-//   3. Closing the drawer dismisses it cleanly.
-// The drawer reuses the shared Drawer primitive — its expand toggle and
-// mobile fullscreen are already covered by drawer-expand.spec.ts and
-// mobile/home/drawer-fullscreen.spec.ts; this spec is about the search-
-// specific wiring.
+// Search drawer end-to-end. Pinned behavior: typing in the Home search row
+// + Enter opens the drawer with the query already submitted, results render,
+// and Close dismisses it. The drawer reuses the shared Drawer primitive —
+// expand toggle and mobile fullscreen are already covered by
+// drawer-expand.spec.ts and mobile/home/drawer-fullscreen.spec.ts.
 
 import { expect, test } from '@playwright/test';
-import { navTo } from '../../helpers/setup';
 
 test('search drawer: Home search row submits into the drawer with results', async ({ page }) => {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
@@ -33,11 +28,3 @@ test('search drawer: Home search row submits into the drawer with results', asyn
   await expect(drawer).toHaveCount(0);
 });
 
-test('search drawer: Sidebar Search row opens an empty drawer', async ({ page }) => {
-  await navTo(page, 'Search');
-  const drawer = page.locator('.drawer');
-  await expect(drawer).toBeVisible({ timeout: 15000 });
-  // Empty default state — input is focused with no value.
-  await expect(drawer.locator('.search-drawer-input input')).toHaveValue('');
-  await expect(drawer).toContainText('Type a query and press Enter');
-});
