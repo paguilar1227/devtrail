@@ -18,10 +18,8 @@ import { listProjects } from './lib/api';
 import { cls } from './lib/util';
 import { ActivityPage } from './pages/ActivityPage';
 import { HomePage } from './pages/HomePage';
-import { MentionsPage } from './pages/MentionsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
-import { SearchPage } from './pages/SearchPage';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TagsPage } from './pages/TagsPage';
 import { TagDetailPage } from './pages/TagDetailPage';
@@ -109,12 +107,8 @@ export default function App() {
         return [{ label: 'Activity' }];
       case 'tags':
         return [{ label: 'Tags' }];
-      case 'mentions':
-        return [{ label: 'Find Mentions' }];
       case 'trash':
         return [{ label: 'Archived' }];
-      case 'search':
-        return [{ label: 'Search' }];
       default:
         return [{ label: '—' }];
     }
@@ -148,8 +142,6 @@ export default function App() {
             ? <TagDetailPage key={route.name} name={route.name} onAction={onAction} onRoute={setRoute} />
             : <TagsPage onAction={onAction} onRoute={setRoute} />
           )}
-          {route.route === 'mentions' && <MentionsPage />}
-          {route.route === 'search' && <SearchPage initialQuery={route.query} initialScope={route.scope} />}
           {route.route === 'trash' && <TrashPage />}
         </div>
       </main>

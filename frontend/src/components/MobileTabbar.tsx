@@ -78,9 +78,6 @@ export function MobileTabbar({ route, onRoute, onAction }: Props) {
               <button className={cls('m-sheet-row', route.route === 'tags' && 'active')} onClick={() => go({ route: 'tags' })}>
                 <span className="ic"><Icons.Tag /></span><span>Tags</span>
               </button>
-              <button className={cls('m-sheet-row', route.route === 'mentions' && 'active')} onClick={() => go({ route: 'mentions' })}>
-                <span className="ic"><Icons.Hash /></span><span>Mentions</span>
-              </button>
               <button className={cls('m-sheet-row', route.route === 'trash' && 'active')} onClick={() => go({ route: 'trash' })}>
                 <span className="ic"><Icons.ArchiveBox /></span><span>Archived</span>
               </button>

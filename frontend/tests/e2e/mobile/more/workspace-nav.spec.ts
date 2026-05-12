@@ -10,7 +10,6 @@ test('mobile more: every Workspace row routes to the right page', async ({ page 
   const rows: Array<[string, RegExp]> = [
     ['Activity', /^Activity$/],
     ['Tags', /^Tags$/],
-    ['Mentions', /Find Mentions/],
     ['Archived', /^Archived$/],
   ];
   for (const [label, hero] of rows) {

@@ -36,7 +36,6 @@ test('sidebar: every Workspace nav row routes to the right page', async ({ page 
     ['Projects', /^Projects$/],
     ['Activity', /^Activity$/],
     ['Tags', /^Tags$/],
-    ['Mentions', /Find Mentions/],
     ['Archived', /^Archived$/],
   ];
   for (const [label, hero] of routes) {

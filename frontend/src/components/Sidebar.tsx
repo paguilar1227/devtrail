@@ -59,10 +59,6 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
         <span className="label">Home</span>
         <span className="count">{inboxCount}</span>
       </div>
-      <div className="sb-item" onClick={() => onAction({ kind: 'search' })}>
-        <span className="ic"><Icons.Search /></span>
-        <span className="label">Search</span>
-      </div>
       <div className={cls('sb-item', isRoute('projects') && 'active')} onClick={() => onRoute({ route: 'projects' })}>
         <span className="ic"><Icons.Folders /></span>
         <span className="label">Projects</span>
@@ -75,10 +71,6 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
       <div className={cls('sb-item', isRoute('tags') && 'active')} onClick={() => onRoute({ route: 'tags' })}>
         <span className="ic"><Icons.Tag /></span>
         <span className="label">Tags</span>
-      </div>
-      <div className={cls('sb-item', isRoute('mentions') && 'active')} onClick={() => onRoute({ route: 'mentions' })}>
-        <span className="ic"><Icons.Hash /></span>
-        <span className="label">Mentions</span>
       </div>
       <div className={cls('sb-item', isRoute('trash') && 'active')} onClick={() => onRoute({ route: 'trash' })}>
         <span className="ic"><Icons.ArchiveBox /></span>
