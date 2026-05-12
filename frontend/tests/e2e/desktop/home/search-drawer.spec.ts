@@ -5,6 +5,10 @@
 // drawer-expand.spec.ts and mobile/home/drawer-fullscreen.spec.ts.
 
 import { expect, test } from '@playwright/test';
+// Side-effect import: attaches the standard beforeEach (navigate + wait for
+// SPA ready) and afterEach (e2e:-prefixed cleanup). Required even if no
+// helper symbols are pulled from this module.
+import '../../helpers/setup';
 
 test('search drawer: Home search row submits into the drawer with results', async ({ page }) => {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
