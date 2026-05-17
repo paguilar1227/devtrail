@@ -594,6 +594,24 @@ export async function reprocessContent(
   return rerunIngestTail(deps, row, 'reprocess');
 }
 
+/**
+ * Decide whether a reprocess should pass the row's existing title back into
+ * the metadata extractor (preserving it) or pass `undefined` (letting the
+ * extractor produce a fresh title).
+ *
+ * Preserve only when the user explicitly set the title (`title_source =
+ * 'user'`). For filename- and AI-derived titles, return undefined so the
+ * extractor wins — otherwise a stale auto-title (e.g. "(no text content)"
+ * from a failed first ingest) survives every subsequent reprocess. Also
+ * always drop the "Processing… <url>" placeholder left by an interrupted
+ * ingest, regardless of title_source.
+ */
+export function pickPreservedTitle(row: Pick<ContentItemRow, 'title' | 'title_source'>): string | undefined {
+  if (row.title_source !== 'user') return undefined;
+  if (row.title.startsWith('Processing…')) return undefined;
+  return row.title;
+}
+
 async function rerunIngestTail(
   deps: ServiceDeps,
   row: ContentItemRow,
@@ -629,9 +647,7 @@ async function rerunIngestTail(
     }
   }
 
-  // Drop the "Processing… <url>" placeholder if it's still on the row, so
-  // metadata extraction picks the new title without "Processing…" winning.
-  const userTitle = row.title.startsWith('Processing…') ? undefined : row.title;
+  const userTitle = pickPreservedTitle(row);
 
   const trace = newTrace({ source_url: row.source_url ?? undefined });
   const input: CreateContentInput = {
