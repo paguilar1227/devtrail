@@ -24,6 +24,9 @@
 // curated suite before merging anything that touches prompts.
 
 import { createHash } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import type {
   EmbeddingProvider,
   LLMMessage,
@@ -31,6 +34,15 @@ import type {
   LLMProvider,
   LLMResponse,
 } from './types.js';
+
+// Stub-OCR fixtures: when the metadata extractor runs against an image/audio
+// attachment in stub mode, we look up a hand-written response keyed by the
+// sha256 of the file bytes (backend/tests/fixtures/stub-ocr/<hash>.json).
+// This gives the local seed + drawer a realistic "extracted text" surface
+// without burning a real Gemini multimodal call. Falls through to the
+// generic placeholder if no fixture is present for the hash.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const STUB_OCR_DIR = join(__dirname, '..', '..', 'tests', 'fixtures', 'stub-ocr');
 
 const EMBED_DIMS = 3072;
 
@@ -73,14 +85,16 @@ export class StubEmbeddingProvider implements EmbeddingProvider {
 // LLM stub — dispatches by system-prompt content
 // ---------------------------------------------------------------------------
 
-type Dispatcher = (system: string, user: string, opts: LLMOptions) => string;
+type Attachment = { mimeType: string; data: Buffer };
+type Dispatcher = (system: string, user: string, opts: LLMOptions, attachments: Attachment[]) => string;
 
 export class StubLLMProvider implements LLMProvider {
   async complete(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
     const system = options.systemPrompt ?? '';
     const user = flattenUserContent(messages);
+    const attachments = extractAttachments(messages);
     const dispatcher = pickDispatcher(system, options);
-    const content = dispatcher(system, user, options);
+    const content = dispatcher(system, user, options, attachments);
     return {
       content,
       tokensUsed: { input: estimateTokens(system + user), output: estimateTokens(content), total: 0 },
@@ -150,7 +164,14 @@ function findSpan(text: string, needle: string): string | null {
   return text.slice(start, end).trim();
 }
 
-const metadataExtractionStub: Dispatcher = (_sys, user) => {
+const metadataExtractionStub: Dispatcher = (_sys, user, _opts, attachments) => {
+  // Binary attachment present (image, audio, video, PDF that bypassed
+  // pdf-parse, etc.) → try the stub-OCR fixture before falling back to
+  // text-only heuristics. Without this, every image in dev shows up as
+  // "(no text content)" because the stub has no real OCR/transcription.
+  const fixture = attachments.length > 0 ? lookupStubOcr(attachments[0].data) : null;
+  if (fixture) return JSON.stringify(fixture);
+
   const text = user.trim();
   const firstSentence = (text.match(/^.{1,200}?(?:[.!?](?:\s|$)|\n|$)/) ?? [text.slice(0, 80)])[0]
     .trim()
@@ -176,6 +197,23 @@ const metadataExtractionStub: Dispatcher = (_sys, user) => {
     published_at: null,
   });
 };
+
+function lookupStubOcr(data: Buffer): Record<string, unknown> | null {
+  const hash = createHash('sha256').update(data).digest('hex');
+  const path = join(STUB_OCR_DIR, `${hash}.json`);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    // Strip the documentation-only `_fixture_source` field before returning —
+    // the production schema doesn't have it, and we want stub responses to
+    // round-trip through the same validator as real ones.
+    const { _fixture_source: _ignored, ...rest } = raw;
+    return rest;
+  } catch (err) {
+    console.warn(`[stub-ocr] failed to read fixture ${hash}.json:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 const ragSynthesisStub: Dispatcher = (_sys, user) => {
   // The user message in RAG calls is the assembled prompt with retrieved
@@ -205,6 +243,29 @@ function flattenUserContent(messages: LLMMessage[]): string {
       return m.content.map((p) => p.text ?? '').filter(Boolean);
     })
     .join('\n');
+}
+
+function extractAttachments(messages: LLMMessage[]): Attachment[] {
+  const out: Attachment[] = [];
+  for (const m of messages) {
+    if (typeof m.content === 'string') continue;
+    for (const part of m.content) {
+      // Image and audio/video parts both come through as { type: 'image' | ...,
+      // data: Buffer | string, mimeType: string }. Production-side providers
+      // also send base64-encoded strings; coerce both into Buffers so the
+      // sha256 lookup is stable regardless of how the caller framed it.
+      const raw = (part as { data?: unknown }).data;
+      const mime = (part as { mimeType?: string }).mimeType;
+      if (raw == null || !mime) continue;
+      const buf = Buffer.isBuffer(raw)
+        ? raw
+        : typeof raw === 'string'
+          ? Buffer.from(raw, 'base64')
+          : null;
+      if (buf) out.push({ mimeType: mime, data: buf });
+    }
+  }
+  return out;
 }
 
 function tokenize(s: string): string[] {
