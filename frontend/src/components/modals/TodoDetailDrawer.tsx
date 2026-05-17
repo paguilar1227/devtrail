@@ -32,9 +32,16 @@ interface Props {
    * navigation feel without nesting drawers.
    */
   onAction?: ActionDispatch;
+  /**
+   * If set, render a "Back to list" button at the top of the body.
+   * Used when this drawer is embedded inline by TodoListDrawer's
+   * detail mode — clicking back returns to the list view while
+   * preserving its scroll / search / sort state.
+   */
+  onBack?: () => void;
 }
 
-export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
+export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   const qc = useQueryClient();
   const [commentDraft, setCommentDraft] = useState('');
   const [subtaskDraft, setSubtaskDraft] = useState('');
@@ -221,6 +228,15 @@ export function TodoDetailDrawer({ todo, onClose, onAction }: Props) {
         </>
       }
     >
+      {onBack ? (
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm doc-reader-back"
+          onClick={onBack}
+        >
+          <Icons.ChevronLeft size={12} /> Back to list
+        </button>
+      ) : null}
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
         <Priority p={priority} />
         <span className="todo-status-pill">{todo.status.replace('_', ' ')}</span>

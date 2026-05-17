@@ -1,10 +1,17 @@
 # CLAUDE.md — Open Brain v2
 
-Project-specific instructions for AI sessions working on this codebase.
+Project-wide instructions for AI sessions. Path-scoped rules live in `.claude/rules/` and auto-load when working in matching subtrees — those are the place for backend internals, schema details, LLM gotchas, and frontend patterns. Keep this file lean.
+
+| Subtree you're working in | Loads (in addition to this file) |
+|---|---|
+| `backend/**` | `.claude/rules/backend.md` (service layer, MCP tools, project membership, search/RAG, backend tests) |
+| `migrations/**` or `backend/src/db/**` | `.claude/rules/schema.md` (migrations list, pgvector, B1ms / HNSW constraint) |
+| `backend/src/providers/**` or `backend/src/capture/**` | `.claude/rules/llm.md` (JSON parsing, token budgets, model IDs, multimodal, URL fetchers) |
+| `frontend/**` | `.claude/rules/frontend.md` (drawer composition, prow rows, e2e Playwright setup) |
 
 ## Reality check first
 
-Before trusting anything in this file, this CLAUDE.md, prior session notes, or your auto-memory: **verify against the current code**. Architecture changes happen between sessions. Cheap checks before committing to a mental model:
+Before trusting anything in this file, the rules, prior session notes, or your auto-memory: **verify against the current code**. Architecture changes happen between sessions. Cheap checks:
 
 - `git log --oneline -20` — what changed recently
 - `find backend/src -type f -name '*.ts' | sort` — backend files
@@ -13,9 +20,9 @@ Before trusting anything in this file, this CLAUDE.md, prior session notes, or y
 - `cat backend/package.json frontend/package.json` — current deps
 - A live `/health` hit on production confirms what's deployed
 
-If a memory or doc references a file path, function, or entity name that no longer exists in the repo, treat the doc as stale and update it. **Don't chase a phantom architecture.** Past pivots have completely replaced the entity model and code layout — assumptions from older sessions go stale fast.
+If a memory or doc references a file path, function, or entity name that no longer exists in the repo, treat the doc as stale and update it. **Don't chase a phantom architecture.** Past pivots have completely replaced the entity model and code layout.
 
-## What Open Brain v2 is (current state — verified 2026-04-24)
+## What Open Brain v2 is
 
 A NotebookLM-style personal knowledge base + productivity tool. Single user. No multi-tenancy.
 
@@ -48,147 +55,31 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | RAG fast path | Azure Foundry chat completions | `gpt-5-4` |
 | RAG thorough path | Azure Foundry Responses API | `gpt-5-4-pro` |
 
-## Schema (8 migrations, see `migrations/`)
-
-- `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
-- `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
-- `003_entities_graph.sql` — entities, chunk_entities, `published_at` column on content_items
-- `004_processing_status.sql` — `processing_status` (pending/ready/failed) + `processing_error` on content_items for the async ingest contract
-- `005_backfill_control_chars.sql` — strip C0/DEL bytes from old content_items.content rows
-- `006_ingest_completed_at.sql` — `ingest_completed_at` for the polling endpoint
-- `007_pinned.sql` — nullable `pinned_at` TIMESTAMPTZ on content_items, todos, projects, with partial indexes
-- `008_manual_order.sql` — nullable INTEGER `manual_order` on todos for user-defined sort within sibling groups
-
-Auto-migration runs on container startup (`runMigrations()` in `backend/src/server.ts`). It checks for table/column existence and applies missing migrations idempotently.
-
-**No HNSW indexes.** B1ms tier doesn't have memory for HNSW init at 3072 dims. Sequential scan is fine at single-user scale.
-
 ## Code layout
-
-Top-level split:
 
 ```
 backend/                  # Hono API + MCP server (Node 20)
-├── src/                  # source
+├── src/                  # source — see .claude/rules/backend.md for the detailed tree
 ├── tests/                # unit + integration
-├── package.json
-├── tsconfig.json
-└── vitest.config.ts
+└── package.json
 
-frontend/                 # Vite + React web client (hand-rolled CSS in src/styles.css)
+frontend/                 # Vite + React web client
 ├── src/
-├── tests/e2e/             # Playwright workflow suite (workflows.spec.ts)
-├── index.html
-├── package.json
-├── playwright.config.ts
-└── vite.config.ts
+├── tests/e2e/             # Playwright workflow suite
+└── package.json
 
 shared/                   # @open-brain/shared — Zod schemas + TS types on the wire
-├── src/schemas.ts         # Single source of truth for request/response shapes
-├── src/index.ts           # re-exports
-├── package.json
-└── tsconfig.json
+└── src/schemas.ts         # Single source of truth for request/response shapes
 
-migrations/               # SQL migrations (applied at backend startup)
+migrations/               # SQL migrations (applied at backend startup; see schema rule)
 scripts/                  # deploy.sh + live-e2e.sh + diagnostics
 docs/                     # design docs, plans, UI build brief
 .github/workflows/        # CI (tests + frontend build) + Deploy (Docker → ACA)
+.claude/rules/            # path-scoped rule files; load when matching files are touched
 Dockerfile                # multi-stage: frontend build → backend build → runtime
 ```
 
 Root `package.json` is a thin script delegator (`npm run dev` → `cd backend`, etc.).
-
-**Backend** layout (everything under `backend/src/`):
-
-```
-src/
-├── app.ts                  # Hono app factory: REST routes + MCP mount + static web
-├── server.ts               # Entry point: deps wiring + migrations + serve
-├── config.ts               # Zod-validated env config
-├── capture/
-│   ├── chunker.ts          # 500/100 sliding window with sentence-boundary alignment
-│   ├── ingest-trace.ts     # Per-ingest trace IDs + fingerprints
-│   ├── metadata.ts         # Haiku metadata: title, topics, tags, extracted_text, published_at
-│   └── url-detect.ts       # Classify URL type (YouTube, X, PDF, image, audio, html)
-├── db/                     # Raw SQL, no ORM. One module per table.
-│   ├── client.ts           # pg.Pool wrapper that registers pgvector types on first use
-│   ├── projects.ts
-│   ├── content-items.ts
-│   ├── chunks.ts
-│   ├── todos.ts
-│   ├── todo-comments.ts
-│   └── entities.ts         # entities + chunk_entities edges
-├── services/               # Business logic. Adapters (REST, MCP) call into here.
-│   ├── index.ts            # ServiceDeps interface (DI contract)
-│   ├── projects.ts
-│   ├── content-items.ts    # createContentItem orchestrates dedup→upload→metadata→chunk→embed→graph
-│   ├── todos.ts
-│   ├── todo-comments.ts
-│   ├── search.ts           # Hybrid vector + graph search with RRF fusion + retrieval_path
-│   ├── rag.ts              # Q&A: depth classify → search → synthesize via fast or pro
-│   ├── query-depth.ts      # Haiku classifier: fast vs thorough + entity extraction
-│   ├── entities.ts         # extract → resolve → map mentions to chunks → persist edges
-│   └── url-ingest.ts       # YouTube / X / PDF / HTML ingestion → content-items pipeline
-├── providers/
-│   ├── types.ts            # EmbeddingProvider, LLMProvider interfaces
-│   ├── gemini-embedding.ts
-│   ├── gemini-llm.ts
-│   ├── anthropic-llm.ts
-│   ├── azure-foundry-llm.ts        # Chat completions (gpt-5-4)
-│   ├── azure-foundry-responses.ts  # Responses API (gpt-5-4-pro)
-│   ├── pdf-extract.ts      # pdf-parse v2 PDFParse class
-│   ├── supadata.ts         # YouTube transcript via Supadata (single-call, no fallback)
-│   ├── firecrawl.ts        # HTML extraction
-│   ├── xai.ts              # X/Twitter live-search via Grok
-│   ├── stub.ts             # Deterministic in-memory LLM/embedding fakes for stub mode
-│   └── json-utils.ts       # extractJson() — strips markdown fences from LLM output
-├── mcp/
-│   └── server.ts           # 21 MCP tools (see "MCP tools" below)
-└── storage/
-    └── blob.ts             # Azure Blob upload/download
-```
-
-### Service layer pattern
-
-Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `backend/src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
-
-## MCP tools (21 total — defined in `backend/src/mcp/server.ts`)
-
-Read:
-1. `list_projects` — list all (filter by status optional)
-2. `list` — entity_type-filtered browse (document / note / todo)
-3. `get` — fetch by UUID, auto-detects type (project / content / todo)
-4. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
-5. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
-6. `list_tags` — tag inventory with usage counts; optional `project_id` scope
-7. `list_comments` — comments on a todo
-8. `list_activity` — recent ingest / edit / comment events with since/until/kinds/project_id filters
-9. `ask` — RAG synthesis (auto / fast / thorough depth)
-
-Write:
-10. `create_project`
-11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`)
-12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags), project (name/description/status)
-13. `replace` — archive an existing content item and create a v2 in its place; old row stamped `metadata.replaced_by`. Refuses pending rows. Text-only (REST handles binary replacement).
-14. `archive` — soft delete on content / todo / project
-15. `restore` — undo `archive`
-16. `add_comment` — add a comment to a todo
-17. `update_comment` — edit a comment body
-18. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
-19. `retry` — re-run a failed ingest (state must be `failed`)
-20. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
-21. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
-
-Hard delete is REST-only by design. Bulk ops, pin/unpin, and stats are REST-only — those are UI affordances rather than AI workflows. The MCP server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code) telling the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
-
-### Project membership (asymmetric — easy to get wrong)
-
-| Entity | Membership field |
-|--------|------------------|
-| document, note, quick_note | `project_ids[]` (array, multi-project) |
-| todo | `project_id` (single string, nullable = personal Inbox) |
-
-Mixing them up will make the call fail.
 
 ## REST API
 
@@ -198,36 +89,32 @@ Routes (see `backend/src/app.ts`):
 
 - `GET /health`
 - **Projects** — `GET|POST|PUT|DELETE /api/v1/projects[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?status=` and `?pinned=`.
-- **Content** — `GET|POST|PUT|DELETE /api/v1/content[/:id]` + `/restore` + `/pin` + `/unpin` + `/retry` + `/reprocess` + `/status`. List supports `?type=`, `?project_id=`, `?tags=`, `?processing_status=`, `?pinned=`. `POST /api/v1/content` accepts JSON or `multipart/form-data` (with `file` field). `POST /api/v1/content/from-url` for URL ingest. `POST /api/v1/content/bulk` for batch ops (archive/restore/delete/add_tags/remove_tags/set_project_ids).
-- **Todos** — `GET|POST|PUT|DELETE /api/v1/todos[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?project_id=`, `?status=`, `?priority=`, `?pinned=`. `POST /api/v1/todos/bulk` for batch ops (archive/restore/delete/add_tags/remove_tags/set_status/set_priority/set_project_id/set_due_date).
+- **Content** — `GET|POST|PUT|DELETE /api/v1/content[/:id]` + `/restore` + `/pin` + `/unpin` + `/retry` + `/reprocess` + `/status`. List supports `?type=`, `?project_id=`, `?tags=`, `?processing_status=`, `?pinned=`. `POST /api/v1/content` accepts JSON or `multipart/form-data` (with `file` field). `POST /api/v1/content/from-url` for URL ingest. `POST /api/v1/content/bulk` for batch ops.
+- **Todos** — `GET|POST|PUT|DELETE /api/v1/todos[/:id]` + `/restore` + `/pin` + `/unpin`. List supports `?project_id=`, `?status=`, `?priority=`, `?pinned=`. `POST /api/v1/todos/bulk` for batch ops.
 - **Comments** — `GET|POST|PUT|DELETE /api/v1/todos/:id/comments[/:cid]`.
-- **Tags** — `GET /api/v1/tags` (inventory with counts), `PUT /api/v1/tags/:name {to}` (rename / merge), `DELETE /api/v1/tags/:name` (corpus-wide delete).
+- **Tags** — `GET /api/v1/tags` (inventory), `PUT /api/v1/tags/:name {to}` (rename / merge), `DELETE /api/v1/tags/:name` (corpus-wide delete).
 - **Activity** — `GET /api/v1/activity` with `?since=`, `?until=`, `?kinds=ingest,edit,comment`, `?project_id=`, `?limit=`.
 - **Stats** — `GET /api/v1/stats` (counts + freshness + top tags); optional `?project_id=` to scope.
-- **Search / RAG** — `POST /api/v1/search` (hybrid vector + graph), `POST /api/v1/find-mentions`, `POST /api/v1/rag` (`depth: 'auto'|'fast'|'thorough'`).
+- **Search / RAG** — `POST /api/v1/search`, `POST /api/v1/find-mentions`, `POST /api/v1/rag` (`depth: 'auto'|'fast'|'thorough'`).
 - **MCP** — `ALL /mcp` — stateless, fresh server + transport per request.
 
-Soft delete by default (`archived = true`); pass `?hard=true` for permanent delete on the `DELETE` endpoints.
+Soft delete by default (`archived = true`); pass `?hard=true` for permanent delete. Two URL fields ship on every content item: `blob_url` (read SAS for inline preview) and `download_url` (SAS with `rscd` Content-Disposition for save-to-disk).
 
-Async ingest contract: `POST /content` and `/from-url` return **202 + `{id, processing_status: 'pending'}`**. Poll `GET /content/:id/status` until `processing_status` is `ready` or `failed`. `POST /content/:id/retry` re-runs a failed ingest; `POST /content/:id/reprocess` regenerates chunks/embeddings on a ready or failed row.
+Async ingest contract: `POST /content` and `/from-url` return **202 + `{id, processing_status: 'pending'}`**. Poll `GET /content/:id/status` until `processing_status` is `ready` or `failed`. `POST /content/:id/retry` re-runs a failed ingest; `POST /content/:id/reprocess` regenerates chunks/embeddings/metadata.
 
 ## Development workflow
 
 ### Local cycle
 
 ```bash
-docker compose up -d                         # local Postgres on port 5434 (avoid clashing with 5432)
-npm run install:all                          # backend + frontend deps (first time only)
+docker compose up -d                         # local Postgres on port 5434
+npm run install:all                          # first time only
 cd backend && npx tsc --noEmit               # types
-npm test                                     # backend vitest run (delegates to backend/)
-npm run dev                                  # backend dev server (tsx watch on backend/src/server.ts)
-cd frontend && npm run dev                   # frontend dev server (Vite, separate terminal)
-npm run build:all                            # full production build (backend dist/ + frontend dist/)
+npm test                                     # backend vitest run
+npm run dev                                  # backend dev server (tsx watch)
+cd frontend && npm run dev                   # frontend dev server (separate terminal)
+npm run build:all                            # full production build
 ```
-
-Two test layers:
-- **Backend integration** (`backend/tests/integration/`): exercises the full REST + MCP surface against mocked providers and an in-memory/test pg. Fast, hermetic, no docker.
-- **Frontend workflow e2e** (`frontend/tests/e2e/workflows.spec.ts`): user-flow Playwright suite that round-trips through Vite → Hono → Postgres + Azurite via stub-mode providers, seeded with `seed-local.ts`. Shares the same stack as `npm run dev:up`.
 
 ### Plan-first
 
@@ -235,11 +122,40 @@ Before implementing a feature: read the relevant services, list the files that c
 
 ### Commit style
 
-One commit per logical unit. Group source + tests in the same commit. Conventional-style prefixes: `feat:`, `fix:`, `feat(graph):`, `fix(search):`, etc. (See `git log` for style.)
+One commit per logical unit. Group source + tests in the same commit. Conventional-style prefixes: `feat:`, `fix:`, `feat(graph):`, `fix(search):`, etc.
 
-### After pushing
+### Branching — work on feature branches, NOT directly on main
 
-CI and Deploy run independently on every push to `main`. Both must pass. Poll until both are done:
+**Default workflow:** create a branch, commit there, open a PR when the chunk is done, merge to main when the user says ship it.
+
+The repo is private and on the GitHub Actions free tier (2000 min/month). Every push to `main` triggers **two** workflows — `CI` (~26 min, full Playwright e2e) and `Deploy to Azure` (~5 min) = ~31 min metered per push. Pushing N WIP commits directly to main during an iteration burns N×31 min of the monthly cap for changes the user hasn't even reviewed yet. Burned through 1200+ minutes in May 2026 doing exactly that.
+
+**Concrete rules:**
+- Default to a branch named `feat/<thing>` or `fix/<thing>`. Commit there freely; no Actions minutes spent until you push.
+- Push the branch when you want CI feedback. PR-style runs are cheap if the workflows are gated by concurrency (see below).
+- Only push to `main` when the user explicitly says to merge / ship / land. One CI run on merge instead of N during iteration.
+- For trivial / docs-only changes, append `[skip ci]` to the commit message.
+- If GH Actions is unavailable (quota exhausted, runner outage) and the user needs prod NOW, use the manual deploy below.
+
+If you find yourself about to `git push origin main` mid-session without explicit permission, stop and ask.
+
+### Manual deploy (az CLI escape hatch)
+
+For when GitHub Actions is down, billing-suspended, or you need to deploy faster than CI can finish. Bypasses the Deploy workflow entirely.
+
+```bash
+RESOURCE_GROUP=openbrain-rg ACR_NAME=yourregistry bash scripts/deploy.sh
+```
+
+(a) builds the Docker image locally for `linux/amd64` (~5-10 min on Apple Silicon for the cross-build), (b) pushes to ACR (~1-3 min, mostly cached), (c) rolls a new Container App revision (~1-2 min). Tags with the short HEAD SHA so revisions are traceable.
+
+Requires Docker running + `az login` already done. ACR lives in `shared-rg` (not `openbrain-rg`) — it's shared across projects.
+
+If `docker push` to ACR times out mid-manifest (proxy / network glitch), the layers are usually already uploaded; retry just `docker push yourregistry.azurecr.io/open-brain-v2:<tag>` instead of re-running the whole script.
+
+### After pushing — poll for CI + Deploy
+
+Only relevant for pushes to `main`. PR-branch CI is one run, not two.
 
 ```bash
 while true; do
@@ -253,7 +169,19 @@ while true; do
 done
 ```
 
-CI passing while Deploy fails (and vice versa) is possible. Report both.
+CI passing while Deploy fails (and vice versa) is possible. Report both. If both fail in seconds with empty step logs (`gh api .../runs/<id>/jobs --jq '.jobs[].steps'` returns `[]`), it's usually GitHub Actions quota — check `https://github.com/settings/billing/summary` rather than chasing a code bug.
+
+### CI concurrency (not yet wired)
+
+`ci.yml` and `deploy.yml` don't currently have a `concurrency` block. Adding one cancels in-flight runs when a newer push lands on the same ref, saving ~50% of Actions minutes during rapid iteration:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+Worth adding when the workflows are next touched.
 
 ### Ask before destructive actions
 
@@ -261,64 +189,17 @@ Confirm before:
 - Deleting files (could they still be needed?)
 - Force-pushing, resetting, or rewriting git history
 - Modifying Azure infra
+- Pushing to `main` (see Branching rule above)
 - Exposing secrets or the user's IP
 
-## Test layout
+## Test layout overview
 
-| Layer | Path | What |
+| Layer | Path | Detail |
 |-------|------|------|
-| Unit | `backend/tests/unit/**` | Single modules: providers, db client, mcp server wiring, capture utilities, storage |
-| Integration | `backend/tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
-| Integration | `backend/tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
-| Integration | `backend/tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
-| Integration | `backend/tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
-| Workflow e2e | `frontend/tests/e2e/workflows.spec.ts` | ~12 happy-path user flows in Playwright against the seeded stub-mode stack (Postgres + Azurite + backend + Vite). globalSetup runs `docker compose up` + `seed-local.ts`. |
+| Backend unit / integration | `backend/tests/**` | See `.claude/rules/backend.md` |
+| Frontend workflow e2e | `frontend/tests/e2e/**` | See `.claude/rules/frontend.md` |
 
-Mocks live in `backend/tests/helpers/mocks.ts`. Add new tests at the appropriate layer when you change behavior. Bug fixes get a regression test.
-
-Run a single backend file (from `backend/`):
-```bash
-cd backend && npx vitest run tests/integration/rest-api.test.ts
-```
-
-Run the workflow e2e (from `frontend/`):
-```bash
-cd frontend && npx playwright test
-```
-
-## Known gotchas
-
-### LLMs
-
-- **Markdown-wrapped JSON.** Anthropic and Gemini both sometimes return JSON inside ` ```json … ``` ` fences even with `responseFormat: 'json'`. Always pipe `LLMProvider` JSON output through `extractJson()` from `backend/src/providers/json-utils.ts` before `JSON.parse`.
-- **Output token budget.** Haiku 4.5 metadata calls use `maxTokens: 8192` for PDF-scale inputs (raised from 2048 — see `fix(metadata): raise Flash maxTokens 2048→8192 for PDF-scale inputs`). For entity extraction, 4096 is enough because we cap input at 50k chars.
-- **Model IDs change.** Verify the current ID if you get 404s. The codebase pins Haiku to `claude-haiku-4-5-20251001` explicitly.
-
-### Gemini Embedding 2
-
-- Model ID: `gemini-embedding-2-preview`. Default dim is 768 — we explicitly request 3072.
-- Multimodal: accepts `image/png`, `image/jpeg`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/quicktime`, `application/pdf`.
-- The Generative Language API must be enabled on the GCP project tied to the API key.
-
-### PostgreSQL / pgvector
-
-- `db.query()` calls `ensureVector()` which lazily registers pgvector types on first use. Migrations that create the `vector` extension must use `pool.query()` directly (not `db.query()`) to avoid the chicken-and-egg.
-- HNSW is **not** in use — too memory-hungry for B1ms at 3072 dims. Sequential scan is the current cost.
-- Migrations are checked by table-existence probes in `runMigrations()`. Adding a new migration: add the file and a new probe in `backend/src/server.ts`.
-
-### Search and RAG
-
-- `search()` returns hits with a `retrieval_path` array showing which path (vector / entity expansion / both) reached the chunk. RRF fusion combines the lists. `graph: false` opts out of expansion.
-- `ragQuery()` first runs the depth classifier (Haiku) which both classifies fast/thorough AND extracts named entities to seed graph expansion. `depth: 'fast'|'thorough'` skips the classifier (zeroes its timing).
-- Per-stage timing is on every RAG response (`meta.timings_ms`). Use it to diagnose latency.
-
-### URL ingestion
-
-- YouTube: Supadata single-call. Replaced the direct-scrape → Firecrawl → xAI fallback chain (commit `aab7f16`); failure surfaces as `YOUTUBE_TRANSCRIPT_MISS:` rather than retrying.
-- X/Twitter: xAI Grok live-search primary, Firecrawl stealth fallback.
-- PDFs: downloaded as bytes → text via `pdf-parse` v2 PDFParse class. Watch for the v2 API change — older docs reference a function import that no longer exists.
-- HTML: Firecrawl markdown extraction. Reject results shorter than 300 chars or matching error/placeholder titles.
-- Dedup: by `source_url` first, then by `file_hash` for binary downloads.
+Bug fixes get a regression test at the surface where the bug appeared.
 
 ## Production environment
 
@@ -328,22 +209,26 @@ cd frontend && npx playwright test
 - **API key:** Azure Key Vault `your-keyvault/open-brain-api-key`
 - **PostgreSQL:** `your-pg-server.postgres.database.azure.com` (Azure Postgres Flexible Server)
 - **Azure Container App:** resource group `openbrain-rg`, name `openbrain-prod-api`
+- **Container Registry:** `yourregistry.azurecr.io` in resource group `shared-rg` (shared across projects — NOT in `openbrain-rg`)
+- **Image name:** `yourregistry.azurecr.io/open-brain-v2:<short-sha>` (plus a rolling `:latest` tag)
 - **Local dev Postgres:** port 5434 (so it doesn't clash with other projects on 5432)
+
+Check the currently-running revision + its image tag:
+```bash
+az containerapp show --name openbrain-prod-api --resource-group openbrain-rg \
+  --query "{revision: properties.latestRevisionName, image: properties.template.containers[0].image}" -o json
+```
 
 ## Failure modes that have happened
 
-These are real, not hypothetical. Tests cover most.
+General / cross-cutting issues. Domain-specific ones (LLM, pgvector, URL ingestion) live in their respective rule files.
 
-1. **Markdown-fenced JSON breaking parses** — fixed by routing all JSON through `extractJson()` in `json-utils.ts`. Whenever you add a new LLM-JSON path, route it through there.
-2. **PDF parsing API change** — `pdf-parse` v2 ships a `PDFParse` class instead of the v1 default-import function. Use the class.
-3. **Firecrawl HTML returning placeholder pages** — error/404/"Example Domain" titles must be rejected; bare-minimum content length must be > 300 chars to count as real ingestion.
-4. **xAI X-search returning miss responses** — detect failure phrases up front and surface a clean `X_SEARCH_MISS:` error rather than saving useless content.
-5. **YouTube snowflake IDs vs date windows** — decode the post snowflake to derive a ±6hr search window so x_search can actually find the post.
-6. **HNSW init OOM** — don't try to add the index on B1ms. If you need faster search, either upsize the DB or use a smaller embedding dim.
-7. **Past phantom-architecture sessions** — if the doc and the code disagree, the code wins. Update the doc immediately.
+1. **Past phantom-architecture sessions** — if the doc and the code disagree, the code wins. Update the doc immediately.
+2. **GitHub Actions quota burn from direct-to-main pushes** — May 2026 burned ~1200 of the 2000-min monthly free-tier cap by pushing every WIP commit straight to `main` and triggering a ~31-min CI+Deploy pair per push. Fix is in "Branching" above: branch by default, only push to main on user-approved merge. When quota is gone, `scripts/deploy.sh` is the manual escape hatch.
+3. **ACR manifest push timing out mid-upload** — proxy / network glitches can leave layers uploaded but the manifest write failed (image tag never appears in `az acr repository show-tags`). Don't re-build; just `docker push <full-image:tag>` to re-attempt the manifest with cached layers.
 
 ## When you finish a task
 
 - Run `npx tsc --noEmit` and `npm test` before committing.
-- Update CLAUDE.md if you changed an entity, table, MCP tool, or service-layer contract. Stale docs cost more than they save.
+- Update this file or the relevant `.claude/rules/*.md` if you changed an entity, table, MCP tool, or service-layer contract. Stale docs cost more than they save.
 - If you delete or rename a service / table / file, grep the docs for it (`grep -rn 'old-name' --include='*.md'`) and fix or remove references.

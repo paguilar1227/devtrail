@@ -172,19 +172,21 @@ export function Modal({
   footer?: ReactNode;
   size?: 'lg';
 }) {
+  // Capture phase + stopImmediatePropagation so that when a modal is
+  // open over a Drawer (e.g. opening NoteEditorModal from inside a
+  // NoteReaderBody embedded in NoteListDrawer), pressing Escape closes
+  // ONLY the modal and not the surrounding drawer. Without this, both
+  // listeners fire — drawer-first by registration order — and the whole
+  // surface collapses out from under the modal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      onClose();
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-  // Track whether the mousedown originated on the backdrop. A click is
-  // delivered to the common ancestor of mousedown and mouseup, so a
-  // text-selection drag that starts inside the modal and releases over
-  // the overlay would otherwise trigger this handler and dismiss the
-  // modal — losing in-progress edits. Only dismiss when both ends of
-  // the press are on the backdrop.
   const downOnBackdropRef = useRef(false);
   return (
     <div

@@ -1,5 +1,8 @@
-// All personal (project-less) notes in a drawer. Mirrors TodoListDrawer
-// for symmetry — same drawer chrome, same pagination shape.
+// All personal (project-less) notes in a drawer. Mirrors DocListDrawer:
+// clicking a row swaps the drawer body to NoteReaderBody with a "Back to
+// list" affordance — the list state (search, sort, scroll, infinite
+// cursor) survives the round trip because we don't unmount it, just hide
+// it visually while the reader is up.
 //
 // Pagination: PAGE_SIZE rows per request ordered by created_at DESC.
 // Next-page cursor is the oldest visible row's `created_at`. An
@@ -18,22 +21,25 @@ import { Drawer } from '../primitives';
 import { NoteRow } from '../NoteRow';
 import { SearchBox } from '../SearchBox';
 import { NoteSortDropdown } from '../SortDropdown';
+import { NoteReaderBody } from './NoteReaderDrawer';
 import { listContent } from '../../lib/api';
 import { toUiNote } from '../../lib/view';
 import { useInView } from '../../lib/useInView';
 import { useNoteSortMode, compareNotesForMode } from '../../lib/useNoteSortMode';
-import type { ActionDispatch } from '../../types';
+import type { ActionDispatch, Note, Route } from '../../types';
 
 interface Props {
   onClose: () => void;
   onAction: ActionDispatch;
+  onRoute?: (r: Route) => void;
 }
 
 const PAGE_SIZE = 20;
 
-export function NoteListDrawer({ onClose, onAction }: Props) {
+export function NoteListDrawer({ onClose, onAction: _onAction, onRoute }: Props) {
   const [q, setQ] = useState('');
   const { mode: sortMode, setMode: setSortMode } = useNoteSortMode('inbox');
+  const [selected, setSelected] = useState<Note | null>(null);
 
   const pages = useInfiniteQuery({
     queryKey: ['content', 'notes', 'personal', 'infinite', q],
@@ -64,6 +70,22 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
     }
   }, [inView, pages.hasNextPage, pages.isFetchingNextPage, pages.fetchNextPage]);
 
+  // Detail view: drawer title swaps to the note title, NoteReaderBody
+  // renders with onBack = return-to-list. The list state stays mounted
+  // so scroll position + search + sort survive.
+  if (selected) {
+    return (
+      <Drawer title={selected.title} onClose={onClose}>
+        <NoteReaderBody
+          note={selected}
+          onClose={onClose}
+          onBack={() => setSelected(null)}
+          onRoute={onRoute}
+        />
+      </Drawer>
+    );
+  }
+
   return (
     <Drawer title={`Personal notes · ${notes.length}${pages.hasNextPage ? '+' : ''}`} onClose={onClose}>
       <div className="todo-list-drawer-toolbar">
@@ -80,16 +102,16 @@ export function NoteListDrawer({ onClose, onAction }: Props) {
         <div className="page-subtle">{q ? 'No notes match.' : 'No personal notes yet.'}</div>
       ) : (
         <div className="todo-list-drawer-rows">
-          {notes.map((n) => (
-            <NoteRow
-              key={n.id}
-              note={toUiNote(n)}
-              onClick={() => {
-                onClose();
-                onAction({ kind: 'note-edit', payload: toUiNote(n) });
-              }}
-            />
-          ))}
+          {notes.map((n) => {
+            const ui = toUiNote(n);
+            return (
+              <NoteRow
+                key={ui.id}
+                note={ui}
+                onClick={() => setSelected(ui)}
+              />
+            );
+          })}
           <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
             {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
           </div>

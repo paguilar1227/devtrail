@@ -180,7 +180,7 @@ export default function App() {
         <TodoListDrawer initialSort={modal.sort} onClose={() => setModal(null)} onAction={onAction} />
       )}
       {modal?.kind === 'personal-notes' && (
-        <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} />
+        <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
       )}
       {modal?.kind === 'personal-docs' && (
         <DocListDrawer onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />

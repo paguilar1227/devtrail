@@ -4,9 +4,12 @@
 //     role="dialog", slide-in animation)
 //   - <SortableTodoList/> for rendering + drag-to-reorder, so the
 //     drawer and the Home column stay in lockstep
-//   - existing TodoDetailDrawer for row click → detail (we hand off
-//     by closing this drawer and dispatching todo-detail)
 //   - useTodoExpansion so collapse state is shared with the column
+//
+// Detail view: clicking a row swaps the drawer body to TodoDetailDrawer
+// inline (with onBack=return-to-list). The list state (search, sort,
+// scroll, infinite cursor) survives because we don't unmount it. This
+// mirrors NoteListDrawer / DocListDrawer.
 //
 // Unlike the column, the drawer renders the FULL hierarchy — no
 // maxDepth — so grandchildren stay visible when their parent is open.
@@ -23,6 +26,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-q
 import { Drawer } from '../primitives';
 import { SortableTodoList } from '../SortableTodoList';
 import { SearchBox } from '../SearchBox';
+import { TodoDetailDrawer } from './TodoDetailDrawer';
 import { listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { sortPersonalTodos, type TodoSortMode } from '../../lib/todoSort';
@@ -48,6 +52,7 @@ export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
   const [q, setQ] = useState('');
   const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('inbox');
+  const [selected, setSelected] = useState<Todo | null>(null);
 
   // Apply the caller-requested initial sort once on mount. We persist
   // it through useTodoSortMode's setter so the choice sticks if the
@@ -104,6 +109,22 @@ export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
 
   const totalLoaded = todos.length;
 
+  // Detail view: re-use the existing TodoDetailDrawer but supply onBack so
+  // it renders a back affordance. The list stays mounted underneath only
+  // logically — visually it's swapped out — so when the user clicks back
+  // the search / sort / scroll position survives unchanged.
+  if (selected) {
+    return (
+      <TodoDetailDrawer
+        key={selected.id}
+        todo={selected}
+        onClose={onClose}
+        onBack={() => setSelected(null)}
+        onAction={onAction}
+      />
+    );
+  }
+
   return (
     <Drawer title={`Personal todos · ${totalLoaded}${pages.hasNextPage ? '+' : ''}`} onClose={onClose}>
       <div className="todo-list-drawer-toolbar">
@@ -125,10 +146,7 @@ export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
             allRows={todos}
             isExpanded={isExpanded}
             onToggleExpand={toggleExpand}
-            onClickRow={(t) => {
-              onClose();
-              onAction({ kind: 'todo-detail', payload: t });
-            }}
+            onClickRow={(t) => setSelected(t)}
             onToggleDone={(t) =>
               toggle.mutate({
                 id: t.id,
