@@ -107,7 +107,7 @@ export function TodoRow({
         }}
       />
       <div>
-        <div className="ti">
+        <div className="ti" title={t.title}>
           {t.title}
           {expandable && !expanded ? (
             <span className="ti-childcount" title={`${childCount} subtask${childCount === 1 ? '' : 's'}`}>

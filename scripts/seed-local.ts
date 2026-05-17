@@ -408,8 +408,11 @@ async function main() {
       content: sampleMd,
       tags: ['reference', 'rag'],
     },
-    // Personal-scope text doc: no project, exercises Activity/Home for a
-    // projectless document. Short body so it still renders one chunk.
+    // Personal-scope text docs: no project membership. Enough rows here to
+    // (a) overflow the 6-row cap on the Home Documents column so the
+    // "View N more" footer shows, (b) populate the personal-docs drawer
+    // with a meaningful list, and (c) mix tags so the Tags page reflects
+    // realistic distribution.
     {
       kind: 'text',
       projectId: null,
@@ -417,6 +420,70 @@ async function main() {
       content:
         '# Random saved snippet\n\nCopy from a PDF I wanted to keep but did not want to file under any project yet. Lives in personal scope. Tagged reading + reference so it shows up in both filter views.',
       tags: ['reading', 'reference'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Cold brew ratio + steep times',
+      content:
+        '# Cold brew\n\n- Ratio: 1:8 coffee to water by weight\n- Steep: 16h at room temp, or 20h in the fridge\n- Filter twice — once paper, once cheesecloth\n- Cut 1:1 with milk when serving',
+      tags: ['recipes'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'macOS keyboard shortcuts I keep forgetting',
+      content:
+        '# macOS shortcuts\n\n- `⌃⌘Q` — lock screen\n- `⌘⇧.` — show hidden files in Finder\n- `⌃⌘F` — full screen toggle\n- `⌥⌘D` — show/hide Dock\n- `⌘⇧5` — screenshot toolbar (record region)',
+      tags: ['reference'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Books to read next quarter',
+      content:
+        '# Reading queue\n\n1. "Designing Data-Intensive Applications" — Kleppmann (re-read ch. 5-7)\n2. "The Tangled Bank" — Carl Zimmer\n3. "How Infrastructure Works" — Deb Chachra\n4. "The Coming Wave" — Mustafa Suleyman',
+      tags: ['reading'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'SF coffee shortlist',
+      content:
+        '# Deep-work cafés\n\n- Verve on Pacific — quiet until 10am, good outlets\n- Sightglass SOMA — ambient noise tolerable, slow wifi\n- Saint Frank Russian Hill — best espresso, no laptops after 11am\n- Ritual SOMA — too crowded after 9, skip',
+      tags: ['reference'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Standing desk research',
+      content:
+        '# Standing desks compared\n\nLeaning Uplift v2 in 80x30 bamboo:\n- Uplift: best warranty (15y), modular accessories\n- Fully Jarvis: cheapest, fewer top options\n- Flexispot E7: solid but assembly fiddly\n\nNext: check Uplift sale around Black Friday.',
+      tags: ['reference'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'ZFS snapshot retention policy (homelab)',
+      content:
+        '# ZFS snapshots\n\n- Hourly: keep 24\n- Daily: keep 30\n- Weekly: keep 8\n- Monthly: keep 12\n- Send/receive to offsite mirror nightly via tailscale\n\nUse `sanoid` for management, `syncoid` for replication.',
+      tags: ['reference'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Recipe — weeknight Thai basil chicken',
+      content:
+        '# Pad krapao\n\n- 1 lb ground chicken (thigh, not breast)\n- 5 cloves garlic, crushed\n- 3-5 Thai chilies, smashed\n- Handful of holy basil (Italian works if needed)\n- 2 tbsp fish sauce, 1 tbsp oyster sauce, 1 tsp sugar\n- High heat, 8 minutes total. Serve over jasmine rice with a fried egg.',
+      tags: ['recipes'],
+    },
+    {
+      kind: 'text',
+      projectId: null,
+      title: 'Gift ideas — dad birthday',
+      content:
+        '# Dad gift ideas\n\n- That book he mentioned about WWII naval history\n- New leather wallet (his is falling apart)\n- Coffee from Ritual subscription (3 months)\n- Tickets to the SF Symphony Mahler night',
+      tags: [],
     },
   ];
 

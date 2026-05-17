@@ -157,6 +157,7 @@ export type ModalKind =
   | { kind: 'settings' }
   | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
   | { kind: 'personal-todos'; sort?: TodoSortMode }
-  | { kind: 'personal-notes' };
+  | { kind: 'personal-notes' }
+  | { kind: 'personal-docs' };
 
 export type ActionDispatch = (modal: ModalKind) => void;

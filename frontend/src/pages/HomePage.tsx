@@ -6,20 +6,23 @@
 //   1. Hero      — greeting + New project button.
 //   2. Search    — input + scope toggle. Enter routes to /search?q=… so
 //                  the existing Search route owns rendering of results.
-//   3. Top row   — Todos progress card + Recent activity preview.
-//   4. Personal  — two columns: Personal todos | Personal notes, each
-//                  with a quick-add input at the top.
+//   3. Personal  — three columns: Todos | Notes | Documents. Functional
+//                  stuff up top so it's reachable without scrolling past
+//                  status cards. Each column has its own quick-add (todos
+//                  and notes only — documents go through upload/from-url).
+//   4. Top row   — Overview counts + Recent activity preview. Status
+//                  surfaces, less actionable than the columns above.
 //   5. Pinned    — chip strip linking to pinned projects.
 //
 // "Personal" means project_ids = [] (content) / project_id = null (todo).
-// The backend's content list filter accepts a single project_id, not the
-// "no project" case, so personal notes are filtered client-side.
+// All three columns hit the backend with `project_id='null'`.
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
+import { DocRow } from '../components/DocRow';
 import { SortableTodoList } from '../components/SortableTodoList';
 import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoSortMode } from '../lib/useTodoSortMode';
@@ -52,7 +55,7 @@ import {
   getStats,
   updateTodo,
 } from '../lib/api';
-import { toUiActivity, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
+import { toUiActivity, toUiDocument, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
 import { openActivityTarget } from '../lib/openActivity';
 import { cls, fmtRel, isOverdue } from '../lib/util';
 import type { ActionDispatch, Route, Todo } from '../types';
@@ -80,6 +83,8 @@ export function HomePage({ onRoute, onAction }: Props) {
       // membership. Server-side keeps Home fast as the corpus grows
       // instead of relying on a client-side filter over every note.
       { queryKey: ['content', 'notes', 'personal'], queryFn: () => listContent({ type: 'note', project_id: 'null' }) },
+      // Personal documents — same server-side filter pattern, type=document.
+      { queryKey: ['content', 'documents', 'personal'], queryFn: () => listContent({ type: 'document', project_id: 'null' }) },
       {
         queryKey: ['activity', 'recent', activityFilter],
         queryFn: () =>
@@ -95,7 +100,7 @@ export function HomePage({ onRoute, onAction }: Props) {
       { queryKey: ['tags', 'home', 'personal'], queryFn: () => listTags({ scope: 'personal' }) },
     ],
   });
-  const [statsQ, projectsQ, countsQ, todosQ, notesQ, activityQ, tagsQ] = queries;
+  const [statsQ, projectsQ, countsQ, todosQ, notesQ, docsQ, activityQ, tagsQ] = queries;
 
   const projectsRaw = projectsQ.data ?? [];
   const projectsById = useMemo(
@@ -125,6 +130,14 @@ export function HomePage({ onRoute, onAction }: Props) {
     const arr = notesQ.data ?? [];
     return arr.slice().sort(compareNotesForMode(noteSortMode));
   }, [notesQ.data, noteSortMode]);
+  // Reuses the note sort vocabulary — same modes (recent/oldest/A-Z/Z-A)
+  // apply to any titled ContentItem with a created_at. Surface key is
+  // doc-specific so docs and notes keep independent user preferences.
+  const { mode: docSortMode, setMode: setDocSortMode } = useNoteSortMode('docs:home');
+  const personalDocs = useMemo(
+    () => (docsQ.data ?? []).slice().sort(compareNotesForMode(docSortMode)).map(toUiDocument),
+    [docsQ.data, docSortMode],
+  );
   const activity = useMemo(
     () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
     [activityQ.data, projectsById],
@@ -288,6 +301,141 @@ export function HomePage({ onRoute, onAction }: Props) {
         </div>
       </div>
 
+      <div className="home-personal-h">
+        <h2>Personal</h2>
+        <span className="sub">project-less todos, notes, and documents</span>
+      </div>
+
+      <div className="home-personal-grid">
+        <div className="pcol">
+          <PersonalColumnHeader
+            title="Todos"
+            count={personalTodos.length}
+            sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
+          />
+          <div className="pcol-add">
+            <input
+              placeholder="+ New todo (no project) — press Enter to add"
+              value={todoDraft}
+              onChange={(e) => setTodoDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && todoDraft.trim() && !todoCreate.isPending) {
+                  e.preventDefault();
+                  const c = todoDraft.trim();
+                  setTodoDraft('');
+                  todoCreate.mutate(c);
+                }
+              }}
+              disabled={todoCreate.isPending}
+            />
+          </div>
+          {personalTodos.length === 0 ? (
+            <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+          ) : (
+            <>
+              <SortableTodoList
+                rows={personalTodos.slice(0, 6)}
+                allRows={personalTodos}
+                isExpanded={isExpanded}
+                onToggleExpand={toggleExpand}
+                onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
+                onToggleDone={(t) =>
+                  todoToggle.mutate({
+                    id: t.id,
+                    status: t.status === 'done' ? 'not_started' : 'done',
+                  })
+                }
+              />
+              {personalTodos.length > 6 ? (
+                <button
+                  className="pcol-more"
+                  onClick={() => onAction({ kind: 'personal-todos' })}
+                >
+                  View {personalTodos.length - 6} more
+                  <Icons.ChevronRight size={11} />
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <div className="pcol">
+          <PersonalColumnHeader
+            title="Notes"
+            count={personalNotes.length}
+            sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
+          />
+          <div className="pcol-add">
+            <input
+              placeholder="+ Quick note — press Enter to capture"
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && noteDraft.trim() && !noteCreate.isPending) {
+                  e.preventDefault();
+                  const c = noteDraft.trim();
+                  setNoteDraft('');
+                  noteCreate.mutate(c);
+                }
+              }}
+              disabled={noteCreate.isPending}
+            />
+          </div>
+          {personalNotes.length === 0 ? (
+            <div className="pcol-empty">No personal notes — capture above.</div>
+          ) : (
+            <>
+              {personalNotes.slice(0, 6).map((n) => (
+                <NoteRow
+                  key={n.id}
+                  note={toUiNote(n)}
+                  onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
+                />
+              ))}
+              {personalNotes.length > 6 ? (
+                <button
+                  className="pcol-more"
+                  onClick={() => onAction({ kind: 'personal-notes' })}
+                >
+                  View {personalNotes.length - 6} more
+                  <Icons.ChevronRight size={11} />
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <div className="pcol">
+          <PersonalColumnHeader
+            title="Documents"
+            count={personalDocs.length}
+            sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
+          />
+          {personalDocs.length === 0 ? (
+            <div className="pcol-empty">No personal documents — upload or save from URL.</div>
+          ) : (
+            <>
+              {personalDocs.slice(0, 6).map((d) => (
+                <DocRow
+                  key={d.id}
+                  doc={d}
+                  onClick={() => onAction({ kind: 'doc-read', payload: d })}
+                />
+              ))}
+              {personalDocs.length > 6 ? (
+                <button
+                  className="pcol-more"
+                  onClick={() => onAction({ kind: 'personal-docs' })}
+                >
+                  View {personalDocs.length - 6} more
+                  <Icons.ChevronRight size={11} />
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+
       <div className="home-top-row">
         <div className="stat-overview">
           <div className="stat-overview-section">
@@ -409,111 +557,6 @@ export function HomePage({ onRoute, onAction }: Props) {
             View full feed
             <Icons.ChevronRight size={11} />
           </button>
-        </div>
-      </div>
-
-      <div className="home-personal-h">
-        <h2>Personal</h2>
-        <span className="sub">project-less todos and notes</span>
-      </div>
-
-      <div className="home-personal-grid">
-        <div className="pcol">
-          <PersonalColumnHeader
-            title="Todos"
-            count={personalTodos.length}
-            sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
-          />
-          <div className="pcol-add">
-            <input
-              placeholder="+ New todo (no project) — press Enter to add"
-              value={todoDraft}
-              onChange={(e) => setTodoDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && todoDraft.trim() && !todoCreate.isPending) {
-                  e.preventDefault();
-                  const c = todoDraft.trim();
-                  setTodoDraft('');
-                  todoCreate.mutate(c);
-                }
-              }}
-              disabled={todoCreate.isPending}
-            />
-          </div>
-          {personalTodos.length === 0 ? (
-            <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
-          ) : (
-            <>
-              <SortableTodoList
-                rows={personalTodos.slice(0, 6)}
-                allRows={personalTodos}
-                isExpanded={isExpanded}
-                onToggleExpand={toggleExpand}
-                onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
-                onToggleDone={(t) =>
-                  todoToggle.mutate({
-                    id: t.id,
-                    status: t.status === 'done' ? 'not_started' : 'done',
-                  })
-                }
-              />
-              {personalTodos.length > 6 ? (
-                <button
-                  className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-todos' })}
-                >
-                  View {personalTodos.length - 6} more
-                  <Icons.ChevronRight size={11} />
-                </button>
-              ) : null}
-            </>
-          )}
-        </div>
-
-        <div className="pcol">
-          <PersonalColumnHeader
-            title="Notes"
-            count={personalNotes.length}
-            sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
-          />
-          <div className="pcol-add">
-            <input
-              placeholder="+ Quick note — press Enter to capture"
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && noteDraft.trim() && !noteCreate.isPending) {
-                  e.preventDefault();
-                  const c = noteDraft.trim();
-                  setNoteDraft('');
-                  noteCreate.mutate(c);
-                }
-              }}
-              disabled={noteCreate.isPending}
-            />
-          </div>
-          {personalNotes.length === 0 ? (
-            <div className="pcol-empty">No personal notes — capture above.</div>
-          ) : (
-            <>
-              {personalNotes.slice(0, 6).map((n) => (
-                <NoteRow
-                  key={n.id}
-                  note={toUiNote(n)}
-                  onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
-                />
-              ))}
-              {personalNotes.length > 6 ? (
-                <button
-                  className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-notes' })}
-                >
-                  View {personalNotes.length - 6} more
-                  <Icons.ChevronRight size={11} />
-                </button>
-              ) : null}
-            </>
-          )}
         </div>
       </div>
 

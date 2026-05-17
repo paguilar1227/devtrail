@@ -2017,7 +2017,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 
 .home-personal-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
   margin-bottom: 24px;
 }
 .app[data-mobile="true"] .home-personal-grid { grid-template-columns: 1fr; }
@@ -2196,7 +2196,23 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-variant-numeric: tabular-nums;
 }
 .prow-note { grid-template-columns: 1fr auto; }
-.prow .ti { font-size: var(--type-body); font-weight: 500; line-height: 1.35; }
+.prow-doc { grid-template-columns: 20px 1fr auto; align-items: center; }
+.prow-doc .prow-doc-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-subtle);
+}
+.prow .ti {
+  font-size: var(--type-body); font-weight: 500; line-height: 1.35;
+  /* Cap at 2 lines so long titles don't blow up the row height in
+     compact widgets; full text is on the title attribute for hover and
+     in the detail drawer when the user opens the row. Standard
+     line-clamp uses the -webkit- prefix even in non-WebKit browsers. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .prow .ti-sub {
   font-size: var(--type-meta); color: var(--fg-subtle);
   margin-top: 2px;

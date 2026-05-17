@@ -9,6 +9,7 @@ import { DocReaderDrawer } from './components/modals/DocReaderDrawer';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
 import { NoteListDrawer } from './components/modals/NoteListDrawer';
+import { DocListDrawer } from './components/modals/DocListDrawer';
 import { SearchDrawer } from './components/modals/SearchDrawer';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
 import { TodoListDrawer } from './components/modals/TodoListDrawer';
@@ -180,6 +181,9 @@ export default function App() {
       )}
       {modal?.kind === 'personal-notes' && (
         <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} />
+      )}
+      {modal?.kind === 'personal-docs' && (
+        <DocListDrawer onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
       )}
 
       {cmdkOpen && (

@@ -25,7 +25,7 @@ export function NoteRow({ note, onClick }: Props) {
       } : undefined}
     >
       <div>
-        <div className="ti">{note.title}</div>
+        <div className="ti" title={note.title}>{note.title}</div>
         <div className="ti-sub">edited {fmtRel(at)}</div>
       </div>
       <span className="ats">{fmtRel(at)}</span>
