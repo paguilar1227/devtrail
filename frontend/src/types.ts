@@ -24,6 +24,7 @@ export interface DocumentItem {
   type: DocumentType;
   mime: string;
   blob_url: string | null;
+  download_url: string | null;
   source_url: string | null;
   size: string;
   tags: string[];

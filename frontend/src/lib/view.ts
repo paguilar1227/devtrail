@@ -199,6 +199,7 @@ export function toUiDocument(c: ApiContent): UiDocument {
     type: c.source_url ? 'url' : 'binary',
     mime: c.mime_type ?? '',
     blob_url: c.blob_url,
+    download_url: c.download_url,
     source_url: c.source_url,
     size: '',
     tags: c.tags,

@@ -1902,12 +1902,19 @@ function serializeContentItem(
   blobStorage: BlobStorage,
 ): z.infer<typeof ContentItemSchema> {
   const { embedding: _e, ...rest } = it as Record<string, unknown>;
-  const blob_url = rest.blob_url
-    ? blobStorage.getReadSasUrl(rest.blob_url as string)
+  const rawBlob = rest.blob_url as string | null | undefined;
+  const blob_url = rawBlob ? blobStorage.getReadSasUrl(rawBlob) : null;
+  // Pick a filename for the Content-Disposition override on the download SAS.
+  // Title is what the user sees in the UI; falls back to "document" so the
+  // browser never offers a UUID as a save name. Extension comes from mime so
+  // a PDF saved from "My Doc" lands as "My Doc.pdf" instead of extensionless.
+  const download_url = rawBlob
+    ? blobStorage.getDownloadSasUrl(rawBlob, downloadFilename(rest))
     : null;
   return {
     ...rest,
     blob_url,
+    download_url,
     pinned_at: rest.pinned_at !== undefined && rest.pinned_at !== null
       ? isoOrNull(rest.pinned_at as Date | string | null)
       : null,
@@ -1915,7 +1922,33 @@ function serializeContentItem(
     updated_at: isoNonNull(rest.updated_at as Date | string),
     ingest_completed_at: isoOrNull(rest.ingest_completed_at as Date | string | null | undefined),
     published_at: isoOrNull(rest.published_at as Date | string | null | undefined),
-  } as z.infer<typeof ContentItemSchema>;
+  } as unknown as z.infer<typeof ContentItemSchema>;
+}
+
+const MIME_TO_EXT: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/svg+xml': '.svg',
+  'audio/mpeg': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/ogg': '.ogg',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'application/json': '.json',
+};
+
+function downloadFilename(rest: Record<string, unknown>): string {
+  const title = (rest.title as string | undefined)?.trim() || 'document';
+  const mime = (rest.mime_type as string | null | undefined) ?? '';
+  const ext = MIME_TO_EXT[mime] ?? '';
+  return /\.\w{2,5}$/.test(title) ? title : `${title}${ext}`;
 }
 
 function serializeComment(c: {

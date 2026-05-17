@@ -119,6 +119,7 @@ export const ContentItemSchema = z.object({
   title_source: TitleSourceSchema,
   content: z.string().nullable(),
   blob_url: z.string().nullable(),
+  download_url: z.string().nullable(),
   source_url: z.string().nullable(),
   mime_type: z.string().nullable(),
   file_hash: z.string().nullable(),

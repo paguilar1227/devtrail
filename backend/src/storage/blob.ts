@@ -29,6 +29,16 @@ export interface BlobStorage {
    * from the database without first checking whether they belong to us.
    */
   getReadSasUrl(blobUrl: string, ttlMinutes?: number): string;
+  /**
+   * Like `getReadSasUrl`, but adds the SAS `rscd` parameter so the storage
+   * service responds with `Content-Disposition: attachment; filename="..."`.
+   * Browsers then save the file instead of navigating to it, even cross-origin
+   * (where the HTML `download` attribute would otherwise be ignored per spec).
+   *
+   * `filename` is used verbatim — caller is responsible for sanitization /
+   * extension. Same pass-through behavior as `getReadSasUrl`.
+   */
+  getDownloadSasUrl(blobUrl: string, filename: string, ttlMinutes?: number): string;
 }
 
 interface ConnStringParts {
@@ -130,6 +140,30 @@ export function createBlobStorage(connectionString: string, containerName: strin
           blobName,
           permissions: BlobSASPermissions.parse('r'),
           expiresOn: new Date(Date.now() + ttlMinutes * 60 * 1000),
+        },
+        sharedKey,
+      ).toString();
+      return `${blobUrl}?${sas}`;
+    },
+
+    getDownloadSasUrl(blobUrl, filename, ttlMinutes = 60) {
+      if (!blobUrl) return blobUrl;
+      if (blobUrl.includes('sig=')) return blobUrl;
+      if (!blobUrl.startsWith(accountHostPrefix)) return blobUrl;
+
+      const blobName = blobUrl.slice(accountHostPrefix.length);
+      // RFC 5987 / 6266 — wrap the filename in quotes and use filename*=UTF-8''
+      // for anything non-ASCII so unicode titles survive the round-trip.
+      const asciiSafe = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+      const encoded = encodeURIComponent(filename);
+      const disposition = `attachment; filename="${asciiSafe}"; filename*=UTF-8''${encoded}`;
+      const sas = generateBlobSASQueryParameters(
+        {
+          containerName,
+          blobName,
+          permissions: BlobSASPermissions.parse('r'),
+          expiresOn: new Date(Date.now() + ttlMinutes * 60 * 1000),
+          contentDisposition: disposition,
         },
         sharedKey,
       ).toString();

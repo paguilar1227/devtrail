@@ -130,3 +130,54 @@ describe('BlobStorage.getReadSasUrl', () => {
     expect(customExpiry.getTime()).toBeLessThanOrEqual(before + 5 * 60 * 1000 + 2000);
   });
 });
+
+describe('BlobStorage.getDownloadSasUrl', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('signs with contentDisposition so the storage service returns Content-Disposition: attachment', async () => {
+    const { createBlobStorage } = await import('../../../src/storage/blob.js');
+    const storage = createBlobStorage(VALID_CONN, 'test-container');
+
+    const blobUrl = `${ACCOUNT_HOST_PREFIX}1234-sample.pdf`;
+    const signed = storage.getDownloadSasUrl(blobUrl, 'Sample document.pdf');
+
+    expect(signed).toBe(`${blobUrl}?sig=fake-sas-token&se=2099-01-01`);
+    const callArgs = mockGenerateBlobSAS.mock.calls[0][0] as Record<string, unknown>;
+    expect(callArgs.containerName).toBe('test-container');
+    expect(callArgs.blobName).toBe('1234-sample.pdf');
+    // The disposition is the whole point — without it the browser navigates
+    // cross-origin even though the link has `download`.
+    expect(callArgs.contentDisposition).toBe(
+      'attachment; filename="Sample document.pdf"; filename*=UTF-8\'\'Sample%20document.pdf',
+    );
+  });
+
+  it('strips non-ASCII chars from the bare filename and keeps the original in filename*', async () => {
+    const { createBlobStorage } = await import('../../../src/storage/blob.js');
+    const storage = createBlobStorage(VALID_CONN, 'test-container');
+
+    storage.getDownloadSasUrl(`${ACCOUNT_HOST_PREFIX}f.pdf`, 'résumé — final.pdf');
+
+    const callArgs = mockGenerateBlobSAS.mock.calls[0][0] as Record<string, unknown>;
+    const disposition = callArgs.contentDisposition as string;
+    // Bare filename is ASCII-safe (underscores in for unicode chars), unicode
+    // version goes in filename* per RFC 5987 / 6266.
+    expect(disposition).toMatch(/^attachment; filename="[\x20-\x7E]+"; filename\*=UTF-8''/);
+    expect(disposition).toContain(encodeURIComponent('résumé — final.pdf'));
+    expect(disposition).not.toMatch(/filename="[^"]*[^\x20-\x7E][^"]*"/);
+  });
+
+  it('passes through cross-account / already-signed / empty URLs without calling the SAS generator', async () => {
+    const { createBlobStorage } = await import('../../../src/storage/blob.js');
+    const storage = createBlobStorage(VALID_CONN, 'test-container');
+
+    expect(storage.getDownloadSasUrl('', 'x.pdf')).toBe('');
+    expect(
+      storage.getDownloadSasUrl(`${ACCOUNT_HOST_PREFIX}foo.pdf?sig=existing`, 'foo.pdf'),
+    ).toBe(`${ACCOUNT_HOST_PREFIX}foo.pdf?sig=existing`);
+    expect(
+      storage.getDownloadSasUrl('https://other.blob.core.windows.net/c/foo.pdf', 'foo.pdf'),
+    ).toBe('https://other.blob.core.windows.net/c/foo.pdf');
+    expect(mockGenerateBlobSAS).not.toHaveBeenCalled();
+  });
+});
