@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Drawer, Status, Tag } from '../primitives';
 import { MarkdownPreview } from '../MarkdownPreview';
-import { getContent, pinContent, unpinContent } from '../../lib/api';
+import { getContent, listProjects, pinContent, unpinContent } from '../../lib/api';
 import { cls, fmtRel } from '../../lib/util';
-import type { DocumentItem } from '../../types';
+import type { DocumentItem, Route } from '../../types';
 
 // Pick a preview surface from the mime type. The text-only branch covers
 // markdown-as-doc rows where the body IS the document — no separate source
@@ -21,34 +21,61 @@ function previewModeFor(mime: string, hasBlob: boolean): PreviewMode {
   return 'other';
 }
 
-function downloadName(doc: DocumentItem): string {
-  // Pick a filename for the download link. The backend stores the original
-  // filename in metadata but we don't expose it on the UI shape today, so
-  // we fall back to the title; the user gets something readable instead of
-  // a random blob name when they save.
-  return doc.title || 'document';
-}
-
-function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | null }) {
-  const mode = previewModeFor(doc.mime, !!blobUrl);
+function DocPreview({
+  doc,
+  previewUrl,
+  onExpandPdf,
+}: {
+  doc: DocumentItem;
+  previewUrl: string | null;
+  onExpandPdf: () => void;
+}) {
+  const mode = previewModeFor(doc.mime, !!previewUrl);
   const [imageOpen, setImageOpen] = useState(false);
 
-  if (mode === 'text' || !blobUrl) return null;
+  // Esc closes the image lightbox. The PDF lightbox lives on the drawer so
+  // it can stay open across re-renders of this child — its Esc handler is
+  // colocated there.
+  //
+  // The Drawer primitive also listens for Esc on `document` to close itself.
+  // We attach in the capture phase and stopImmediatePropagation so the
+  // drawer's handler never sees this keydown — otherwise pressing Esc to
+  // dismiss the lightbox would also collapse the drawer underneath.
+  useEffect(() => {
+    if (!imageOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      setImageOpen(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [imageOpen]);
+
+  if (mode === 'text' || !previewUrl) return null;
 
   if (mode === 'pdf') {
     // <object> + <embed> together so browsers that refuse one fall back to
-    // the other; the Download anchor inside is what shows if neither renders.
+    // the other; the fallback children show when neither renders.
     return (
       <div className="doc-preview doc-preview-pdf">
-        <object data={blobUrl} type="application/pdf" aria-label={doc.title}>
-          <embed src={blobUrl} type="application/pdf" />
+        <object data={previewUrl} type="application/pdf" aria-label={doc.title}>
+          <embed src={previewUrl} type="application/pdf" />
           <div className="doc-preview-fallback">
             <span className="subtle">Inline PDF preview is not supported in this browser.</span>
-            <a className="btn btn-sm btn-primary" href={blobUrl} download={downloadName(doc)}>
-              <Icons.Download size={12} /> Download PDF
+            <a className="btn btn-sm btn-primary" href={previewUrl} target="_blank" rel="noreferrer">
+              <Icons.ExternalLink size={12} /> Open PDF
             </a>
           </div>
         </object>
+        <button
+          type="button"
+          className="btn btn-sm doc-preview-expand"
+          onClick={onExpandPdf}
+          aria-label="Expand PDF preview"
+        >
+          <Icons.Expand size={12} /> Expand
+        </button>
       </div>
     );
   }
@@ -62,7 +89,7 @@ function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | nul
           onClick={() => setImageOpen(true)}
           aria-label="Open full-size image"
         >
-          <img src={blobUrl} alt={doc.title} />
+          <img src={previewUrl} alt={doc.title} />
           <span className="doc-preview-zoom"><Icons.Expand size={11} /> Click to enlarge</span>
         </button>
         {imageOpen && (
@@ -73,7 +100,7 @@ function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | nul
             aria-label={doc.title}
             onClick={() => setImageOpen(false)}
           >
-            <img src={blobUrl} alt={doc.title} />
+            <img src={previewUrl} alt={doc.title} />
             <button
               type="button"
               className="btn btn-ghost btn-icon doc-preview-lightbox-close"
@@ -91,8 +118,8 @@ function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | nul
   if (mode === 'audio') {
     return (
       <div className="doc-preview doc-preview-audio">
-        <audio controls preload="metadata" src={blobUrl}>
-          <a href={blobUrl} download={downloadName(doc)}>Download audio</a>
+        <audio controls preload="metadata" src={previewUrl}>
+          <a href={previewUrl} target="_blank" rel="noreferrer">Open audio</a>
         </audio>
       </div>
     );
@@ -101,8 +128,8 @@ function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | nul
   if (mode === 'video') {
     return (
       <div className="doc-preview doc-preview-video">
-        <video controls preload="metadata" src={blobUrl}>
-          <a href={blobUrl} download={downloadName(doc)}>Download video</a>
+        <video controls preload="metadata" src={previewUrl}>
+          <a href={previewUrl} target="_blank" rel="noreferrer">Open video</a>
         </video>
       </div>
     );
@@ -112,18 +139,49 @@ function DocPreview({ doc, blobUrl }: { doc: DocumentItem; blobUrl: string | nul
   return (
     <div className="doc-preview doc-preview-other">
       <span className="subtle">{doc.mime || 'Unknown type'}</span>
-      <a className="btn btn-sm btn-primary" href={blobUrl} download={downloadName(doc)}>
-        <Icons.Download size={12} /> Download
+      <a className="btn btn-sm btn-primary" href={previewUrl} target="_blank" rel="noreferrer">
+        <Icons.ExternalLink size={12} /> Open
       </a>
     </div>
   );
 }
 
-export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: () => void }) {
+/**
+ * The "body" of the doc reader — everything inside the Drawer chrome.
+ * Pulled out so other surfaces (DocListDrawer) can render the same reader
+ * inline with a back button, without opening a second modal that would
+ * lose the surrounding list state.
+ *
+ * Contract:
+ *   - `onClose`  — close the *containing* drawer (used by project chip
+ *                  navigation, which is "leave this surface entirely").
+ *   - `onBack`   — if provided, render a back arrow at the top that calls
+ *                  this. Used by DocListDrawer to return to its list view.
+ *                  Omit when used standalone via DocReaderDrawer.
+ *   - `onRoute`  — project navigation. Pass through from the host.
+ */
+export function DocReaderBody({
+  doc,
+  onClose,
+  onBack,
+  onRoute,
+}: {
+  doc: DocumentItem;
+  onClose: () => void;
+  onBack?: () => void;
+  onRoute?: (r: Route) => void;
+}) {
   const qc = useQueryClient();
   const fullQ = useQuery({
     queryKey: ['content', doc.id, 'full'],
     queryFn: () => getContent(doc.id),
+  });
+  // Project list is cheap and already cached by the sidebar in most sessions;
+  // we re-use the cache via the same queryKey to avoid a duplicate request.
+  const projectsQ = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => listProjects(),
+    staleTime: 60_000,
   });
   const pinMut = useMutation({
     mutationFn: () => (doc.pinned ? unpinContent(doc.id) : pinContent(doc.id)),
@@ -134,16 +192,75 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
 
   const item = fullQ.data;
   const body = item?.content ?? '';
-  // The wire shape signs blob_url with a 60-min SAS in production AND against
-  // Azurite locally, so the browser can fetch directly off the storage host
-  // in both environments. Falls back to doc.blob_url if the full record
-  // hasn't loaded yet — that one is also signed (same serializer).
-  const blobUrl = item?.blob_url ?? doc.blob_url;
-  const mode = previewModeFor(doc.mime, !!blobUrl);
+  // Two SAS-signed URLs come back from the server for binary docs:
+  //  - blob_url        → read-only, suitable for inline <object>/<img>/<audio>
+  //  - download_url    → same blob, but with Content-Disposition: attachment
+  //                       baked in via the `rscd` SAS param, so browsers save
+  //                       instead of navigating (cross-origin makes the HTML
+  //                       `download` attribute a no-op).
+  // Both fall back to doc.blob_url if the full record hasn't loaded yet —
+  // download won't trigger an actual download until we have download_url.
+  const previewUrl = item?.blob_url ?? doc.blob_url;
+  const downloadUrl = item?.download_url ?? null;
+  const mode = previewModeFor(doc.mime, !!previewUrl);
   const hasBody = body.trim().length > 0;
 
+  // Text-only docs (note-as-doc) have no Azure blob — the content lives in the
+  // DB content column. Synthesize a same-origin blob: URL from the markdown
+  // body so Download / Open chips still work. Because blob: URLs are
+  // same-origin, the HTML `download` attribute is honored directly; no SAS
+  // rscd trick needed. Revoke the URL on cleanup to avoid the leak.
+  const isTextWithBody = mode === 'text' && hasBody;
+  const synthesizedTextUrl = useMemo(() => {
+    if (!isTextWithBody) return null;
+    return URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }));
+  }, [isTextWithBody, body]);
+  useEffect(() => {
+    if (!synthesizedTextUrl) return;
+    return () => URL.revokeObjectURL(synthesizedTextUrl);
+  }, [synthesizedTextUrl]);
+
+  // Effective URLs: server-signed for binaries, synthesized blob for text.
+  // `downloadIsSynthesized` flips whether the <a> needs the `download` attr —
+  // server URLs rely on Content-Disposition (cross-origin), synthesized ones
+  // use the attribute (same-origin).
+  const effectiveDownloadUrl = downloadUrl ?? synthesizedTextUrl;
+  const effectiveOpenUrl = previewUrl ?? synthesizedTextUrl;
+  const downloadIsSynthesized = !downloadUrl && !!synthesizedTextUrl;
+  const synthesizedFilename = `${(doc.title || 'document').replace(/[/\\?%*:|"<>]/g, '_')}.md`;
+
+  const [pdfOpen, setPdfOpen] = useState(false);
+  // Same propagation guard as the image lightbox above — keep Esc from
+  // bubbling into the Drawer's own document-level Esc handler.
+  useEffect(() => {
+    if (!pdfOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      setPdfOpen(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [pdfOpen]);
+
+  const projectById = new Map((projectsQ.data ?? []).map(p => [p.id, p]));
+  const goToProject = (id: string) => {
+    if (!onRoute) return;
+    onClose();
+    onRoute({ route: 'project', project: id });
+  };
+
   return (
-    <Drawer title={doc.title} onClose={onClose}>
+    <>
+      {onBack ? (
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm doc-reader-back"
+          onClick={onBack}
+        >
+          <Icons.ChevronLeft size={12} /> Back to list
+        </button>
+      ) : null}
       <div className="row-flex gap-2 chip-row">
         <Status status={doc.processing_status} error={doc.processing_error} />
         <Tag>{doc.type}</Tag>
@@ -176,9 +293,23 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
         ) : null}
         <span className="subtle">projects</span>
         <span className="row-flex gap-1 meta-projects">
-          {doc.project_ids.map(id => (
-            <Tag key={id}>{id.slice(0, 8)}</Tag>
-          ))}
+          {doc.project_ids.map(id => {
+            const p = projectById.get(id);
+            const label = p?.name ?? (projectsQ.isLoading ? '…' : id.slice(0, 8));
+            return onRoute ? (
+              <button
+                key={id}
+                type="button"
+                className="tag tag-link"
+                onClick={() => goToProject(id)}
+                title={p ? `Open ${p.name}` : 'Open project'}
+              >
+                {label}
+              </button>
+            ) : (
+              <Tag key={id}>{label}</Tag>
+            );
+          })}
         </span>
       </div>
 
@@ -188,9 +319,18 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
             <Icons.ExternalLink size={12} /> Open original
           </a>
         ) : null}
-        {blobUrl ? (
-          <a className="btn btn-sm" href={blobUrl} download={downloadName(doc)}>
+        {effectiveDownloadUrl ? (
+          <a
+            className="btn btn-sm"
+            href={effectiveDownloadUrl}
+            {...(downloadIsSynthesized ? { download: synthesizedFilename } : {})}
+          >
             <Icons.Download size={12} /> Download
+          </a>
+        ) : null}
+        {effectiveOpenUrl ? (
+          <a className="btn btn-sm" href={effectiveOpenUrl} target="_blank" rel="noopener noreferrer">
+            <Icons.ExternalLink size={12} /> Open
           </a>
         ) : null}
         <button
@@ -203,33 +343,85 @@ export function DocReaderDrawer({ doc, onClose }: { doc: DocumentItem; onClose: 
         <span className="subtle doc-size-trail">{doc.size}</span>
       </div>
 
-      <DocPreview doc={doc} blobUrl={blobUrl} />
+      {/* Scroll region — preview + extracted text + markdown body all live
+          here. The wrapper takes remaining drawer height (flex: 1 in the
+          drawer-body column) and scrolls internally, keeping the chrome
+          above (chips, metadata, action buttons) pinned and always reachable
+          without scrolling back up. */}
+      <div className="doc-reader-content">
+        <DocPreview doc={doc} previewUrl={previewUrl} onExpandPdf={() => setPdfOpen(true)} />
 
-      {/* For binary docs the extracted text is supplementary — useful for
-          search/RAG and as a body when the preview is awkward (mobile PDF
-          embeds especially). We label it so a glance distinguishes the
-          model's extraction from the document itself. For text-only docs
-          this block IS the document, so no label. */}
-      {hasBody || mode === 'text' ? (
-        <>
-          {mode !== 'text' && hasBody ? (
-            <div className={cls('subtle', 'doc-extracted-label')}>Extracted text</div>
-          ) : null}
-          <div className="md-preview md-preview-card">
-            {fullQ.isLoading ? (
-              <div className="page-subtle">Loading content…</div>
-            ) : fullQ.error ? (
-              <div className="page-subtle" style={{ color: 'var(--danger)' }}>
-                Failed to load content: {fullQ.error instanceof Error ? fullQ.error.message : String(fullQ.error)}
-              </div>
-            ) : !hasBody ? (
-              <div className="page-subtle">No extracted text available.</div>
-            ) : (
-              <MarkdownPreview src={body} />
-            )}
-          </div>
-        </>
-      ) : null}
+        {/* For binary docs the extracted text is supplementary — useful for
+            search/RAG and as a body when the preview is awkward (mobile PDF
+            embeds especially). We label it so a glance distinguishes the
+            model's extraction from the document itself. For text-only docs
+            this block IS the document, so no label. */}
+        {hasBody || mode === 'text' ? (
+          <>
+            {mode !== 'text' && hasBody ? (
+              <div className={cls('subtle', 'doc-extracted-label')}>Extracted text</div>
+            ) : null}
+            <div className="md-preview md-preview-card">
+              {fullQ.isLoading ? (
+                <div className="page-subtle">Loading content…</div>
+              ) : fullQ.error ? (
+                <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+                  Failed to load content: {fullQ.error instanceof Error ? fullQ.error.message : String(fullQ.error)}
+                </div>
+              ) : !hasBody ? (
+                <div className="page-subtle">No extracted text available.</div>
+              ) : (
+                <MarkdownPreview src={body} />
+              )}
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {/* PDF lightbox lives outside the scroll wrapper so position: fixed
+          escapes any ancestor stacking context cleanly. */}
+      {pdfOpen && previewUrl && mode === 'pdf' && (
+        <div
+          className="doc-preview-lightbox doc-preview-lightbox-pdf"
+          role="dialog"
+          aria-modal="true"
+          aria-label={doc.title}
+          onClick={e => {
+            if (e.target === e.currentTarget) setPdfOpen(false);
+          }}
+        >
+          <object data={previewUrl} type="application/pdf" aria-label={doc.title}>
+            <embed src={previewUrl} type="application/pdf" />
+          </object>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon doc-preview-lightbox-close"
+            onClick={() => setPdfOpen(false)}
+            aria-label="Close preview"
+          >
+            <Icons.X />
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Standalone doc reader — wraps DocReaderBody in a Drawer. The drawer's
+ *  close maps directly to onClose on the body. No back button (this surface
+ *  doesn't have a list to return to). */
+export function DocReaderDrawer({
+  doc,
+  onClose,
+  onRoute,
+}: {
+  doc: DocumentItem;
+  onClose: () => void;
+  onRoute?: (r: Route) => void;
+}) {
+  return (
+    <Drawer title={doc.title} onClose={onClose}>
+      <DocReaderBody doc={doc} onClose={onClose} onRoute={onRoute} />
     </Drawer>
   );
 }

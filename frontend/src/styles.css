@@ -1366,7 +1366,11 @@ input, textarea { font-size: inherit; color: inherit; }
   width: 100%;
 }
 .todo-title-edit-input:focus { border-color: var(--accent-1); }
-.drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+/* drawer-body is a flex column so child wrappers can opt into a fixed-vs-
+   flex-1 height split (e.g. doc reader pins its chrome and scrolls its
+   content). overflow-y: auto stays as a fallback for drawers whose contents
+   don't carve themselves into pinned vs scrollable sections. */
+.drawer-body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; min-height: 0; }
 
 /* ── Form fields ── */
 .field-label {
@@ -2474,9 +2478,15 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   background: var(--glass-bg-soft);
   overflow: hidden;
 }
-.doc-preview-pdf { aspect-ratio: 4 / 5; max-height: 70vh; }
+.doc-preview-pdf { position: relative; aspect-ratio: 4 / 5; max-height: 70vh; }
 .doc-preview-pdf object,
 .doc-preview-pdf embed { width: 100%; height: 100%; border: 0; display: block; }
+.doc-preview-expand {
+  position: absolute; top: 8px; right: 8px;
+  background: rgba(0, 0, 0, 0.55); color: white;
+  border: 0.5px solid rgba(255, 255, 255, 0.15);
+}
+.doc-preview-expand:hover { background: rgba(0, 0, 0, 0.75); }
 .doc-preview-fallback {
   display: flex; align-items: center; justify-content: center;
   flex-direction: column; gap: 10px; padding: 24px; text-align: center;
@@ -2511,6 +2521,12 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   max-width: 100%; max-height: 100%; object-fit: contain;
   display: block; border-radius: 6px;
 }
+.doc-preview-lightbox-pdf { cursor: default; padding: 32px 48px; }
+.doc-preview-lightbox-pdf object,
+.doc-preview-lightbox-pdf embed {
+  width: 100%; height: 100%; border: 0; display: block;
+  border-radius: 6px; background: white;
+}
 .doc-preview-lightbox-close {
   position: absolute; top: 14px; right: 14px;
   background: rgba(0, 0, 0, 0.5); color: white;
@@ -2536,11 +2552,49 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .app[data-mobile="true"] .doc-preview-pdf { aspect-ratio: 3 / 4; max-height: 60vh; }
 .app[data-mobile="true"] .doc-preview-image img { max-height: 50vh; }
 .app[data-mobile="true"] .doc-preview-lightbox { padding: 12px; }
+.app[data-mobile="true"] .doc-preview-lightbox-pdf { padding: 12px; }
 
+/* Project chip in the doc-reader metadata is interactive — it navigates to
+   the project view. Looks like a regular Tag but signals affordance with a
+   pointer cursor and a subtle hover. */
+.tag.tag-link {
+  cursor: pointer; border: none;
+  font: inherit; color: inherit;
+}
+.tag.tag-link:hover { background: var(--glass-bg); border-color: var(--accent); }
+.tag.tag-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Markdown body inside the doc-reader drawer. The doc reader wraps it in
+   .doc-reader-content (the scroll region) so this card itself just renders
+   to natural height. The container is what handles overflow — that pattern
+   keeps the tags + action chips above the scroll region always visible. */
 .md-preview-card {
   padding: 14px; background: var(--glass-bg-soft);
   border-radius: 10px; border: 0.5px solid var(--hairline);
-  max-height: 480px; overflow-y: auto;
+}
+
+/* "Back to list" button shown above the doc reader chrome when the reader
+   is embedded inside another list drawer (DocListDrawer in detail mode).
+   Negative margin pulls it tight under the drawer header so it reads as
+   part of the chrome, not the body content. */
+.doc-reader-back {
+  align-self: flex-start;
+  margin: -4px 0 4px;
+  padding-left: 4px;
+}
+
+/* Doc-reader scroll region — takes remaining height in the drawer-body flex
+   column, scrolls internally. Chrome above it (tags, metadata, action chips)
+   stays pinned so the Download / Open / Pin actions are always reachable
+   without scrolling back up. */
+.doc-reader-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
 }
 .modal-foot-meta { font-size: var(--type-meta); margin-right: auto; }
 .note-title-input {

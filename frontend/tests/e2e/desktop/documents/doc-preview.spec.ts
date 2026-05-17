@@ -5,13 +5,22 @@
 // the extracted text. Backend SAS-signing is verified implicitly: if the
 // blob URL weren't signed, Azurite would 403 and the <img> would never
 // hit naturalWidth > 0.
+//
+// Action row contracts the drawer exposes (verified here so regressions
+// surface immediately):
+//   - Download chip → href is a SAS-signed URL with the `rscd=` SAS param
+//     (Content-Disposition: attachment override). The HTML `download`
+//     attribute alone is ignored cross-origin, so the rscd param is what
+//     actually makes the browser save the file. Asserted as a substring.
+//   - Open chip → target=_blank, points at the read-only blob_url.
+//   - Project chip in the metadata grid → resolves to the project's human
+//     name, not the truncated UUID; clicking it closes the drawer and
+//     navigates to the project view.
+//   - PDF preview → an Expand chip opens a fullscreen lightbox.
 import { expect, test } from '@playwright/test';
 import '../../helpers/setup';
 import { navTo } from '../../helpers/setup';
 
-// Helper: open the drawer for the doc whose Ingested activity row matches
-// the title text. Activity rows are <div role="button" class="activity-row">,
-// not <button> — keep the selector class-based.
 async function openDocFromActivity(page: import('@playwright/test').Page, title: string) {
   await navTo(page, 'Activity');
   const row = page
@@ -25,15 +34,9 @@ async function openDocFromActivity(page: import('@playwright/test').Page, title:
   return drawer;
 }
 
-// Walk through the "(no text content)" ingest rows (which are the image
-// and the audio in the seed) until the drawer's mime chip matches the
-// expected one. Lets the test be order-agnostic about which doc was
-// ingested first.
 async function openNoTextDocByMime(page: import('@playwright/test').Page, mime: string) {
   await navTo(page, 'Activity');
   await expect(page.locator('h1', { hasText: 'Activity' })).toBeVisible();
-  // Wait for the activity list to populate. Without this, the row query
-  // races the data fetch and returns 0.
   await expect(page.locator('.activity-row').first()).toBeVisible({ timeout: 15000 });
   const rows = page
     .locator('.activity-row')
@@ -53,72 +56,100 @@ async function openNoTextDocByMime(page: import('@playwright/test').Page, mime: 
   throw new Error(`No "(no text content)" doc found with mime ${mime}`);
 }
 
-test('doc preview: PDF doc renders an inline embed and a Download link', async ({ page }) => {
+test('doc preview: PDF doc renders an inline embed, Download (rscd), Open, and Expand-to-lightbox', async ({ page }) => {
   const drawer = await openDocFromActivity(page, 'Sample document for E2E tests');
 
-  // The mime chip is the canonical signal that this is the PDF row, not a
-  // different one with the same name.
   await expect(drawer.locator('.doc-mime')).toHaveText('application/pdf');
 
-  // The preview panel exists and contains the <object>/<embed> tag pair.
-  // Computed-style check: the panel should be tall enough to actually act
-  // as a viewer — anything under 200px means the aspect-ratio rule isn't
-  // applying and the embed isn't usable. The <object> always renders in
-  // the DOM, even in headless Chromium where the PDF plugin is missing —
-  // in that case the fallback children render instead, which is fine for
-  // our purposes (we're not asserting visual PDF rendering).
   const panel = drawer.locator('.doc-preview-pdf');
   await expect(panel).toBeVisible();
   const height = await panel.evaluate((el) => el.getBoundingClientRect().height);
   expect(height).toBeGreaterThan(200);
   await expect(panel.locator('object')).toHaveCount(1);
 
-  // The action-row Download link must point at the SAS-signed URL.
-  // Multiple Download anchors exist (chip-row + in-object fallback for
-  // headless Chromium) — both share the same blob href, so picking the
-  // first one and asserting `sig=` is sufficient and stable.
-  const download = drawer.locator('a[download]').first();
-  const href = await download.getAttribute('href');
-  expect(href).toBeTruthy();
-  expect(href!).toContain('sig=');
+  // Download chip — href must be the SAS-signed download URL with rscd=,
+  // because the HTML `download` attribute is ignored cross-origin and the
+  // server-side Content-Disposition override is what makes the browser save.
+  const downloadChip = drawer.getByRole('link', { name: /^Download$/ });
+  await expect(downloadChip).toBeVisible();
+  const downloadHref = await downloadChip.getAttribute('href');
+  expect(downloadHref, 'Download chip should point at a SAS-signed URL').toBeTruthy();
+  expect(downloadHref!).toContain('sig=');
+  expect(downloadHref!).toContain('rscd=');
+
+  // Open chip — opens the same blob in a new tab. The chip is the *outer*
+  // Open in the action row (not the fallback "Open PDF" inside the embed),
+  // so we narrow by checking target=_blank exists.
+  const openChip = drawer.getByRole('link', { name: /^Open$/ });
+  await expect(openChip).toBeVisible();
+  await expect(openChip).toHaveAttribute('target', '_blank');
+  const openHref = await openChip.getAttribute('href');
+  expect(openHref!).toContain('sig=');
+  expect(openHref!).not.toContain('rscd=');
+
+  // Project chip — must show the resolved project name ("RAG Research"
+  // from seed), not the UUID prefix. Asserts the new useQuery(['projects'])
+  // wire-up actually fires and resolves before the user reads the drawer.
+  // Checked here before the lightbox interaction because (a) it doesn't
+  // depend on lightbox state and (b) the Esc inside the lightbox test must
+  // not bubble to the drawer's Esc-to-close handler — verifying ordering
+  // here means a regression in the propagation guard surfaces below as a
+  // failed lightbox assertion rather than as a vanished drawer.
+  const projectChip = drawer.locator('.meta-projects .tag-link').first();
+  await expect(projectChip).toBeVisible();
+  await expect(projectChip).toHaveText('RAG Research');
+
+  // Expand → PDF lightbox opens, Esc closes the lightbox only (drawer
+  // stays open — the capture-phase Esc handler in the drawer prevents
+  // bubble to the drawer-level Esc-to-close).
+  const expandBtn = panel.getByRole('button', { name: /Expand PDF preview/ });
+  await expect(expandBtn).toBeVisible();
+  await expandBtn.click();
+  const lightbox = page.locator('.doc-preview-lightbox-pdf');
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox.locator('object')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(lightbox).toHaveCount(0);
+  await expect(drawer).toBeVisible();
 });
 
 test('doc preview: image doc renders an inline image with click-to-enlarge', async ({ page }) => {
-  // The PNG in the seed has no extracted title (image-only doc in stub
-  // mode), so it shows up as "(no text content)" in the activity row.
-  // openNoTextDocByMime walks all such rows and stops on the image one.
   const drawer = await openNoTextDocByMime(page, 'image/png');
 
   const trigger = drawer.locator('.doc-preview-image');
   await expect(trigger).toBeVisible();
 
-  // The <img> must actually load — naturalWidth > 0 proves the SAS-signed
-  // URL hit Azurite/Azure successfully. A 403 (no SAS) would leave it 0.
   const img = trigger.locator('img');
   await expect.poll(
     async () => img.evaluate((el: HTMLImageElement) => el.naturalWidth),
     { timeout: 5000 },
   ).toBeGreaterThan(0);
 
-  // Click the trigger and assert the lightbox dialog mounts.
   await trigger.click();
   const lightbox = page.locator('.doc-preview-lightbox');
   await expect(lightbox).toBeVisible();
-  await page.locator('.doc-preview-lightbox-close').click();
+  // Esc closes the image lightbox too (parallel keyboard handler to PDF).
+  await page.keyboard.press('Escape');
   await expect(lightbox).toHaveCount(0);
 });
 
 test('doc preview: audio doc renders a native player', async ({ page }) => {
-  // Same disambiguation as the image test — we walk through "(no text
-  // content)" rows until the audio one opens.
   const drawer = await openNoTextDocByMime(page, 'audio/wav');
 
   const audio = drawer.locator('.doc-preview-audio audio');
   await expect(audio).toHaveCount(1);
-  // Audio metadata should load — duration > 0 proves the SAS URL fetched
-  // the bytes. The seeded sample.wav is ~5s.
   await expect.poll(
     async () => audio.evaluate((el: HTMLAudioElement) => el.duration),
     { timeout: 5000 },
   ).toBeGreaterThan(0);
+});
+
+test('doc preview: clicking the project chip navigates to that project view', async ({ page }) => {
+  const drawer = await openDocFromActivity(page, 'Sample document for E2E tests');
+  const projectChip = drawer.locator('.meta-projects .tag-link').first();
+  await expect(projectChip).toHaveText('RAG Research');
+  await projectChip.click();
+  // Drawer should close and the page should land on the project view.
+  await expect(drawer).toHaveCount(0);
+  await expect(page.locator('h1', { hasText: 'RAG Research' })).toBeVisible({ timeout: 5000 });
 });

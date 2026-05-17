@@ -149,7 +149,7 @@ export default function App() {
 
       {modal?.kind === 'upload' && <UploadModal project={modal.payload} onClose={() => setModal(null)} />}
       {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} projectId={modal.projectId} onClose={() => setModal(null)} />}
-      {modal?.kind === 'doc-read' && <DocReaderDrawer doc={modal.payload} onClose={() => setModal(null)} />}
+      {modal?.kind === 'doc-read' && <DocReaderDrawer doc={modal.payload} onClose={() => setModal(null)} onRoute={navigate} />}
       {modal?.kind === 'todo-detail' && <TodoDetailDrawer key={modal.payload.id} todo={modal.payload} onClose={() => setModal(null)} onAction={onAction} />}
       {modal?.kind === 'bulk-confirm' && (
         <ConfirmModal
