@@ -1,3 +1,4 @@
+import type { TagFilter } from './lib/tagFilter';
 import type { TodoSortMode } from './lib/todoSort';
 
 export type ProjectAccent = 'magenta' | 'violet' | 'indigo' | 'cyan' | 'neutral';
@@ -156,8 +157,8 @@ export type ModalKind =
   | { kind: 'new-project' }
   | { kind: 'settings' }
   | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
-  | { kind: 'personal-todos'; sort?: TodoSortMode }
-  | { kind: 'personal-notes' }
-  | { kind: 'personal-docs' };
+  | { kind: 'personal-todos'; sort?: TodoSortMode; tagFilter?: TagFilter }
+  | { kind: 'personal-notes'; tagFilter?: TagFilter }
+  | { kind: 'personal-docs'; tagFilter?: TagFilter };
 
 export type ActionDispatch = (modal: ModalKind) => void;

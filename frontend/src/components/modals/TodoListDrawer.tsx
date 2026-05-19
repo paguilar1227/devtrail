@@ -34,6 +34,7 @@ import { useTodoExpansion } from '../../lib/useTodoExpansion';
 import { useTodoSortMode } from '../../lib/useTodoSortMode';
 import { useInView } from '../../lib/useInView';
 import { TodoSortDropdown } from '../SortDropdown';
+import { matchesTagFilter, type TagFilter } from '../../lib/tagFilter';
 import type { ActionDispatch, Todo } from '../../types';
 
 interface Props {
@@ -43,11 +44,15 @@ interface Props {
    *  pill on Home routes here with `initialSort='due'`). Once set,
    *  the user can still override via the dropdown. */
   initialSort?: TodoSortMode;
+  /** When set, only todos matching this tag filter are shown. The drawer
+   *  has no in-UI toggle — clearing means closing + reopening from a
+   *  filter-cleared Home (drawer state is ephemeral by design). */
+  initialTagFilter?: TagFilter;
 }
 
 const PAGE_SIZE = 20;
 
-export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
+export function TodoListDrawer({ onClose, onAction, initialSort, initialTagFilter }: Props) {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
   const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
@@ -86,7 +91,14 @@ export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
     () => (pages.data?.pages ?? []).flat().map(toUiTodo),
     [pages.data],
   );
-  const todos = sortPersonalTodos(todosFlat, { mode: sortMode, isExpanded });
+  const todosFiltered = useMemo(
+    () =>
+      initialTagFilter && initialTagFilter.tags.length > 0
+        ? todosFlat.filter((t) => matchesTagFilter(t, initialTagFilter))
+        : todosFlat,
+    [todosFlat, initialTagFilter],
+  );
+  const todos = sortPersonalTodos(todosFiltered, { mode: sortMode, isExpanded });
 
   const toggle = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
@@ -137,26 +149,40 @@ export function TodoListDrawer({ onClose, onAction, initialSort }: Props) {
         </div>
       ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
-      ) : todos.length === 0 ? (
-        <div className="page-subtle">{q ? 'No todos match.' : 'No personal todos yet.'}</div>
+      ) : todos.length === 0 && !pages.hasNextPage ? (
+        <div className="page-subtle">
+          {q
+            ? 'No todos match.'
+            : initialTagFilter && initialTagFilter.tags.length > 0
+              ? `No personal todos with ${initialTagFilter.tags.length === 1 ? 'tag' : 'tags'} ${initialTagFilter.tags.map((t) => `#${t}`).join(initialTagFilter.mode === 'and' ? ' AND ' : ' or ')}.`
+              : 'No personal todos yet.'}
+        </div>
       ) : (
         <div className="todo-list-drawer-rows">
-          <SortableTodoList
-            rows={todos}
-            allRows={todos}
-            isExpanded={isExpanded}
-            onToggleExpand={toggleExpand}
-            onClickRow={(t) => setSelected(t)}
-            onToggleDone={(t) =>
-              toggle.mutate({
-                id: t.id,
-                status: t.status === 'done' ? 'not_started' : 'done',
-              })
-            }
-          />
-          <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
-            {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
-          </div>
+          {todos.length === 0 && initialTagFilter && initialTagFilter.tags.length > 0 ? (
+            <div className="page-subtle">
+              Searching older entries for matches…
+            </div>
+          ) : (
+            <SortableTodoList
+              rows={todos}
+              allRows={todos}
+              isExpanded={isExpanded}
+              onToggleExpand={toggleExpand}
+              onClickRow={(t) => setSelected(t)}
+              onToggleDone={(t) =>
+                toggle.mutate({
+                  id: t.id,
+                  status: t.status === 'done' ? 'not_started' : 'done',
+                })
+              }
+            />
+          )}
+          {pages.hasNextPage ? (
+            <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
+              {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
+            </div>
+          ) : null}
         </div>
       )}
     </Drawer>

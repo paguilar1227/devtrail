@@ -26,17 +26,20 @@ import { listContent } from '../../lib/api';
 import { toUiNote } from '../../lib/view';
 import { useInView } from '../../lib/useInView';
 import { useNoteSortMode, compareNotesForMode } from '../../lib/useNoteSortMode';
+import { matchesTagFilter, type TagFilter } from '../../lib/tagFilter';
 import type { ActionDispatch, Note, Route } from '../../types';
 
 interface Props {
   onClose: () => void;
   onAction: ActionDispatch;
   onRoute?: (r: Route) => void;
+  /** When set, only notes matching this tag filter are shown. */
+  initialTagFilter?: TagFilter;
 }
 
 const PAGE_SIZE = 20;
 
-export function NoteListDrawer({ onClose, onAction: _onAction, onRoute }: Props) {
+export function NoteListDrawer({ onClose, onAction: _onAction, onRoute, initialTagFilter }: Props) {
   const [q, setQ] = useState('');
   const { mode: sortMode, setMode: setSortMode } = useNoteSortMode('inbox');
   const [selected, setSelected] = useState<Note | null>(null);
@@ -60,8 +63,12 @@ export function NoteListDrawer({ onClose, onAction: _onAction, onRoute }: Props)
 
   const notes = useMemo(() => {
     const flat = (pages.data?.pages ?? []).flat();
-    return [...flat].sort(compareNotesForMode(sortMode));
-  }, [pages.data, sortMode]);
+    const filtered =
+      initialTagFilter && initialTagFilter.tags.length > 0
+        ? flat.filter((n) => matchesTagFilter(n, initialTagFilter))
+        : flat;
+    return [...filtered].sort(compareNotesForMode(sortMode));
+  }, [pages.data, sortMode, initialTagFilter]);
 
   const { ref: sentinelRef, inView } = useInView<HTMLDivElement>();
   useEffect(() => {
@@ -98,23 +105,35 @@ export function NoteListDrawer({ onClose, onAction: _onAction, onRoute }: Props)
         </div>
       ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
-      ) : notes.length === 0 ? (
-        <div className="page-subtle">{q ? 'No notes match.' : 'No personal notes yet.'}</div>
+      ) : notes.length === 0 && !pages.hasNextPage ? (
+        <div className="page-subtle">
+          {q
+            ? 'No notes match.'
+            : initialTagFilter && initialTagFilter.tags.length > 0
+              ? `No personal notes with ${initialTagFilter.tags.length === 1 ? 'tag' : 'tags'} ${initialTagFilter.tags.map((t) => `#${t}`).join(initialTagFilter.mode === 'and' ? ' AND ' : ' or ')}.`
+              : 'No personal notes yet.'}
+        </div>
       ) : (
         <div className="todo-list-drawer-rows">
-          {notes.map((n) => {
-            const ui = toUiNote(n);
-            return (
-              <NoteRow
-                key={ui.id}
-                note={ui}
-                onClick={() => setSelected(ui)}
-              />
-            );
-          })}
-          <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
-            {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
-          </div>
+          {notes.length === 0 && initialTagFilter && initialTagFilter.tags.length > 0 ? (
+            <div className="page-subtle">Searching older entries for matches…</div>
+          ) : (
+            notes.map((n) => {
+              const ui = toUiNote(n);
+              return (
+                <NoteRow
+                  key={ui.id}
+                  note={ui}
+                  onClick={() => setSelected(ui)}
+                />
+              );
+            })
+          )}
+          {pages.hasNextPage ? (
+            <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
+              {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
+            </div>
+          ) : null}
         </div>
       )}
     </Drawer>

@@ -29,6 +29,14 @@ import { useTodoSortMode } from '../lib/useTodoSortMode';
 import { useNoteSortMode, compareNotesForMode } from '../lib/useNoteSortMode';
 import { NoteSortDropdown, SortDropdown, TodoSortDropdown } from '../components/SortDropdown';
 import { PersonalColumnHeader } from '../components/PersonalColumnHeader';
+import { FilterEmpty, HomeTagFilter } from '../components/HomeTagFilter';
+import {
+  EMPTY_FILTER,
+  matchesTagFilter,
+  parseTagFilter,
+  serializeTagFilter,
+  type TagFilter,
+} from '../lib/tagFilter';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -72,6 +80,28 @@ export function HomePage({ onRoute, onAction }: Props) {
   // Filter the Activity widget by kind. 'all' is the passthrough.
   // Keyed in the query cache so React Query refetches on flip.
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
+
+  // Tag filter — URL-backed (?tag=foo,bar&mode=and). Synchronous init from
+  // location.search so the first paint reflects the URL with no flicker.
+  // Write via replaceState only — this is view state, not navigation.
+  const [tagFilter, setTagFilterState] = useState<TagFilter>(() =>
+    typeof window === 'undefined'
+      ? EMPTY_FILTER
+      : parseTagFilter(new URLSearchParams(window.location.search)),
+  );
+  const setTagFilter = (next: TagFilter) => {
+    setTagFilterState(next);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const out = serializeTagFilter(next);
+    const tagValue = out.get('tag') ?? '';
+    if (tagValue.length > 0) url.searchParams.set('tag', tagValue);
+    else url.searchParams.delete('tag');
+    const modeValue = out.get('mode') ?? '';
+    if (modeValue.length > 0) url.searchParams.set('mode', modeValue);
+    else url.searchParams.delete('mode');
+    window.history.replaceState(null, '', url.toString());
+  };
 
   const queries = useQueries({
     queries: [
@@ -121,9 +151,21 @@ export function HomePage({ onRoute, onAction }: Props) {
     [todosQ.data],
   );
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('home');
+  // Tag filter is applied pre-sort so the SortedTodo tree only builds
+  // among the visible items (parent/child relationships among matching
+  // items only). Overview counts (open/overdue/this-week) use the
+  // unfiltered allPersonalTodos by design — they're a dashboard, not
+  // a filtered view.
+  const filteredPersonalTodos = useMemo(
+    () =>
+      tagFilter.tags.length === 0
+        ? allPersonalTodos
+        : allPersonalTodos.filter((t) => matchesTagFilter(t, tagFilter)),
+    [allPersonalTodos, tagFilter],
+  );
   const personalTodos = useMemo(
-    () => sortPersonalTodos(allPersonalTodos, { mode: sortMode, maxDepth: 1, isExpanded }),
-    [allPersonalTodos, sortMode, isExpanded],
+    () => sortPersonalTodos(filteredPersonalTodos, { mode: sortMode, maxDepth: 1, isExpanded }),
+    [filteredPersonalTodos, sortMode, isExpanded],
   );
   const { mode: noteSortMode, setMode: setNoteSortMode } = useNoteSortMode('home');
   const personalNotes = useMemo(() => {
@@ -138,6 +180,26 @@ export function HomePage({ onRoute, onAction }: Props) {
     () => (docsQ.data ?? []).slice().sort(compareNotesForMode(docSortMode)).map(toUiDocument),
     [docsQ.data, docSortMode],
   );
+
+  // Notes + docs: filter post-sort (no tree to rebuild). Todos already
+  // filtered pre-sort above.
+  const filteredNotes = useMemo(
+    () =>
+      tagFilter.tags.length === 0
+        ? personalNotes
+        : personalNotes.filter((n) => matchesTagFilter(n, tagFilter)),
+    [personalNotes, tagFilter],
+  );
+  const filteredDocs = useMemo(
+    () =>
+      tagFilter.tags.length === 0
+        ? personalDocs
+        : personalDocs.filter((d) => matchesTagFilter(d, tagFilter)),
+    [personalDocs, tagFilter],
+  );
+  // For todos, `personalTodos` IS already the filtered set (filter is
+  // applied pre-sort). Alias for symmetry with notes/docs render code.
+  const filteredTodos = personalTodos;
   const activity = useMemo(
     () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
     [activityQ.data, projectsById],
@@ -172,6 +234,18 @@ export function HomePage({ onRoute, onAction }: Props) {
       .filter((t) => t.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
+  }, [tagsQ.data]);
+
+  // Full personal-scope tag list (sorted by usage) for the filter chip
+  // row — NOT pre-sliced. HomeTagFilter caps the visible chips via its
+  // own `visibleCap` prop and exposes a "+N more" expansion. Keeping
+  // the full list here means the +N more affordance can actually do
+  // something when the user has more than the cap.
+  const sortedTagsForChipRow = useMemo(() => {
+    const all = tagsQ.data ?? [];
+    return [...all]
+      .filter((t) => t.total > 0)
+      .sort((a, b) => b.total - a.total);
   }, [tagsQ.data]);
 
   // Recently-active projects: top 3 by `updated_at` among active (not
@@ -301,16 +375,24 @@ export function HomePage({ onRoute, onAction }: Props) {
         </div>
       </div>
 
+      {sortedTagsForChipRow.length > 0 || tagFilter.tags.length > 0 ? (
+        <HomeTagFilter
+          options={sortedTagsForChipRow}
+          filter={tagFilter}
+          onChange={setTagFilter}
+        />
+      ) : null}
+
       <div className="home-personal-h">
         <h2>Personal</h2>
         <span className="sub">project-less todos, notes, and documents</span>
       </div>
 
       <div className="home-personal-grid">
-        <div className="pcol">
+        <div className="pcol" data-pcol="todos">
           <PersonalColumnHeader
             title="Todos"
-            count={personalTodos.length}
+            count={filteredTodos.length}
             sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
           />
           <div className="pcol-add">
@@ -329,13 +411,17 @@ export function HomePage({ onRoute, onAction }: Props) {
               disabled={todoCreate.isPending}
             />
           </div>
-          {personalTodos.length === 0 ? (
-            <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+          {filteredTodos.length === 0 ? (
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="todos" filter={tagFilter} />
+            ) : (
+              <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+            )
           ) : (
             <>
               <SortableTodoList
-                rows={personalTodos.slice(0, 6)}
-                allRows={personalTodos}
+                rows={filteredTodos.slice(0, 6)}
+                allRows={filteredTodos}
                 isExpanded={isExpanded}
                 onToggleExpand={toggleExpand}
                 onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
@@ -346,12 +432,12 @@ export function HomePage({ onRoute, onAction }: Props) {
                   })
                 }
               />
-              {personalTodos.length > 6 ? (
+              {filteredTodos.length > 6 ? (
                 <button
                   className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-todos' })}
+                  onClick={() => onAction({ kind: 'personal-todos', tagFilter })}
                 >
-                  View {personalTodos.length - 6} more
+                  View {filteredTodos.length - 6} more
                   <Icons.ChevronRight size={11} />
                 </button>
               ) : null}
@@ -359,10 +445,10 @@ export function HomePage({ onRoute, onAction }: Props) {
           )}
         </div>
 
-        <div className="pcol">
+        <div className="pcol" data-pcol="notes">
           <PersonalColumnHeader
             title="Notes"
-            count={personalNotes.length}
+            count={filteredNotes.length}
             sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
           />
           <div className="pcol-add">
@@ -381,23 +467,27 @@ export function HomePage({ onRoute, onAction }: Props) {
               disabled={noteCreate.isPending}
             />
           </div>
-          {personalNotes.length === 0 ? (
-            <div className="pcol-empty">No personal notes — capture above.</div>
+          {filteredNotes.length === 0 ? (
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="notes" filter={tagFilter} />
+            ) : (
+              <div className="pcol-empty">No personal notes — capture above.</div>
+            )
           ) : (
             <>
-              {personalNotes.slice(0, 6).map((n) => (
+              {filteredNotes.slice(0, 6).map((n) => (
                 <NoteRow
                   key={n.id}
                   note={toUiNote(n)}
                   onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
                 />
               ))}
-              {personalNotes.length > 6 ? (
+              {filteredNotes.length > 6 ? (
                 <button
                   className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-notes' })}
+                  onClick={() => onAction({ kind: 'personal-notes', tagFilter })}
                 >
-                  View {personalNotes.length - 6} more
+                  View {filteredNotes.length - 6} more
                   <Icons.ChevronRight size={11} />
                 </button>
               ) : null}
@@ -405,29 +495,33 @@ export function HomePage({ onRoute, onAction }: Props) {
           )}
         </div>
 
-        <div className="pcol">
+        <div className="pcol" data-pcol="documents">
           <PersonalColumnHeader
             title="Documents"
-            count={personalDocs.length}
+            count={filteredDocs.length}
             sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
           />
-          {personalDocs.length === 0 ? (
-            <div className="pcol-empty">No personal documents — upload or save from URL.</div>
+          {filteredDocs.length === 0 ? (
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="documents" filter={tagFilter} />
+            ) : (
+              <div className="pcol-empty">No personal documents — upload or save from URL.</div>
+            )
           ) : (
             <>
-              {personalDocs.slice(0, 6).map((d) => (
+              {filteredDocs.slice(0, 6).map((d) => (
                 <DocRow
                   key={d.id}
                   doc={d}
                   onClick={() => onAction({ kind: 'doc-read', payload: d })}
                 />
               ))}
-              {personalDocs.length > 6 ? (
+              {filteredDocs.length > 6 ? (
                 <button
                   className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-docs' })}
+                  onClick={() => onAction({ kind: 'personal-docs', tagFilter })}
                 >
-                  View {personalDocs.length - 6} more
+                  View {filteredDocs.length - 6} more
                   <Icons.ChevronRight size={11} />
                 </button>
               ) : null}

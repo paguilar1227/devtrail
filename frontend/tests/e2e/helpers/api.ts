@@ -37,6 +37,7 @@ export interface Todo {
   priority: 'p1' | 'p2' | 'p3' | null;
   project_id: string | null;
   archived: boolean;
+  tags?: string[];
 }
 
 export interface ContentItem {
@@ -47,6 +48,7 @@ export interface ContentItem {
   project_ids: string[];
   archived: boolean;
   processing_status: 'pending' | 'ready' | 'failed';
+  tags?: string[];
 }
 
 export async function listProjects(): Promise<Project[]> {
@@ -90,13 +92,63 @@ export async function unpinProject(id: string): Promise<void> {
 export async function createTodo(
   content: string,
   projectId?: string | null,
-  extras: { due_date?: string | null; parent_id?: string | null } = {},
+  extras: { due_date?: string | null; parent_id?: string | null; tags?: string[] } = {},
 ): Promise<Todo> {
   const body: Record<string, unknown> = { content, project_id: projectId ?? null };
   if (extras.due_date !== undefined) body.due_date = extras.due_date;
   if (extras.parent_id !== undefined) body.parent_id = extras.parent_id;
+  if (extras.tags !== undefined) body.tags = extras.tags;
   const data = await api<{ todo: Todo }>('POST', '/api/v1/todos', body);
   return data.todo;
+}
+
+export async function createNote(
+  title: string,
+  content: string,
+  opts: { projectIds?: string[]; tags?: string[] } = {},
+): Promise<{ id: string }> {
+  const body = {
+    type: 'note',
+    title,
+    content,
+    project_ids: opts.projectIds ?? [],
+    tags: opts.tags ?? [],
+  };
+  return api<{ id: string }>('POST', '/api/v1/content', body);
+}
+
+/**
+ * Personal document (no project) — used by the tag-filtering specs to
+ * seed an AC-3 doc fixture so document filtering is asserted alongside
+ * todos/notes. Docs require multipart (`POST /api/v1/content` with a
+ * `file` part) — there's no inline JSON path for type=document. The
+ * Home docs query (`listContent({type:'document', project_id:'null'})`)
+ * does NOT filter on processing_status, so the row is filterable
+ * immediately after this 202 returns, even while embeddings process
+ * in the background.
+ */
+export async function createDoc(
+  title: string,
+  content: string,
+  opts: { projectIds?: string[]; tags?: string[] } = {},
+): Promise<{ id: string }> {
+  const form = new FormData();
+  form.append('type', 'document');
+  form.append('title', title);
+  // Multipart handler parses these as comma-separated strings, NOT JSON
+  // (see backend/src/app.ts: `body.tags?.split(',').filter(Boolean)`).
+  // Sending `JSON.stringify(['a'])` here would result in tags=['["a"]'].
+  if (opts.projectIds?.length) form.append('project_ids', opts.projectIds.join(','));
+  if (opts.tags?.length) form.append('tags', opts.tags.join(','));
+  form.append('file', new Blob([content], { type: 'text/plain' }), `${title}.txt`);
+  const res = await fetch(`${BASE}/api/v1/content`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KEY}` },
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`POST /api/v1/content (multipart) → ${res.status} ${text}`);
+  return text ? (JSON.parse(text) as { id: string }) : (undefined as unknown as { id: string });
 }
 
 export async function updateTodo(

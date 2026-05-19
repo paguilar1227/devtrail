@@ -5,6 +5,9 @@ dist/
 *.log
 coverage/
 .DS_Store
+# superdev flow state — per-feature design plans, TDD lists, evidence,
+# codex scratch. Per-machine, not part of source history.
+.superdev/
 # .claude/ holds a mix of local-only stuff (logs, personal settings) and
 # committed shared rules. Ignore everything by default, then carve out the
 # pieces that should be versioned.
@@ -25,3 +28,4 @@ frontend/tsconfig.tsbuildinfo
 # Working scratch — screenshots, prototypes, throwaway notes.
 # Anything that should not be committed long-term goes here.
 scratch/
+.superdev/

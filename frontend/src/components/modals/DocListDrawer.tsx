@@ -17,17 +17,20 @@ import { listContent } from '../../lib/api';
 import { toUiDocument } from '../../lib/view';
 import { useInView } from '../../lib/useInView';
 import { useNoteSortMode, compareNotesForMode } from '../../lib/useNoteSortMode';
+import { matchesTagFilter, type TagFilter } from '../../lib/tagFilter';
 import type { ActionDispatch, DocumentItem, Route } from '../../types';
 
 interface Props {
   onClose: () => void;
   onAction: ActionDispatch;
   onRoute?: (r: Route) => void;
+  /** When set, only documents matching this tag filter are shown. */
+  initialTagFilter?: TagFilter;
 }
 
 const PAGE_SIZE = 20;
 
-export function DocListDrawer({ onClose, onAction: _onAction, onRoute }: Props) {
+export function DocListDrawer({ onClose, onAction: _onAction, onRoute, initialTagFilter }: Props) {
   const [q, setQ] = useState('');
   const { mode: sortMode, setMode: setSortMode } = useNoteSortMode('docs:inbox');
   const [selected, setSelected] = useState<DocumentItem | null>(null);
@@ -51,8 +54,12 @@ export function DocListDrawer({ onClose, onAction: _onAction, onRoute }: Props) 
 
   const docs = useMemo(() => {
     const flat = (pages.data?.pages ?? []).flat();
-    return flat.slice().sort(compareNotesForMode(sortMode)).map(toUiDocument);
-  }, [pages.data, sortMode]);
+    const filtered =
+      initialTagFilter && initialTagFilter.tags.length > 0
+        ? flat.filter((d) => matchesTagFilter(d, initialTagFilter))
+        : flat;
+    return filtered.slice().sort(compareNotesForMode(sortMode)).map(toUiDocument);
+  }, [pages.data, sortMode, initialTagFilter]);
 
   const { ref: sentinelRef, inView } = useInView<HTMLDivElement>();
   useEffect(() => {
@@ -89,20 +96,32 @@ export function DocListDrawer({ onClose, onAction: _onAction, onRoute }: Props) 
         </div>
       ) : pages.isLoading ? (
         <div className="page-subtle">Loading…</div>
-      ) : docs.length === 0 ? (
-        <div className="page-subtle">{q ? 'No documents match.' : 'No personal documents yet.'}</div>
+      ) : docs.length === 0 && !pages.hasNextPage ? (
+        <div className="page-subtle">
+          {q
+            ? 'No documents match.'
+            : initialTagFilter && initialTagFilter.tags.length > 0
+              ? `No personal documents with ${initialTagFilter.tags.length === 1 ? 'tag' : 'tags'} ${initialTagFilter.tags.map((t) => `#${t}`).join(initialTagFilter.mode === 'and' ? ' AND ' : ' or ')}.`
+              : 'No personal documents yet.'}
+        </div>
       ) : (
         <div className="todo-list-drawer-rows">
-          {docs.map((d) => (
-            <DocRow
-              key={d.id}
-              doc={d}
-              onClick={() => setSelected(d)}
-            />
-          ))}
-          <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
-            {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
-          </div>
+          {docs.length === 0 && initialTagFilter && initialTagFilter.tags.length > 0 ? (
+            <div className="page-subtle">Searching older entries for matches…</div>
+          ) : (
+            docs.map((d) => (
+              <DocRow
+                key={d.id}
+                doc={d}
+                onClick={() => setSelected(d)}
+              />
+            ))
+          )}
+          {pages.hasNextPage ? (
+            <div ref={sentinelRef} className="todo-list-drawer-sentinel" aria-hidden="true">
+              {pages.isFetchingNextPage ? <span className="page-subtle">Loading more…</span> : null}
+            </div>
+          ) : null}
         </div>
       )}
     </Drawer>

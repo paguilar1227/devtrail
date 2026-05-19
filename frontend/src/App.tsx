@@ -177,13 +177,13 @@ export default function App() {
         />
       )}
       {modal?.kind === 'personal-todos' && (
-        <TodoListDrawer initialSort={modal.sort} onClose={() => setModal(null)} onAction={onAction} />
+        <TodoListDrawer initialSort={modal.sort} initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} />
       )}
       {modal?.kind === 'personal-notes' && (
-        <NoteListDrawer onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
+        <NoteListDrawer initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
       )}
       {modal?.kind === 'personal-docs' && (
-        <DocListDrawer onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
+        <DocListDrawer initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
       )}
 
       {cmdkOpen && (
