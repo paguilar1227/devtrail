@@ -1820,6 +1820,74 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-size: var(--type-body); font-weight: 400;
 }
 .home-search-box input::placeholder { color: var(--fg-subtle); }
+
+/* SearchInput wrapper: anchor for the typeahead popover, fills the
+   available width like a bare input would. */
+.search-input-wrapper {
+  position: relative;
+  flex: 1; min-width: 0;
+  display: flex; align-items: center;
+}
+.search-input-wrapper input {
+  flex: 1; background: transparent; border: 0; outline: 0;
+  color: var(--fg); font-family: var(--font-sans);
+  font-size: var(--type-body); font-weight: 400;
+}
+.search-input-wrapper input::placeholder { color: var(--fg-subtle); }
+
+/* Typeahead popover — anchored to the search input, styled to feel like
+   the tag-picker popover for consistency. */
+.typeahead-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: 320px;
+  display: flex; flex-direction: column;
+  background: var(--surface-1, var(--bg));
+  border: 0.5px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  z-index: 50;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.app[data-mobile="true"] .typeahead-popover {
+  left: 0; right: 0; min-width: 0;
+  max-width: none;
+  max-height: 50vh;
+}
+.typeahead-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent; border: 0;
+  color: var(--fg); text-align: left;
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.typeahead-row.active { background: var(--glass-bg-soft); }
+.typeahead-icon {
+  color: var(--fg-subtle);
+  display: inline-flex; justify-content: center;
+}
+.typeahead-label { color: var(--fg); }
+.typeahead-sublabel {
+  color: var(--fg-subtle);
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
+}
+.typeahead-empty {
+  padding: 14px 12px;
+  text-align: center;
+  color: var(--fg-subtle);
+  font-size: var(--type-meta);
+}
 .home-scope-toggle {
   display: inline-flex; padding: 2px;
   background: var(--glass-bg-soft);

@@ -38,6 +38,7 @@ import {
   type TagFilter,
 } from '../lib/tagFilter';
 import { parseSearchSyntax, toggleTagInQuery } from '../lib/searchSyntax';
+import { SearchInput, type MentionTarget } from '../components/SearchInput';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -203,6 +204,23 @@ export function HomePage({ onRoute, onAction }: Props) {
     () => (docsQ.data ?? []).slice().sort(compareNotesForMode(docSortMode)).map(toUiDocument),
     [docsQ.data, docSortMode],
   );
+
+  // @-mention typeahead targets — docs + notes (personal scope, matching
+  // what's visible in the columns). Title-sorted so the popover surfaces
+  // alphabetically; the SearchInput component handles prefix filtering.
+  const mentionTargets = useMemo<MentionTarget[]>(() => {
+    const docs: MentionTarget[] = personalDocs.map((d) => ({
+      title: d.title,
+      kind: 'document',
+      id: d.id,
+    }));
+    const notes: MentionTarget[] = (notesQ.data ?? []).map((n) => ({
+      title: n.title,
+      kind: 'note',
+      id: n.id,
+    }));
+    return [...docs, ...notes].sort((a, b) => a.title.localeCompare(b.title));
+  }, [personalDocs, notesQ.data]);
 
   // Notes + docs: filter post-sort (no tree to rebuild). Todos already
   // filtered pre-sort above.
@@ -406,11 +424,22 @@ export function HomePage({ onRoute, onAction }: Props) {
       <div className="home-search-row">
         <div className="home-search-box">
           <Icons.Search />
-          <input
+          <SearchInput
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-            placeholder="Search your stuff — todos, notes, documents…"
+            onChange={setQuery}
+            onSubmit={submitSearch}
+            tags={sortedTagsForChipRow.map((t) => ({ name: t.name, total: t.total }))}
+            mentions={mentionTargets}
+            onMentionSelect={(target) => {
+              if (target.kind === 'document') {
+                const doc = personalDocs.find((d) => d.id === target.id);
+                if (doc) onAction({ kind: 'doc-read', payload: doc });
+              } else {
+                const raw = (notesQ.data ?? []).find((n) => n.id === target.id);
+                if (raw && raw.type === 'note') onAction({ kind: 'note-edit', payload: toUiNote(raw) });
+              }
+            }}
+            placeholder="Search… try #tag, in:todo, or @docname"
           />
         </div>
         <div className="home-scope-toggle" role="tablist" aria-label="Search scope">
