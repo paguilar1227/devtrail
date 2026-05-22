@@ -17,7 +17,7 @@
 // "Personal" means project_ids = [] (content) / project_id = null (todo).
 // All three columns hit the backend with `project_id='null'`.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
@@ -37,6 +37,7 @@ import {
   serializeTagFilter,
   type TagFilter,
 } from '../lib/tagFilter';
+import { parseSearchSyntax, toggleTagInQuery } from '../lib/searchSyntax';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -89,8 +90,30 @@ export function HomePage({ onRoute, onAction }: Props) {
       ? EMPTY_FILTER
       : parseTagFilter(new URLSearchParams(window.location.search)),
   );
+  // setTagFilter is the public mutator. Tag-array changes route THROUGH
+  // the universal search query (so the search input and chip row stay
+  // bidirectionally in sync); mode-only changes apply directly. The
+  // useEffect below mirrors parsed query tags back into tagFilter, so
+  // both directions converge on the same source of truth without loops.
   const setTagFilter = (next: TagFilter) => {
-    setTagFilterState(next);
+    const tagsChanged =
+      next.tags.length !== tagFilter.tags.length ||
+      next.tags.some((t, i) => t !== tagFilter.tags[i]);
+    if (tagsChanged) {
+      // Diff against current; apply add/remove via toggleTagInQuery so
+      // free text + in: predicates already in the query are preserved.
+      let q = query;
+      const current = new Set(tagFilter.tags);
+      const desired = new Set(next.tags);
+      for (const t of next.tags) if (!current.has(t)) q = toggleTagInQuery(q, t);
+      for (const t of tagFilter.tags) if (!desired.has(t)) q = toggleTagInQuery(q, t);
+      setQuery(q);
+    }
+    // Mode (AND/OR) isn't part of the search DSL — apply directly so the
+    // query → tagFilter effect doesn't clobber it.
+    if (next.mode !== tagFilter.mode) {
+      setTagFilterState((prev) => ({ ...prev, mode: next.mode }));
+    }
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
     const out = serializeTagFilter(next);
@@ -260,12 +283,47 @@ export function HomePage({ onRoute, onAction }: Props) {
   }, [projects]);
 
   // ── Search ───────────────────────────────────────────────
-  const [query, setQuery] = useState('');
+  // Universal search bar: the input text IS the source of truth for the
+  // active scope. `#tag` and `in:type` predicates are parsed live via
+  // searchSyntax.ts; tagFilter mirrors the parsed tags via a useEffect
+  // below so the HomeTagFilter chip row stays bidirectionally in sync.
+  // Initial value seeded from the URL's ?tag= so existing bookmarks /
+  // browser-back states still surface the same scope visibly.
+  const [query, setQuery] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    const urlFilter = parseTagFilter(new URLSearchParams(window.location.search));
+    return urlFilter.tags.map((t) => `#${t}`).join(' ');
+  });
   const [scope, setScope] = useState<SearchScope>('personal');
   const submitSearch = () => {
     if (!query.trim()) return;
     onAction({ kind: 'search', payload: { query: query.trim(), scope } });
   };
+
+  // query → tagFilter sync. Parses #tag predicates out of the search
+  // input and mirrors them into tagFilter.tags (preserving mode). The
+  // setTagFilter mutator handles the reverse direction by writing the
+  // diff back through `query`. Effect+mutator converge cleanly because
+  // each only updates the OTHER state when there's a real diff.
+  //
+  // Mid-typing guard: only promote a parsed tag to tagFilter if it
+  // matches a known tag in the user's data. Typing `#t` shouldn't
+  // surface an orphan `t` chip in HomeTagFilter just because the
+  // partial token parsed cleanly. Orphans are still kept for tags the
+  // user previously selected that have since vanished from data —
+  // those preserve in tagFilter until explicitly cleared (the chip is
+  // visible inside HomeTagFilter regardless of this filter).
+  useEffect(() => {
+    const parsedTags = parseSearchSyntax(query).tags;
+    const knownNames = new Set((tagsQ.data ?? []).map((t) => t.name));
+    const validTags = parsedTags.filter((t) => knownNames.has(t));
+    setTagFilterState((prev) => {
+      const same =
+        validTags.length === prev.tags.length &&
+        validTags.every((t, i) => t === prev.tags[i]);
+      return same ? prev : { ...prev, tags: validTags };
+    });
+  }, [query, tagsQ.data]);
 
   // ── Quick-add ───────────────────────────────────────────
   const invalidate = () => {
