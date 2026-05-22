@@ -148,22 +148,20 @@ async function searchWithTimingsImpl(
           excludedParentTypes: excludedChunkParentTypes,
         })
       : Promise.resolve([]),
-    searchTodos && !tags && !excludeTodos
-      ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit)
+    // Todos: skipped when the caller restricted to specific content
+    // items (todos aren't chunks under a parent — they can't match a
+    // content_item_id filter by definition) OR when 'todo' is in the
+    // exclusion list. Tag + excluded-tag filters are applied IN-DB by
+    // findSimilarTodos so todos can co-exist with tag-scoped searches.
+    searchTodos && !excludeTodos && !(contentItemIds && contentItemIds.length > 0)
+      ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit, {
+          tags,
+          excludedTags,
+        })
           .then((t) => {
             let filtered = t;
             if (projectId === null) filtered = filtered.filter((x) => x.project_id === null);
             else if (typeof projectId === 'string') filtered = filtered.filter((x) => x.project_id === projectId);
-            // Mention filters apply by content_item_id, which todos don't have
-            // (todos are first-class entities, not chunks under a parent).
-            // If the caller restricted to specific content items, drop all
-            // todos — they can't be content_item-scoped by definition.
-            if (contentItemIds && contentItemIds.length > 0) return [];
-            // excludedContentItemIds: irrelevant to todos (same reason).
-            // excludedTags: apply against todo.tags.
-            if (excludedTags && excludedTags.length > 0) {
-              filtered = filtered.filter((x) => !x.tags?.some((tag) => excludedTags.includes(tag)));
-            }
             return filtered;
           })
       : Promise.resolve([]),

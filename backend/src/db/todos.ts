@@ -446,18 +446,36 @@ export async function findSimilarTodos(
   embedding: number[],
   threshold: number,
   limit: number = 10,
+  opts: {
+    tags?: string[];
+    excludedTags?: string[];
+  } = {},
 ): Promise<TodoSearchResult[]> {
   // Explicit column list — must NOT include the embedding vector.
+  const conditions = [
+    'archived = false',
+    'embedding IS NOT NULL',
+    '1 - (embedding <=> $1::vector) > $2',
+  ];
+  const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
+  let i = 4;
+  if (opts.tags && opts.tags.length > 0) {
+    conditions.push(`tags @> $${i++}::text[]`);
+    params.push(opts.tags);
+  }
+  if (opts.excludedTags && opts.excludedTags.length > 0) {
+    conditions.push(`NOT (tags && $${i++}::text[])`);
+    params.push(opts.excludedTags);
+  }
   const result = await db.query(
     `SELECT id, content, project_id, section, parent_id, status, priority,
             due_date, tags, archived, created_at, updated_at,
             1 - (embedding <=> $1::vector) AS similarity
      FROM todos
-     WHERE archived = false AND embedding IS NOT NULL
-       AND 1 - (embedding <=> $1::vector) > $2
+     WHERE ${conditions.join(' AND ')}
      ORDER BY similarity DESC
      LIMIT $3`,
-    [JSON.stringify(embedding), threshold, limit],
+    params,
   );
   return result.rows;
 }

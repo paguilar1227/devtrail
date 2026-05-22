@@ -2668,6 +2668,29 @@ describe('Search API', () => {
     expect(seedQ!.sql).toMatch(/NOT\s*\(ci\.type\s*=\s*ANY\(/i);
   });
 
+  it('POST /search with tags=["chore"] STILL hits findSimilarTodos (regression — todos vanished when any tag filter was set)', async () => {
+    // Before this fix, the service layer had `searchTodos && !tags` —
+    // any tag filter silently dropped todos from search results entirely.
+    // Repro: filter by #chore, the todo named "Renew domain" should still
+    // be in the candidate set even though semantic similarity may rank it
+    // low. We assert on the SQL having a tags-overlap predicate so the
+    // todo query at least RAN.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'do', tags: ['chore'], graph: false }),
+    }));
+    const todoQ = queries.find((q) => /FROM todos\b/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(todoQ).toBeDefined();
+    expect(todoQ!.sql).toMatch(/tags\s*@>/i);
+    expect(todoQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes('chore'))).toBe(true);
+  });
+
   it('POST /search with excluded_entity_types=["todo"] skips the todo fetch entirely', async () => {
     // The todo fetch path is conditionally enabled; with todo excluded
     // we should not call findSimilarTodos. Easy check: no query against
