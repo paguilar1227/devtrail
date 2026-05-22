@@ -2612,6 +2612,79 @@ describe('Search API', () => {
 
     expect(deps.queryDepthLLM.complete).not.toHaveBeenCalled();
   });
+
+  // Universal search bar — extended SearchRequest filters. The new
+  // fields (content_item_ids + excluded_*) must surface as SQL
+  // predicates on the chunk vector-seed query. Without these tests, a
+  // schema-only change could "pass" while the SQL silently ignores them.
+  it('POST /search with content_item_ids scopes chunks to those parent items', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    const id = '11111111-1111-1111-1111-111111111111';
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', content_item_ids: [id], graph: false }),
+    }));
+    const seedQ = queries.find((q) => /FROM chunks c/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(seedQ).toBeDefined();
+    expect(seedQ!.sql).toMatch(/ci\.id\s*=\s*ANY\(/i);
+    expect(seedQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes(id))).toBe(true);
+  });
+
+  it('POST /search with excluded_tags emits a NOT-overlap predicate', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', excluded_tags: ['archive'], graph: false }),
+    }));
+    const seedQ = queries.find((q) => /FROM chunks c/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(seedQ).toBeDefined();
+    expect(seedQ!.sql).toMatch(/NOT\s*\(ci\.tags\s*&&/i);
+    expect(seedQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes('archive'))).toBe(true);
+  });
+
+  it('POST /search with excluded_entity_types=["document"] drops document-type chunks', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', excluded_entity_types: ['document'], graph: false }),
+    }));
+    const seedQ = queries.find((q) => /FROM chunks c/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(seedQ).toBeDefined();
+    expect(seedQ!.sql).toMatch(/NOT\s*\(ci\.type\s*=\s*ANY\(/i);
+  });
+
+  it('POST /search with excluded_entity_types=["todo"] skips the todo fetch entirely', async () => {
+    // The todo fetch path is conditionally enabled; with todo excluded
+    // we should not call findSimilarTodos. Easy check: no query against
+    // the todos table fires.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', excluded_entity_types: ['todo'], graph: false }),
+    }));
+    const todoQ = queries.find((q) => /FROM todos\b/i.test(q.sql) && q.sql.includes('embedding <=>'));
+    expect(todoQ).toBeUndefined();
+  });
 });
 
 describe('RAG API', () => {

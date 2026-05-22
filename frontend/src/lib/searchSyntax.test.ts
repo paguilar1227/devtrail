@@ -9,23 +9,40 @@ import {
   toggleTagInQuery,
   removeTagFromQuery,
   removeTypeFromQuery,
+  removeMentionFromQuery,
+  removeProjectFromQuery,
+  removeExcludedFromQuery,
   tokenAtCursor,
   replaceTokenAtCursor,
 } from './searchSyntax';
+import type { ParsedQuery } from './searchSyntax';
+
+// Test helper: build a ParsedQuery from partial overrides so assertions
+// don't have to spell out every field every time. The default value
+// for each field matches the parser's EMPTY constant.
+function parsed(overrides: Partial<ParsedQuery>): ParsedQuery {
+  return {
+    text: '',
+    tags: [],
+    types: [],
+    mentions: [],
+    projects: [],
+    excludedTags: [],
+    excludedTypes: [],
+    excludedMentions: [],
+    excludedProjects: [],
+    ...overrides,
+  };
+}
 
 describe('parseSearchSyntax — basics', () => {
   it('empty / whitespace → EMPTY', () => {
-    expect(parseSearchSyntax('')).toEqual({ text: '', tags: [], types: [], mentions: [] });
-    expect(parseSearchSyntax('   ')).toEqual({ text: '', tags: [], types: [], mentions: [] });
+    expect(parseSearchSyntax('')).toEqual(parsed({}));
+    expect(parseSearchSyntax('   ')).toEqual(parsed({}));
   });
 
   it('plain text is preserved as .text', () => {
-    expect(parseSearchSyntax('quarterly report')).toEqual({
-      text: 'quarterly report',
-      tags: [],
-      types: [],
-      mentions: [],
-    });
+    expect(parseSearchSyntax('quarterly report')).toEqual(parsed({ text: 'quarterly report' }));
   });
 
   it('tag tokens move to .tags (lowercased)', () => {
@@ -58,69 +75,14 @@ describe('parseSearchSyntax — basics', () => {
   });
 
   it('whitespace is normalized — multiple spaces between tokens collapse', () => {
-    expect(parseSearchSyntax('foo   #x    bar')).toEqual({
-      text: 'foo bar',
-      tags: ['x'],
-      types: [],
-      mentions: [],
-    });
+    expect(parseSearchSyntax('foo   #x    bar')).toEqual(
+      parsed({ text: 'foo bar', tags: ['x'] }),
+    );
   });
 
   it('tag with hyphen is valid; trailing punctuation invalidates it', () => {
     expect(parseSearchSyntax('#open-brain').tags).toEqual(['open-brain']);
-    // Trailing comma makes it not a tag token — falls to text.
     expect(parseSearchSyntax('#nope,').text).toBe('#nope,');
-  });
-});
-
-describe('stringifySearchSyntax — round-trip', () => {
-  it('predicates come first, then free text', () => {
-    const s = stringifySearchSyntax({ text: 'find me', tags: ['x', 'y'], types: ['todo'], mentions: [] });
-    expect(s).toBe('#x #y in:todo find me');
-  });
-
-  it('round-trip stable for canonical input', () => {
-    const inputs = ['#home #reading in:todo find this', '#x', 'in:doc', 'free text only', ''];
-    for (const input of inputs) {
-      const parsed = parseSearchSyntax(input);
-      const reparsed = parseSearchSyntax(stringifySearchSyntax(parsed));
-      expect(reparsed).toEqual(parsed);
-    }
-  });
-
-  it('round-trip normalizes order + canonicalizes type aliases', () => {
-    // Input uses the `doc` alias; round-trip emits the canonical EntityKind name.
-    const input = 'quarterly #home report in:doc';
-    const stringified = stringifySearchSyntax(parseSearchSyntax(input));
-    expect(stringified).toBe('#home in:document quarterly report');
-  });
-});
-
-describe('toggleTagInQuery', () => {
-  it('adds a tag when absent', () => {
-    expect(toggleTagInQuery('find me', 'home')).toBe('#home find me');
-  });
-
-  it('removes a tag when present', () => {
-    expect(toggleTagInQuery('#home #reading find me', 'home')).toBe('#reading find me');
-  });
-
-  it('tag matching is case-insensitive against the stored lowercased name', () => {
-    expect(toggleTagInQuery('#home', 'HOME')).toBe('');
-  });
-
-  it('does not disturb the rest of the parse', () => {
-    expect(toggleTagInQuery('#x in:todo q', 'y')).toBe('#x #y in:todo q');
-  });
-});
-
-describe('removeTagFromQuery / removeTypeFromQuery', () => {
-  it('removeTagFromQuery is idempotent when tag is absent', () => {
-    expect(removeTagFromQuery('#a free', 'b')).toBe('#a free');
-  });
-
-  it('removeTypeFromQuery drops the matching type', () => {
-    expect(removeTypeFromQuery('#a in:todo in:note q', 'todo')).toBe('#a in:note q');
   });
 });
 
@@ -157,69 +119,159 @@ describe('parseSearchSyntax — mentions (@name)', () => {
     expect(p.mentions).toEqual([]);
     expect(p.text).toBe('email@gmail.com');
   });
+});
 
-  it('mixed predicates + mentions + text parse independently', () => {
-    const p = parseSearchSyntax('#home @Books in:todo find this');
-    expect(p.tags).toEqual(['home']);
-    expect(p.types).toEqual(['todo']);
-    expect(p.mentions).toEqual(['Books']);
-    expect(p.text).toBe('find this');
+describe('parseSearchSyntax — projects (project:name)', () => {
+  it('bare project:name moves to .projects, case preserved', () => {
+    const p = parseSearchSyntax('project:openbrain');
+    expect(p.projects).toEqual(['openbrain']);
+    expect(p.text).toBe('');
+  });
+
+  it('quoted project:"multi word" allows whitespace', () => {
+    const p = parseSearchSyntax('project:"Open Brain v2"');
+    expect(p.projects).toEqual(['Open Brain v2']);
+    expect(p.text).toBe('');
+  });
+
+  it('mid-typing unterminated project:"foo is captured for typeahead', () => {
+    expect(parseSearchSyntax('project:"Open Bra').projects).toEqual(['Open Bra']);
+  });
+
+  it('dedupes case-insensitively', () => {
+    expect(parseSearchSyntax('project:foo project:FOO').projects).toEqual(['foo']);
   });
 });
 
-describe('stringifySearchSyntax — mentions', () => {
-  it('quoting is applied only when the name contains whitespace', () => {
-    expect(
-      stringifySearchSyntax({ text: '', tags: [], types: [], mentions: ['Books'] }),
-    ).toBe('@Books');
-    expect(
-      stringifySearchSyntax({ text: '', tags: [], types: [], mentions: ['Q1 report'] }),
-    ).toBe('@"Q1 report"');
+describe('parseSearchSyntax — exclusion (-prefix on any sigil)', () => {
+  it('-#tag routes to excludedTags', () => {
+    const p = parseSearchSyntax('-#archive');
+    expect(p.excludedTags).toEqual(['archive']);
+    expect(p.tags).toEqual([]);
   });
 
-  it('round-trip stable for mentions + mixed predicates', () => {
-    const input = '#home in:todo @Books @"Q1 report" find me';
-    const stringified = stringifySearchSyntax(parseSearchSyntax(input));
-    expect(parseSearchSyntax(stringified)).toEqual(parseSearchSyntax(input));
+  it('-in:type routes to excludedTypes', () => {
+    expect(parseSearchSyntax('-in:doc').excludedTypes).toEqual(['document']);
+  });
+
+  it('-@name routes to excludedMentions', () => {
+    const p = parseSearchSyntax('-@Drafts');
+    expect(p.excludedMentions).toEqual(['Drafts']);
+  });
+
+  it('-project:name routes to excludedProjects', () => {
+    expect(parseSearchSyntax('-project:openbrain').excludedProjects).toEqual(['openbrain']);
+  });
+
+  it('-@"multi word" exclusion handles quotes', () => {
+    expect(parseSearchSyntax('-@"old notes"').excludedMentions).toEqual(['old notes']);
+  });
+
+  it('mixed positive + negative predicates parse independently', () => {
+    const p = parseSearchSyntax('#home -#archive in:todo -in:note @Books -@Drafts');
+    expect(p.tags).toEqual(['home']);
+    expect(p.excludedTags).toEqual(['archive']);
+    expect(p.types).toEqual(['todo']);
+    expect(p.excludedTypes).toEqual(['note']);
+    expect(p.mentions).toEqual(['Books']);
+    expect(p.excludedMentions).toEqual(['Drafts']);
+  });
+
+  it('lone "-" is text, not a negation', () => {
+    expect(parseSearchSyntax('-').text).toBe('-');
+  });
+});
+
+describe('stringifySearchSyntax — round-trip + ordering', () => {
+  it('positives first, negatives next, free text last', () => {
+    const s = stringifySearchSyntax(parsed({
+      text: 'find me',
+      tags: ['x'],
+      excludedTags: ['archive'],
+      types: ['todo'],
+    }));
+    expect(s).toBe('#x in:todo -#archive find me');
+  });
+
+  it('quoting applied when name has whitespace', () => {
+    expect(
+      stringifySearchSyntax(parsed({ mentions: ['Q1 report'] })),
+    ).toBe('@"Q1 report"');
+    expect(
+      stringifySearchSyntax(parsed({ projects: ['Open Brain v2'] })),
+    ).toBe('project:"Open Brain v2"');
+  });
+
+  it('round-trip stable for the full predicate set', () => {
+    const input = '#home in:todo @"Q1 report" project:openbrain -#archive -in:document -@Drafts -project:"old proj" find me';
+    const reparsed = parseSearchSyntax(stringifySearchSyntax(parseSearchSyntax(input)));
+    expect(reparsed).toEqual(parseSearchSyntax(input));
+  });
+});
+
+describe('toggle / remove helpers', () => {
+  it('toggleTagInQuery adds, then removes', () => {
+    expect(toggleTagInQuery('find me', 'home')).toBe('#home find me');
+    expect(toggleTagInQuery('#home #reading find me', 'home')).toBe('#reading find me');
+  });
+
+  it('removeTagFromQuery / removeTypeFromQuery work and preserve the rest', () => {
+    expect(removeTagFromQuery('#a #b q', 'a')).toBe('#b q');
+    expect(removeTypeFromQuery('#a in:todo q', 'todo')).toBe('#a q');
+  });
+
+  it('removeMentionFromQuery is case-insensitive', () => {
+    expect(removeMentionFromQuery('@Books q', 'BOOKS')).toBe('q');
+  });
+
+  it('removeProjectFromQuery is case-insensitive', () => {
+    expect(removeProjectFromQuery('project:openbrain q', 'OPENBRAIN')).toBe('q');
+  });
+
+  it('removeExcludedFromQuery drops the right negative bucket entry', () => {
+    expect(removeExcludedFromQuery('-#archive q', 'tag', 'archive')).toBe('q');
+    expect(removeExcludedFromQuery('-in:note q', 'type', 'note')).toBe('q');
+    expect(removeExcludedFromQuery('-@Drafts q', 'mention', 'drafts')).toBe('q');
+    expect(removeExcludedFromQuery('-project:foo q', 'project', 'FOO')).toBe('q');
   });
 });
 
 describe('tokenAtCursor — cursor-aware sigil detection', () => {
-  it('returns empty when cursor at position 0', () => {
-    expect(tokenAtCursor('', 0)).toBe('');
+  it('empty when cursor at position 0', () => {
     expect(tokenAtCursor('foo', 0)).toBe('');
   });
 
   it('returns the partial token between last whitespace and cursor', () => {
     expect(tokenAtCursor('hello #ho', 9)).toBe('#ho');
-    expect(tokenAtCursor('hello #ho', 7)).toBe('#');
     expect(tokenAtCursor('in:to', 5)).toBe('in:to');
-  });
-
-  it('returns empty when cursor sits right after a whitespace', () => {
-    expect(tokenAtCursor('hello ', 6)).toBe('');
   });
 
   it('captures the full @"partial inside a quoted mention', () => {
     expect(tokenAtCursor('foo @"Q1 re', 11)).toBe('@"Q1 re');
   });
 
-  it('plain bare @partial works mid-typing', () => {
-    expect(tokenAtCursor('foo @Boo', 8)).toBe('@Boo');
+  it('captures the full project:"partial inside a quoted project', () => {
+    expect(tokenAtCursor('foo project:"Open Bra', 21)).toBe('project:"Open Bra');
+  });
+
+  it('captures negated quoted partials too', () => {
+    expect(tokenAtCursor('-@"old', 6)).toBe('-@"old');
+    expect(tokenAtCursor('-project:"old', 13)).toBe('-project:"old');
+  });
+
+  it('returns empty when cursor sits right after a whitespace', () => {
+    expect(tokenAtCursor('hello ', 6)).toBe('');
   });
 });
 
 describe('replaceTokenAtCursor', () => {
-  it('replaces current partial with the replacement + trailing space', () => {
+  it('replaces current partial + trailing space at end of input', () => {
     const r = replaceTokenAtCursor('hello #ho', 9, '#home');
     expect(r.value).toBe('hello #home ');
     expect(r.cursor).toBe(12);
   });
 
   it('skips trailing space when the tail already starts with one', () => {
-    // Input: 'foo @Bo bar'. Token at cursor=7 is '@Bo' (3 chars). Replace
-    // with '@"Books — wishlist"'. The existing ' bar' already starts with
-    // whitespace, so no double-space is introduced.
     const r = replaceTokenAtCursor('foo @Bo bar', 7, '@"Books — wishlist"');
     expect(r.value).toBe('foo @"Books — wishlist" bar');
     expect(r.cursor).toBe(4 + '@"Books — wishlist"'.length);

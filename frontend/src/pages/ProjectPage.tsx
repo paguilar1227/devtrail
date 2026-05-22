@@ -1,8 +1,16 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { Tabs, Tag } from '../components/primitives';
-import { getProject, listProjectCounts, pinProject, unpinProject } from '../lib/api';
+import {
+  getProject,
+  listContent,
+  listProjectCounts,
+  listProjects,
+  listTags,
+  pinProject,
+  unpinProject,
+} from '../lib/api';
 import { toUiProject } from '../lib/view';
 import { cls, fmtRel } from '../lib/util';
 import type { ActionDispatch } from '../types';
@@ -10,6 +18,7 @@ import { ChatTab } from './project/ChatTab';
 import { DocumentsTab } from './project/DocumentsTab';
 import { NotesTab } from './project/NotesTab';
 import { TodosTab } from './project/TodosTab';
+import { SearchInput, type MentionTarget, type ProjectSuggestion, type TagSuggestion } from '../components/SearchInput';
 
 interface Props {
   projectId: string;
@@ -20,6 +29,7 @@ type TabId = 'chat' | 'documents' | 'notes' | 'todos';
 
 export function ProjectPage({ projectId, onAction }: Props) {
   const [tab, setTab] = useState<TabId>('chat');
+  const [searchDraft, setSearchDraft] = useState('');
   const qc = useQueryClient();
   const [projectQ, countsQ] = useQueries({
     queries: [
@@ -27,6 +37,46 @@ export function ProjectPage({ projectId, onAction }: Props) {
       { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
     ],
   });
+
+  // Universal search data sources. Fetched globally (not project-scoped)
+  // so the @-typeahead can surface docs/notes from any project — useful
+  // when the user wants to mention an item that lives elsewhere to add
+  // it to the active search. The submitted search is THIS project's
+  // scope by default; the user can override via the drawer's scope chips
+  // or via a `project:<name>` DSL predicate.
+  const { data: allProjects } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
+  const { data: tagsApi } = useQuery({ queryKey: ['tags', 'all'], queryFn: () => listTags() });
+  const { data: docsApi } = useQuery({
+    queryKey: ['content', 'documents', 'all'],
+    queryFn: () => listContent({ type: 'document' }),
+  });
+  const { data: notesApi } = useQuery({
+    queryKey: ['content', 'notes', 'all'],
+    queryFn: () => listContent({ type: 'note' }),
+  });
+  const projectSuggestions = useMemo<ProjectSuggestion[]>(
+    () => (allProjects ?? [])
+      .filter((p) => p.status === 'active')
+      .map((p) => ({ id: p.id, name: p.name })),
+    [allProjects],
+  );
+  const tagSuggestions = useMemo<TagSuggestion[]>(
+    () => (tagsApi ?? [])
+      .filter((t) => t.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .map((t) => ({ name: t.name, total: t.total })),
+    [tagsApi],
+  );
+  const mentionTargets = useMemo<MentionTarget[]>(() => {
+    const docs: MentionTarget[] = (docsApi ?? []).map((d) => ({ id: d.id, title: d.title, kind: 'document' }));
+    const notes: MentionTarget[] = (notesApi ?? []).map((n) => ({ id: n.id, title: n.title, kind: 'note' }));
+    return [...docs, ...notes].sort((a, b) => a.title.localeCompare(b.title));
+  }, [docsApi, notesApi]);
+
+  const submitProjectSearch = () => {
+    if (!searchDraft.trim()) return;
+    onAction({ kind: 'search', payload: { query: searchDraft.trim(), scope: projectId } });
+  };
 
   const myCounts = countsQ.data?.find((c) => c.project_id === projectId);
   const project = useMemo(
@@ -104,6 +154,21 @@ export function ProjectPage({ projectId, onAction }: Props) {
           <button className="btn btn-primary" onClick={() => onAction({ kind: 'upload', payload: project })}>
             <Icons.Upload /> Add
           </button>
+        </div>
+      </div>
+
+      <div className="proj-search-row">
+        <div className="home-search-box">
+          <Icons.Search />
+          <SearchInput
+            value={searchDraft}
+            onChange={setSearchDraft}
+            onSubmit={submitProjectSearch}
+            tags={tagSuggestions}
+            mentions={mentionTargets}
+            projects={projectSuggestions}
+            placeholder={`Search inside ${project.name}… try #tag, in:todo, @docname, -#exclude`}
+          />
         </div>
       </div>
 

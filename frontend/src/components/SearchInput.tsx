@@ -1,19 +1,23 @@
-// Universal search input — wraps the home search box with cursor-aware
-// typeahead. Three sigil contexts trigger their own suggestion lists:
+// Universal search input — wraps a search box with cursor-aware
+// typeahead. Four sigil contexts trigger their own suggestion lists:
 //
-//   #            → tags (filtered by prefix after #)
-//   in:          → todo / note / document
-//   @            → mentions: docs + notes by title
+//   #                 → tags (filtered by prefix after #)
+//   in:               → todo / note / document
+//   @                 → mentions: docs + notes by title
+//   project:          → projects by name
+//
+// Any sigil can be NEGATED by prefixing with `-`: typing `-#archive`,
+// `-in:doc`, `-@drafts`, `-project:foo` opens the same typeahead but
+// selection inserts the negated form. The parser routes negatives to
+// the .excluded* buckets — see searchSyntax.ts.
 //
 // Sigil detection uses tokenAtCursor (searchSyntax.ts). On selection,
-// `#` and `in:` REPLACE the current partial with the canonical token via
-// replaceTokenAtCursor. `@` fires `onMentionSelect` (the host navigates
-// to the entity); the input is also updated with the resolved canonical
-// `@"name"` so the user can re-trigger by clicking the chip later.
+// tags/types/projects REPLACE the current partial via
+// replaceTokenAtCursor. Mentions ALSO fire `onMentionSelect` so the
+// host can navigate to the entity.
 //
-// Keyboard: ↑/↓ navigate the popover, Enter selects (or submits if no
-// popover open), Esc dismisses the popover, Tab also selects (consistent
-// with most autocomplete UIs).
+// Keyboard: ↑/↓ navigate, Enter selects (or submits if no popover),
+// Esc dismisses the popover, Tab also selects.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
@@ -38,6 +42,13 @@ export interface TagSuggestion {
   total: number;
 }
 
+export interface ProjectSuggestion {
+  /** Display name — inserted as `project:name` or `project:"name"`. */
+  name: string;
+  /** Project UUID — exposed so host can resolve on submit. */
+  id: string;
+}
+
 interface Props {
   value: string;
   onChange: (next: string) => void;
@@ -46,39 +57,57 @@ interface Props {
   tags: TagSuggestion[];
   /** Mention targets for `@` typeahead — docs + notes by title. */
   mentions: MentionTarget[];
+  /** Project suggestions for `project:` typeahead. */
+  projects?: ProjectSuggestion[];
   /** Called when user picks a mention from typeahead — host navigates. */
-  onMentionSelect: (target: MentionTarget) => void;
+  onMentionSelect?: (target: MentionTarget) => void;
   placeholder?: string;
 }
 
 type SigilContext =
-  | { kind: 'tag'; prefix: string }
-  | { kind: 'type'; prefix: string }
-  | { kind: 'mention'; prefix: string }
+  | { kind: 'tag'; prefix: string; negated: boolean }
+  | { kind: 'type'; prefix: string; negated: boolean }
+  | { kind: 'mention'; prefix: string; negated: boolean }
+  | { kind: 'project'; prefix: string; negated: boolean }
   | null;
 
 const TYPE_OPTIONS = [
-  { value: 'todo', label: 'in:todo', sub: 'todos only' },
-  { value: 'note', label: 'in:note', sub: 'notes only' },
-  { value: 'document', label: 'in:document', sub: 'documents only' },
+  { value: 'todo', label: 'todo', sub: 'todos only' },
+  { value: 'note', label: 'note', sub: 'notes only' },
+  { value: 'document', label: 'document', sub: 'documents only' },
 ];
 
-/** Inspect the token at the cursor and decide which sigil context applies. */
+/** Inspect the token at the cursor and decide which sigil context applies.
+ *  Returns the negated flag separately so the caller renders the same
+ *  popover but formats the selection with the `-` prefix. */
 function detectSigilContext(input: string, cursor: number): SigilContext {
-  const token = tokenAtCursor(input, cursor);
-  if (token.startsWith('#')) {
-    return { kind: 'tag', prefix: token.slice(1).toLowerCase() };
+  const tokRaw = tokenAtCursor(input, cursor);
+  const negated = tokRaw.startsWith('-') && tokRaw.length > 1;
+  const tok = negated ? tokRaw.slice(1) : tokRaw;
+  if (tok.startsWith('#')) {
+    return { kind: 'tag', prefix: tok.slice(1).toLowerCase(), negated };
   }
-  if (token.startsWith('in:')) {
-    return { kind: 'type', prefix: token.slice(3).toLowerCase() };
+  if (tok.startsWith('in:')) {
+    return { kind: 'type', prefix: tok.slice(3).toLowerCase(), negated };
   }
-  if (token.startsWith('@"')) {
-    return { kind: 'mention', prefix: token.slice(2).toLowerCase() };
+  if (tok.startsWith('project:"')) {
+    return { kind: 'project', prefix: tok.slice('project:"'.length).toLowerCase(), negated };
   }
-  if (token.startsWith('@')) {
-    return { kind: 'mention', prefix: token.slice(1).toLowerCase() };
+  if (tok.startsWith('project:')) {
+    return { kind: 'project', prefix: tok.slice('project:'.length).toLowerCase(), negated };
+  }
+  if (tok.startsWith('@"')) {
+    return { kind: 'mention', prefix: tok.slice(2).toLowerCase(), negated };
+  }
+  if (tok.startsWith('@')) {
+    return { kind: 'mention', prefix: tok.slice(1).toLowerCase(), negated };
   }
   return null;
+}
+
+/** Quote name if needed (whitespace/quotes). Mirrors searchSyntax.ts. */
+function maybeQuote(name: string): string {
+  return /\s|"/.test(name) ? `"${name.replace(/"/g, '\\"')}"` : name;
 }
 
 export function SearchInput({
@@ -87,37 +116,32 @@ export function SearchInput({
   onSubmit,
   tags,
   mentions,
+  projects = [],
   onMentionSelect,
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [cursor, setCursor] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  // Dismissed = the user pressed Escape on the current sigil; suppress
-  // the popover until the sigil context changes (cursor moves out / value
-  // changes such that the context differs). Without this, Escape would
-  // be a no-op while the user is still in the sigil.
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
 
-  // Recompute the sigil context whenever the input value or cursor moves.
-  // Track the token text so dismissedToken can match against it.
   const currentToken = useMemo(() => tokenAtCursor(value, cursor), [value, cursor]);
   const sigil = useMemo(
     () => (dismissedToken === currentToken ? null : detectSigilContext(value, cursor)),
     [value, cursor, dismissedToken, currentToken],
   );
 
-  // Build the suggestion list per sigil. activeIndex resets when items change.
   const items = useMemo<TypeaheadItem[]>(() => {
     if (!sigil) return [];
+    const prefix = `${sigil.negated ? '-' : ''}`;
     if (sigil.kind === 'tag') {
       return tags
         .filter((t) => t.name.toLowerCase().startsWith(sigil.prefix))
         .slice(0, 8)
         .map((t) => ({
           key: `tag-${t.name}`,
-          value: `#${t.name}`,
-          label: `#${t.name}`,
+          value: `${prefix}#${t.name}`,
+          label: `${prefix}#${t.name}`,
           sublabel: t.total.toString(),
           icon: <Icons.Tag size={12} aria-hidden />,
         }));
@@ -125,11 +149,23 @@ export function SearchInput({
     if (sigil.kind === 'type') {
       return TYPE_OPTIONS.filter((o) => o.value.startsWith(sigil.prefix)).map((o) => ({
         key: `type-${o.value}`,
-        value: o.label,
-        label: o.label,
+        value: `${prefix}in:${o.value}`,
+        label: `${prefix}in:${o.value}`,
         sublabel: o.sub,
         icon: typeIcon(o.value),
       }));
+    }
+    if (sigil.kind === 'project') {
+      return projects
+        .filter((p) => p.name.toLowerCase().includes(sigil.prefix))
+        .slice(0, 8)
+        .map((p) => ({
+          key: `project-${p.id}`,
+          value: `${prefix}project:${maybeQuote(p.name)}`,
+          label: p.name,
+          sublabel: 'project',
+          icon: <Icons.Folders size={12} aria-hidden />,
+        }));
     }
     // mention
     return mentions
@@ -137,19 +173,17 @@ export function SearchInput({
       .slice(0, 8)
       .map((m) => ({
         key: `mention-${m.id}`,
-        // Quote if the title has whitespace; matches stringifySearchSyntax.
-        value: /\s|"/.test(m.title) ? `@"${m.title}"` : `@${m.title}`,
+        value: `${prefix}@${maybeQuote(m.title)}`,
         label: m.title,
         sublabel: m.kind,
         icon: m.kind === 'document' ? <Icons.Doc size={12} aria-hidden /> : <Icons.Note size={12} aria-hidden />,
       }));
-  }, [sigil, tags, mentions]);
+  }, [sigil, tags, mentions, projects]);
 
   useEffect(() => {
     setActiveIndex(0);
   }, [items]);
 
-  // Clear the dismiss latch when the user moves to a fresh token.
   useEffect(() => {
     if (dismissedToken !== null && dismissedToken !== currentToken) {
       setDismissedToken(null);
@@ -160,14 +194,12 @@ export function SearchInput({
 
   const applyItem = (item: TypeaheadItem) => {
     if (!sigil) return;
-    if (sigil.kind === 'mention') {
-      // For mentions, find the original target so we can fire onMentionSelect.
-      const target = mentions.find((m) => m.id === item.key.slice('mention-'.length));
+    if (sigil.kind === 'mention' && !sigil.negated && onMentionSelect) {
+      const target = mentions.find((m) => `mention-${m.id}` === item.key);
       if (target) onMentionSelect(target);
     }
     const next = replaceTokenAtCursor(value, cursor, item.value);
     onChange(next.value);
-    // Re-focus and reposition cursor after React commits the value change.
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (!el) return;
@@ -206,9 +238,6 @@ export function SearchInput({
     }
   };
 
-  // Track cursor position on every relevant input event. Without this, the
-  // sigil context lags by a render whenever the user clicks or arrow-keys
-  // around (no native event fires for selection changes from clicks alone).
   const syncCursor = () => {
     const el = inputRef.current;
     if (el) setCursor(el.selectionStart ?? el.value.length);
@@ -221,7 +250,6 @@ export function SearchInput({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          // selectionStart is the new cursor position after the input event.
           requestAnimationFrame(syncCursor);
         }}
         onSelect={syncCursor}
@@ -240,17 +268,19 @@ export function SearchInput({
           onSelect={applyItem}
           onHover={setActiveIndex}
           onDismiss={() => setDismissedToken(currentToken)}
-          ariaLabel={
-            sigil!.kind === 'tag'
-              ? 'Tag suggestions'
-              : sigil!.kind === 'type'
-                ? 'Type suggestions'
-                : 'Mention suggestions'
-          }
+          ariaLabel={ariaLabelFor(sigil!.kind, sigil!.negated)}
         />
       ) : null}
     </div>
   );
+}
+
+function ariaLabelFor(kind: 'tag' | 'type' | 'mention' | 'project', negated: boolean): string {
+  const prefix = negated ? 'Exclude ' : '';
+  if (kind === 'tag') return `${prefix}tag suggestions`;
+  if (kind === 'type') return `${prefix}type suggestions`;
+  if (kind === 'mention') return `${prefix}mention suggestions`;
+  return `${prefix}project suggestions`;
 }
 
 function typeIcon(value: string): ReactNode {

@@ -98,7 +98,15 @@ export async function findSimilarChunks(
   //   string  → chunks whose parent's project_ids contains this UUID
   //   null    → chunks whose parent has no project membership (personal)
   //   undef   → no filter (global)
-  opts: { projectId?: string | null; parentType?: 'document' | 'note'; tags?: string[] } = {},
+  opts: {
+    projectId?: string | null;
+    parentType?: 'document' | 'note';
+    tags?: string[];
+    contentItemIds?: string[];
+    excludedTags?: string[];
+    excludedContentItemIds?: string[];
+    excludedParentTypes?: Array<'document' | 'note'>;
+  } = {},
 ): Promise<ChunkSearchResult[]> {
   const conditions = [
     'ci.archived = false',
@@ -121,6 +129,22 @@ export async function findSimilarChunks(
   if (opts.tags && opts.tags.length > 0) {
     conditions.push(`ci.tags @> $${i++}`);
     params.push(opts.tags);
+  }
+  if (opts.contentItemIds && opts.contentItemIds.length > 0) {
+    conditions.push(`ci.id = ANY($${i++}::uuid[])`);
+    params.push(opts.contentItemIds);
+  }
+  if (opts.excludedTags && opts.excludedTags.length > 0) {
+    conditions.push(`NOT (ci.tags && $${i++}::text[])`);
+    params.push(opts.excludedTags);
+  }
+  if (opts.excludedContentItemIds && opts.excludedContentItemIds.length > 0) {
+    conditions.push(`NOT (ci.id = ANY($${i++}::uuid[]))`);
+    params.push(opts.excludedContentItemIds);
+  }
+  if (opts.excludedParentTypes && opts.excludedParentTypes.length > 0) {
+    conditions.push(`NOT (ci.type = ANY($${i++}::text[]))`);
+    params.push(opts.excludedParentTypes);
   }
 
   // Explicit column list — must NOT include c.embedding (huge and not useful to consumers).

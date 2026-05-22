@@ -15,6 +15,21 @@ export interface SearchOptions {
   projectId?: string | null;
   entityTypes?: Array<'document' | 'note' | 'todo'>;
   tags?: string[];
+  /**
+   * Restrict hits to chunks/todos whose parent content_item IS one of
+   * these UUIDs. Drives the `@<name>` mention predicate — the frontend
+   * resolves titles to IDs before calling.
+   */
+  contentItemIds?: string[];
+  /**
+   * Exclusion filters (driven by `-#tag`, `-in:type`, `-@name` in the
+   * universal search bar). Each list is applied as a NOT-matches
+   * predicate on its respective field. Mutually compatible with the
+   * positive filters above (positives AND-ed with negatives).
+   */
+  excludedTags?: string[];
+  excludedEntityTypes?: Array<'document' | 'note' | 'todo'>;
+  excludedContentItemIds?: string[];
   limit?: number;
   threshold?: number;
   /**
@@ -98,7 +113,15 @@ async function searchWithTimingsImpl(
   const {
     projectId, entityTypes, tags, limit = 10, threshold = defaultThreshold,
     queryEntities = [], graph = true,
+    contentItemIds, excludedTags, excludedEntityTypes, excludedContentItemIds,
   } = opts;
+  // Pre-compute the chunk-bearing exclusion list (document/note) since the
+  // findSimilarChunks helper only knows about chunk-parent types.
+  const excludedChunkParentTypes = excludedEntityTypes
+    ? (excludedEntityTypes.filter((t) => t === 'document' || t === 'note') as Array<'document' | 'note'>)
+    : undefined;
+  // 'todo' in excludedEntityTypes is enforced below in the todo branch.
+  const excludeTodos = excludedEntityTypes?.includes('todo') ?? false;
   const totalStart = performance.now();
   console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, graph: ${graph}`);
 
@@ -119,14 +142,29 @@ async function searchWithTimingsImpl(
             ? (entityTypes[0] === 'document' || entityTypes[0] === 'note' ? entityTypes[0] : undefined)
             : undefined,
           tags,
+          contentItemIds,
+          excludedTags,
+          excludedContentItemIds,
+          excludedParentTypes: excludedChunkParentTypes,
         })
       : Promise.resolve([]),
-    searchTodos && !tags
+    searchTodos && !tags && !excludeTodos
       ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit)
           .then((t) => {
-            if (projectId === null) return t.filter((x) => x.project_id === null);
-            if (typeof projectId === 'string') return t.filter((x) => x.project_id === projectId);
-            return t;
+            let filtered = t;
+            if (projectId === null) filtered = filtered.filter((x) => x.project_id === null);
+            else if (typeof projectId === 'string') filtered = filtered.filter((x) => x.project_id === projectId);
+            // Mention filters apply by content_item_id, which todos don't have
+            // (todos are first-class entities, not chunks under a parent).
+            // If the caller restricted to specific content items, drop all
+            // todos — they can't be content_item-scoped by definition.
+            if (contentItemIds && contentItemIds.length > 0) return [];
+            // excludedContentItemIds: irrelevant to todos (same reason).
+            // excludedTags: apply against todo.tags.
+            if (excludedTags && excludedTags.length > 0) {
+              filtered = filtered.filter((x) => !x.tags?.some((tag) => excludedTags.includes(tag)));
+            }
+            return filtered;
           })
       : Promise.resolve([]),
   ]);
@@ -210,6 +248,24 @@ async function searchWithTimingsImpl(
         if (restrictParentType) {
           paramsList.push(restrictParentType);
           conditions.push(`ci.type = $${paramsList.length}`);
+        }
+        // Mirror the new positive + negative predicates here so graph-
+        // expanded chunks can't slip past mention or exclusion scopes.
+        if (contentItemIds && contentItemIds.length > 0) {
+          paramsList.push(contentItemIds);
+          conditions.push(`ci.id = ANY($${paramsList.length}::uuid[])`);
+        }
+        if (excludedTags && excludedTags.length > 0) {
+          paramsList.push(excludedTags);
+          conditions.push(`NOT (ci.tags && $${paramsList.length}::text[])`);
+        }
+        if (excludedContentItemIds && excludedContentItemIds.length > 0) {
+          paramsList.push(excludedContentItemIds);
+          conditions.push(`NOT (ci.id = ANY($${paramsList.length}::uuid[]))`);
+        }
+        if (excludedChunkParentTypes && excludedChunkParentTypes.length > 0) {
+          paramsList.push(excludedChunkParentTypes);
+          conditions.push(`NOT (ci.type = ANY($${paramsList.length}::text[]))`);
         }
 
         const res = await deps.db.query(

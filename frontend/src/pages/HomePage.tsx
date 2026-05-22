@@ -38,7 +38,7 @@ import {
   type TagFilter,
 } from '../lib/tagFilter';
 import { parseSearchSyntax, toggleTagInQuery } from '../lib/searchSyntax';
-import { SearchInput, type MentionTarget } from '../components/SearchInput';
+import { SearchInput, type MentionTarget, type ProjectSuggestion } from '../components/SearchInput';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -203,6 +203,15 @@ export function HomePage({ onRoute, onAction }: Props) {
   const personalDocs = useMemo(
     () => (docsQ.data ?? []).slice().sort(compareNotesForMode(docSortMode)).map(toUiDocument),
     [docsQ.data, docSortMode],
+  );
+
+  // project: typeahead source — active projects only (no point suggesting
+  // archived / completed ones for a NEW search predicate).
+  const projectSuggestions = useMemo<ProjectSuggestion[]>(
+    () => projectsRaw
+      .filter((p) => p.status === 'active')
+      .map((p) => ({ id: p.id, name: p.name })),
+    [projectsRaw],
   );
 
   // @-mention typeahead targets — docs + notes (personal scope, matching
@@ -430,6 +439,7 @@ export function HomePage({ onRoute, onAction }: Props) {
             onSubmit={submitSearch}
             tags={sortedTagsForChipRow.map((t) => ({ name: t.name, total: t.total }))}
             mentions={mentionTargets}
+            projects={projectSuggestions}
             onMentionSelect={(target) => {
               if (target.kind === 'document') {
                 const doc = personalDocs.find((d) => d.id === target.id);

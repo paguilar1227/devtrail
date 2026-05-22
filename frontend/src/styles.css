@@ -1821,6 +1821,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .home-search-box input::placeholder { color: var(--fg-subtle); }
 
+/* Project page search row — sits between the hero and the tab strip,
+   reuses .home-search-box visual treatment for cross-surface
+   consistency. */
+.proj-search-row {
+  display: flex;
+  margin: 4px 0 14px;
+}
+
 /* SearchInput wrapper: anchor for the typeahead popover, fills the
    available width like a bare input would. */
 .search-input-wrapper {
@@ -2900,6 +2908,21 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .search-predicate-chip:hover { background: var(--accent-1); color: #fff; }
 .search-predicate-chip:focus-visible { outline: 2px solid var(--accent-1); outline-offset: 1px; }
+/* Excluded variant — visually inverted so it's obvious the chip means
+   "NOT this". Dashed border + dimmer fill; hover still pops. */
+.search-predicate-chip.excluded {
+  border-color: var(--danger, #ef4444);
+  border-style: dashed;
+  background: transparent;
+  color: var(--fg-subtle);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.search-predicate-chip.excluded:hover {
+  background: var(--danger, #ef4444);
+  color: #fff;
+  text-decoration: none;
+}
 .search-drawer-results { display: flex; flex-direction: column; gap: 8px; }
 .search-drawer-error { color: var(--danger); }
 .list-bulk-bar { margin-bottom: 8px; padding: 0 16px; }

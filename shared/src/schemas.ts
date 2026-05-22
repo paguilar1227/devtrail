@@ -390,6 +390,17 @@ export const SearchRequestSchema = z.object({
   project_id: z.union([UuidSchema, z.literal('null')]).optional(),
   entity_types: z.array(EntityKindSchema).optional(),
   tags: z.array(z.string()).optional(),
+  /** Restrict results to chunks/todos belonging to these specific content
+   *  items. Drives the `@<name>` mention predicate in the universal
+   *  search bar — the frontend resolves @-titles to content_item UUIDs
+   *  before submitting. */
+  content_item_ids: z.array(UuidSchema).optional(),
+  /** Exclusion filters (driven by `-#tag`, `-in:type`, `-@name`
+   *  predicates in the universal search bar). Each list is applied as
+   *  a NOT-matches predicate on its respective field. */
+  excluded_tags: z.array(z.string()).optional(),
+  excluded_entity_types: z.array(EntityKindSchema).optional(),
+  excluded_content_item_ids: z.array(UuidSchema).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   threshold: z.number().min(0).max(1).optional(),
   graph: z.boolean().optional(),
