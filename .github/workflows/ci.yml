@@ -14,10 +14,14 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  # Auto-triggers temporarily disabled to conserve free-tier Actions
+  # minutes. Deploys are happening manually via scripts/deploy.sh against
+  # Azure for now. To re-enable: restore the blocks below.
+  #   pull_request:
+  #     branches: [main]
+  #   push:
+  #     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:

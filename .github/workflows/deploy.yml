@@ -2,8 +2,12 @@
 name: Deploy to Azure
 
 on:
-  push:
-    branches: [main]
+  # Auto-trigger on push to main temporarily disabled to conserve free-tier
+  # Actions minutes. Deploys are happening manually via scripts/deploy.sh
+  # (see CLAUDE.md "Manual deploy" section). To re-enable: restore the
+  # push: block below.
+  #   push:
+  #     branches: [main]
   workflow_dispatch:
 
 env:
