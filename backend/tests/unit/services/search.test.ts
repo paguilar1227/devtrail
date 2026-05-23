@@ -14,15 +14,19 @@ import { mockDb, mockEmbeddingProvider, mockLLMProvider, mockBlobStorage } from 
 // through the graph-expansion branch deterministically.
 const findSimilarChunksMock = vi.fn();
 const findSimilarTodosMock = vi.fn();
+const findChunksByLexicalMock = vi.fn();
+const findTodosByLexicalMock = vi.fn();
 const findChunksByEntitiesMock = vi.fn();
 const findEntityByCanonicalMock = vi.fn();
 const findEntityByAliasMock = vi.fn();
 
 vi.mock('../../../src/db/chunks.js', () => ({
   findSimilarChunks: (...args: unknown[]) => findSimilarChunksMock(...args),
+  findChunksByLexical: (...args: unknown[]) => findChunksByLexicalMock(...args),
 }));
 vi.mock('../../../src/db/todos.js', () => ({
   findSimilarTodos: (...args: unknown[]) => findSimilarTodosMock(...args),
+  findTodosByLexical: (...args: unknown[]) => findTodosByLexicalMock(...args),
 }));
 vi.mock('../../../src/db/entities.js', () => ({
   findChunksByEntities: (...args: unknown[]) => findChunksByEntitiesMock(...args),
@@ -46,6 +50,10 @@ function makeDeps(): ServiceDeps {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default the new lexical paths to empty arrays so existing tests that
+  // only care about vector + graph fusion don't have to opt them in.
+  findChunksByLexicalMock.mockResolvedValue([]);
+  findTodosByLexicalMock.mockResolvedValue([]);
 });
 
 describe('search() graph-expansion filter parity', () => {

@@ -2691,6 +2691,63 @@ describe('Search API', () => {
     expect(todoQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes('chore'))).toBe(true);
   });
 
+  it('POST /search fires the lexical chunks query alongside vector (3-arm fusion)', async () => {
+    // After the lexical-fusion fix, the service runs vector + graph +
+    // lexical in parallel. Lexical chunks query has its own signature
+    // (ILIKE on title OR content, no embedding compare). Test that the
+    // pattern includes the user's query wrapped in % wildcards.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'domain', graph: false }),
+    }));
+    const lexicalChunkQ = queries.find(
+      (q) => /FROM chunks c/i.test(q.sql) && /ILIKE \$1/i.test(q.sql) && !q.sql.includes('embedding <=>'),
+    );
+    expect(lexicalChunkQ).toBeDefined();
+    expect(lexicalChunkQ!.params[0]).toBe('%domain%');
+  });
+
+  it('POST /search fires the lexical todos query alongside vector', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'do', graph: false }),
+    }));
+    const lexicalTodoQ = queries.find(
+      (q) => /FROM todos\b/i.test(q.sql) && /content ILIKE \$1/i.test(q.sql) && !q.sql.includes('embedding <=>'),
+    );
+    expect(lexicalTodoQ).toBeDefined();
+    expect(lexicalTodoQ!.params[0]).toBe('%do%');
+  });
+
+  it('POST /search skips lexical entirely for queries shorter than 2 chars (noise floor)', async () => {
+    // A 1-char query like "a" would match ~everything via ILIKE %a%; the
+    // helpers short-circuit to [] in that case so they never even fire SQL.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'a', graph: false }),
+    }));
+    const lexicalQ = queries.find((q) => /ILIKE \$1/i.test(q.sql) && !q.sql.includes('embedding <=>'));
+    expect(lexicalQ).toBeUndefined();
+  });
+
   it('POST /search with excluded_entity_types=["todo"] skips the todo fetch entirely', async () => {
     // The todo fetch path is conditionally enabled; with todo excluded
     // we should not call findSimilarTodos. Easy check: no query against

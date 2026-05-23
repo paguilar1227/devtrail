@@ -441,6 +441,53 @@ export async function reorderTodosInGroup(
  */
 export type TodoSearchResult = Omit<TodoRow, 'embedding'> & { similarity: number };
 
+/**
+ * Lexical (ILIKE substring) todo search — counterpart to findSimilarTodos.
+ * Matches the query against todo content. Title-priority concept doesn't
+ * apply to todos (they're title-less; content is the title). Recency
+ * tiebreaker matches the chunks helper for consistency.
+ */
+export async function findTodosByLexical(
+  db: DbClient,
+  query: string,
+  limit: number = 10,
+  opts: {
+    tags?: string[];
+    excludedTags?: string[];
+  } = {},
+): Promise<TodoSearchResult[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const pattern = `%${escaped}%`;
+
+  const conditions = ['archived = false', 'content ILIKE $1'];
+  const params: unknown[] = [pattern, limit];
+  let i = 3;
+  if (opts.tags && opts.tags.length > 0) {
+    conditions.push(`tags @> $${i++}::text[]`);
+    params.push(opts.tags);
+  }
+  if (opts.excludedTags && opts.excludedTags.length > 0) {
+    conditions.push(`NOT (tags && $${i++}::text[])`);
+    params.push(opts.excludedTags);
+  }
+  const result = await db.query(
+    `SELECT id, content, project_id, section, parent_id, status, priority,
+            due_date, tags, archived, created_at, updated_at,
+            -- Synthetic similarity for downstream compat — see chunks.ts.
+            -- Cast to ::float so the pg NUMERIC default (string in JS)
+            -- doesn't break the Zod number validation on retrieval_path.
+            1.0::float AS similarity
+     FROM todos
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY updated_at DESC
+     LIMIT $2`,
+    params,
+  );
+  return result.rows;
+}
+
 export async function findSimilarTodos(
   db: DbClient,
   embedding: number[],

@@ -89,6 +89,105 @@ export interface ChunkSearchResult {
   parent_source_url: string | null;
 }
 
+/**
+ * Lexical (ILIKE substring) chunk search — the literal counterpart to
+ * findSimilarChunks. Matches the query against the parent title OR the
+ * chunk text. Title matches sort first (more relevant for "do" → "domain"
+ * style searches), recency as tiebreaker.
+ *
+ * Filter parity with findSimilarChunks: same project/tags/parentType/
+ * contentItemIds/exclusion predicates. Lexical results are fused with
+ * vector results in services/search.ts via RRF — items caught by both
+ * arms rise to the top.
+ *
+ * Escapes % and _ in the query so user input "100%" doesn't blow up
+ * the pattern. Returns [] for queries <2 chars to avoid noise floods.
+ */
+export async function findChunksByLexical(
+  db: DbClient,
+  query: string,
+  limit: number = 10,
+  opts: {
+    projectId?: string | null;
+    parentType?: 'document' | 'note';
+    tags?: string[];
+    contentItemIds?: string[];
+    excludedTags?: string[];
+    excludedContentItemIds?: string[];
+    excludedParentTypes?: Array<'document' | 'note'>;
+  } = {},
+): Promise<ChunkSearchResult[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  // Escape ILIKE metachars in user input so '100%' searches literally for '100%'.
+  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const pattern = `%${escaped}%`;
+
+  const conditions = [
+    'ci.archived = false',
+    "ci.processing_status = 'ready'",
+    '(ci.title ILIKE $1 OR c.content ILIKE $1)',
+  ];
+  const params: unknown[] = [pattern, limit];
+  let i = 3;
+  if (opts.projectId === null) {
+    conditions.push('cardinality(ci.project_ids) = 0');
+  } else if (opts.projectId !== undefined) {
+    conditions.push(`ci.project_ids @> ARRAY[$${i++}]::uuid[]`);
+    params.push(opts.projectId);
+  }
+  if (opts.parentType) {
+    conditions.push(`ci.type = $${i++}`);
+    params.push(opts.parentType);
+  }
+  if (opts.tags && opts.tags.length > 0) {
+    conditions.push(`ci.tags @> $${i++}`);
+    params.push(opts.tags);
+  }
+  if (opts.contentItemIds && opts.contentItemIds.length > 0) {
+    conditions.push(`ci.id = ANY($${i++}::uuid[])`);
+    params.push(opts.contentItemIds);
+  }
+  if (opts.excludedTags && opts.excludedTags.length > 0) {
+    conditions.push(`NOT (ci.tags && $${i++}::text[])`);
+    params.push(opts.excludedTags);
+  }
+  if (opts.excludedContentItemIds && opts.excludedContentItemIds.length > 0) {
+    conditions.push(`NOT (ci.id = ANY($${i++}::uuid[]))`);
+    params.push(opts.excludedContentItemIds);
+  }
+  if (opts.excludedParentTypes && opts.excludedParentTypes.length > 0) {
+    conditions.push(`NOT (ci.type = ANY($${i++}::text[]))`);
+    params.push(opts.excludedParentTypes);
+  }
+
+  const result = await db.query(
+    `SELECT c.id, c.content_item_id, c.chunk_index, c.chunk_type,
+            c.content, c.metadata, c.created_at,
+            -- Synthetic similarity for downstream compat: title matches
+            -- get 1.0, content-only matches get 0.5. Lexical doesn't have
+            -- a real similarity; this is just a stable tiebreaker. Cast
+            -- to ::float because Postgres returns NUMERIC as a JS string
+            -- (precision-preservation default in node-postgres) and the
+            -- downstream RetrievalStepSchema validates score as number.
+            (CASE WHEN ci.title ILIKE $1 THEN 1.0 ELSE 0.5 END)::float AS similarity,
+            ci.type AS parent_type,
+            ci.title AS parent_title,
+            ci.project_ids AS parent_project_ids,
+            ci.tags AS parent_tags,
+            ci.source_url AS parent_source_url
+     FROM chunks c
+     JOIN content_items ci ON ci.id = c.content_item_id
+     WHERE ${conditions.join(' AND ')}
+     -- Title matches first (most-relevant for short queries like "do"),
+     -- then recency so fresh content surfaces over stale matches.
+     ORDER BY (ci.title ILIKE $1) DESC, ci.updated_at DESC
+     LIMIT $2`,
+    params,
+  );
+  return result.rows;
+}
+
 export async function findSimilarChunks(
   db: DbClient,
   embedding: number[],

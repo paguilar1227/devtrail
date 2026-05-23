@@ -162,7 +162,7 @@ export function toUiSearchHit(
   if (h.type === 'chunk') {
     const firstProject = h.chunk.parent_project_ids[0];
     const projectName = firstProject ? projectsById.get(firstProject)?.name ?? '—' : 'Inbox';
-    const path = h.retrieval_path.map((s) => s.step).filter((s) => s === 'vector' || s === 'graph' || s === 'fts');
+    const path = h.retrieval_path.map((s) => s.step).filter((s) => s === 'vector' || s === 'entity' || s === 'lexical');
     return {
       id: h.chunk.id,
       entity_kind: h.chunk.parent_type,

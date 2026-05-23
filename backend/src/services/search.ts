@@ -1,6 +1,6 @@
 import type { ServiceDeps } from './index.js';
-import { findSimilarChunks, type ChunkSearchResult } from '../db/chunks.js';
-import { findSimilarTodos, type TodoSearchResult } from '../db/todos.js';
+import { findSimilarChunks, findChunksByLexical, type ChunkSearchResult } from '../db/chunks.js';
+import { findSimilarTodos, findTodosByLexical, type TodoSearchResult } from '../db/todos.js';
 import {
   findChunksByEntities, findEntityByCanonical, findEntityByAlias,
   type EntityType,
@@ -43,8 +43,8 @@ export interface SearchOptions {
 }
 
 export interface RetrievalPathStep {
-  step: 'vector' | 'entity';
-  score?: number;                      // only for vector step
+  step: 'vector' | 'entity' | 'lexical';
+  score?: number;                      // present for vector + lexical steps
   entity?: { canonical_name: string; type: EntityType };  // only for entity step
   confidence?: number;                 // only for entity step
 }
@@ -134,19 +134,21 @@ async function searchWithTimingsImpl(
   const searchTodos = !entityTypes || entityTypes.includes('todo');
 
   const dbStart = performance.now();
-  const [vectorChunks, todos] = await Promise.all([
+  const chunkFilterOpts = {
+    projectId,
+    parentType: entityTypes && entityTypes.length === 1
+      ? (entityTypes[0] === 'document' || entityTypes[0] === 'note' ? entityTypes[0] : undefined)
+      : undefined,
+    tags,
+    contentItemIds,
+    excludedTags,
+    excludedContentItemIds,
+    excludedParentTypes: excludedChunkParentTypes,
+  };
+  const todoFilterOpts = { tags, excludedTags };
+  const [vectorChunks, todos, lexicalChunks, lexicalTodos] = await Promise.all([
     searchChunks
-      ? findSimilarChunks(deps.db, queryEmbedding, threshold, limit, {
-          projectId,
-          parentType: entityTypes && entityTypes.length === 1
-            ? (entityTypes[0] === 'document' || entityTypes[0] === 'note' ? entityTypes[0] : undefined)
-            : undefined,
-          tags,
-          contentItemIds,
-          excludedTags,
-          excludedContentItemIds,
-          excludedParentTypes: excludedChunkParentTypes,
-        })
+      ? findSimilarChunks(deps.db, queryEmbedding, threshold, limit, chunkFilterOpts)
       : Promise.resolve([]),
     // Todos: skipped when the caller restricted to specific content
     // items (todos aren't chunks under a parent — they can't match a
@@ -154,16 +156,19 @@ async function searchWithTimingsImpl(
     // exclusion list. Tag + excluded-tag filters are applied IN-DB by
     // findSimilarTodos so todos can co-exist with tag-scoped searches.
     searchTodos && !excludeTodos && !(contentItemIds && contentItemIds.length > 0)
-      ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit, {
-          tags,
-          excludedTags,
-        })
-          .then((t) => {
-            let filtered = t;
-            if (projectId === null) filtered = filtered.filter((x) => x.project_id === null);
-            else if (typeof projectId === 'string') filtered = filtered.filter((x) => x.project_id === projectId);
-            return filtered;
-          })
+      ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit, todoFilterOpts)
+          .then((t) => filterTodosByProject(t, projectId))
+      : Promise.resolve([]),
+    // Lexical chunk seed — third retrieval arm, fused via RRF below.
+    // Same filter opts as vector chunks so scope predicates apply
+    // identically. Short queries (<2 chars) return [] from the helper.
+    searchChunks
+      ? findChunksByLexical(deps.db, query, limit, chunkFilterOpts)
+      : Promise.resolve([]),
+    // Lexical todo seed — parallel arm for todos.
+    searchTodos && !excludeTodos && !(contentItemIds && contentItemIds.length > 0)
+      ? findTodosByLexical(deps.db, query, limit, todoFilterOpts)
+          .then((t) => filterTodosByProject(t, projectId))
       : Promise.resolve([]),
   ]);
   const dbMs = Math.round(performance.now() - dbStart);
@@ -306,12 +311,14 @@ async function searchWithTimingsImpl(
 
   // ---- 3. RRF fusion -----------------------------------------------------
   // Reciprocal Rank Fusion: final_score = Σ 1/(k + rank_in_each_list). k=60
-  // is the standard IR default. Items in both lists rise to the top; items
-  // in only one list fall behind. Robust without needing tuned weights.
+  // is the standard IR default. Items caught by multiple arms (vector +
+  // graph + lexical) rise to the top; items in only one list fall behind.
+  // Robust without needing tuned per-arm weights.
   const K = 60;
   const rrfScores = new Map<string, number>();
   const vectorRank = new Map<string, number>();
   const graphRank = new Map<string, number>();
+  const lexicalRank = new Map<string, number>();
 
   vectorChunks.forEach((c, i) => {
     vectorRank.set(c.id, i + 1);
@@ -323,11 +330,19 @@ async function searchWithTimingsImpl(
     graphRank.set(c.id, i + 1);
     rrfScores.set(c.id, (rrfScores.get(c.id) ?? 0) + 1 / (K + i + 1));
   });
+  // Lexical hits already arrive ranked by title-match-priority then recency
+  // (findChunksByLexical does the ORDER BY). Same RRF weight as the other
+  // arms — no preferential boost; fusion handles overlap natively.
+  lexicalChunks.forEach((c, i) => {
+    lexicalRank.set(c.id, i + 1);
+    rrfScores.set(c.id, (rrfScores.get(c.id) ?? 0) + 1 / (K + i + 1));
+  });
 
   // ---- 4. Build hits with retrieval_path --------------------------------
   const allChunks = new Map<string, ChunkSearchResult>();
   for (const c of vectorChunks) allChunks.set(c.id, c);
   for (const c of expandedChunks) if (!allChunks.has(c.id)) allChunks.set(c.id, c);
+  for (const c of lexicalChunks) if (!allChunks.has(c.id)) allChunks.set(c.id, c);
 
   const chunkHits: SearchHit[] = [];
   for (const [id, chunk] of allChunks) {
@@ -348,6 +363,13 @@ async function searchWithTimingsImpl(
         });
       }
     }
+    if (lexicalRank.has(id)) {
+      // Synthetic similarity from findChunksByLexical: 1.0 for title hits,
+      // 0.5 for content-only hits. Surfacing it lets the UI distinguish
+      // "the search term is in the title" from "buried in the body."
+      const lexChunk = lexicalChunks.find((c) => c.id === id);
+      path.push({ step: 'lexical', score: lexChunk?.similarity });
+    }
 
     chunkHits.push({
       type: 'chunk',
@@ -359,15 +381,41 @@ async function searchWithTimingsImpl(
     });
   }
 
-  // Todos — pure vector, no graph expansion for v1. Use vector similarity
-  // as final_score with a small RRF-scale factor so they compare roughly.
-  const todoHits: SearchHit[] = todos.map((t, i) => ({
-    type: 'todo' as const,
-    similarity: t.similarity,
-    final_score: 1 / (K + i + 1),
-    retrieval_path: [{ step: 'vector', score: t.similarity }],
-    todo: t,
-  }));
+  // Todos — vector + lexical (no graph expansion for v1). Fuse the two
+  // arms via the same RRF as chunks so dual-source todos rise to the top.
+  const todoVectorRank = new Map<string, number>();
+  const todoLexicalRank = new Map<string, number>();
+  const todoScores = new Map<string, number>();
+  todos.forEach((t, i) => {
+    todoVectorRank.set(t.id, i + 1);
+    todoScores.set(t.id, (todoScores.get(t.id) ?? 0) + 1 / (K + i + 1));
+  });
+  lexicalTodos.forEach((t, i) => {
+    todoLexicalRank.set(t.id, i + 1);
+    todoScores.set(t.id, (todoScores.get(t.id) ?? 0) + 1 / (K + i + 1));
+  });
+  const allTodos = new Map<string, TodoSearchResult>();
+  for (const t of todos) allTodos.set(t.id, t);
+  for (const t of lexicalTodos) if (!allTodos.has(t.id)) allTodos.set(t.id, t);
+
+  const todoHits: SearchHit[] = [];
+  for (const [id, todo] of allTodos) {
+    const path: RetrievalPathStep[] = [];
+    if (todoVectorRank.has(id)) {
+      path.push({ step: 'vector', score: todo.similarity });
+    }
+    if (todoLexicalRank.has(id)) {
+      const lexTodo = lexicalTodos.find((t) => t.id === id);
+      path.push({ step: 'lexical', score: lexTodo?.similarity });
+    }
+    todoHits.push({
+      type: 'todo' as const,
+      similarity: todo.similarity,
+      final_score: todoScores.get(id) ?? 0,
+      retrieval_path: path,
+      todo,
+    });
+  }
 
   const allHits: SearchHit[] = [...chunkHits, ...todoHits];
   allHits.sort((a, b) => b.final_score - a.final_score);
@@ -376,14 +424,26 @@ async function searchWithTimingsImpl(
 
   console.log(
     `[search] returning ${result.length} hits ` +
-    `(vector-only ${vectorChunks.length - expandedChunks.filter((e) => vectorRank.has(e.id)).length}, ` +
-    `graph-expanded ${expandedChunks.length}, todos ${todos.length}) ` +
+    `(vector-chunks ${vectorChunks.length}, graph-expanded ${expandedChunks.length}, ` +
+    `lexical-chunks ${lexicalChunks.length}, vector-todos ${todos.length}, ` +
+    `lexical-todos ${lexicalTodos.length}) ` +
     `— embed ${embedMs}ms, db ${dbMs}ms, graph ${graphMs}ms, total ${totalMs}ms`,
   );
   return {
     hits: result,
     timings: { embed_ms: embedMs, db_scan_ms: dbMs, graph_ms: graphMs, total_ms: totalMs },
   };
+}
+
+/** Apply the trinary projectId filter to a todo list (extracted so the
+ *  vector + lexical todo fetches don't duplicate the predicate). */
+function filterTodosByProject(
+  todos: TodoSearchResult[],
+  projectId: string | null | undefined,
+): TodoSearchResult[] {
+  if (projectId === null) return todos.filter((t) => t.project_id === null);
+  if (typeof projectId === 'string') return todos.filter((t) => t.project_id === projectId);
+  return todos;
 }
 
 /**

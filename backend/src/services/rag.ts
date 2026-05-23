@@ -26,7 +26,7 @@ export interface Citation {
   similarity: number;
   source_url?: string | null;  // set when the content item was ingested from a URL
   retrieval_path?: Array<{
-    step: 'vector' | 'entity';
+    step: 'vector' | 'entity' | 'lexical';
     score?: number;
     entity?: { canonical_name: string; type: string };
     confidence?: number;

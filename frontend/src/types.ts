@@ -102,7 +102,11 @@ export interface Stats {
   top_tags: { name: string; count: number }[];
 }
 
-export type RetrievalPath = 'vector' | 'graph' | 'fts';
+// Mirrors backend RetrievalPathStep.step. `entity` = graph-expanded
+// (matched via entity edges from the vector seed). `lexical` = ILIKE
+// substring hit. A hit may have multiple paths if it was caught by
+// multiple retrieval arms.
+export type RetrievalPath = 'vector' | 'entity' | 'lexical';
 
 export interface SearchHit {
   id: string;
