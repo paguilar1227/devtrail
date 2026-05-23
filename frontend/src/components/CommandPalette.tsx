@@ -115,7 +115,7 @@ export function CommandPalette({ onClose, onRoute, onAction, onToggleTheme, them
       { kind: 'action', id: 'new-project', title: 'Create new project', sub: 'open project modal', icon: <Icons.Plus size={13} />, action: () => onAction({ kind: 'new-project' }) },
       { kind: 'action', id: 'upload', title: 'Upload file…', sub: 'in current project', icon: <Icons.Upload size={13} />, action: () => onAction({ kind: 'upload', payload: null }) },
       { kind: 'action', id: 'new-note', title: 'New note', sub: 'in current project', icon: <Icons.Note size={13} />, action: () => onAction({ kind: 'note-edit', payload: null }) },
-      { kind: 'action', id: 'open-search', title: 'Search…', sub: 'opens the search drawer', icon: <Icons.Search />, action: () => onAction({ kind: 'search' }) },
+      { kind: 'action', id: 'open-search', title: 'Search…', sub: 'go to home and focus the search bar', icon: <Icons.Search />, action: () => onRoute({ route: 'home' }) },
       { kind: 'action', id: 'go-home', title: 'Go to Home', sub: 'shortcut · G then H', icon: <Icons.Home size={13} />, action: () => onRoute({ route: 'home' }) },
       { kind: 'action', id: 'go-activity', title: 'Go to Activity', sub: 'shortcut · G then A', icon: <Icons.Activity size={13} />, action: () => onRoute({ route: 'activity' }) },
       { kind: 'action', id: 'go-tags', title: 'Go to Tags', sub: 'shortcut · G then T', icon: <Icons.Tag size={13} />, action: () => onRoute({ route: 'tags' }) },

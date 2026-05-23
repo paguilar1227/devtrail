@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# Ad-hoc screenshots saved at repo root by Playwright probes during UI
+# verification. Throwaway visual checks, not documentation. Tracked
+# screenshots under e.g. docs/screenshots/ are unaffected.
+/*.png
 .env
 .env.local
 *.log

@@ -10,7 +10,6 @@ import { NewProjectModal } from './components/modals/NewProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
 import { NoteListDrawer } from './components/modals/NoteListDrawer';
 import { DocListDrawer } from './components/modals/DocListDrawer';
-import { SearchDrawer } from './components/modals/SearchDrawer';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
 import { TodoListDrawer } from './components/modals/TodoListDrawer';
 import { UploadModal } from './components/modals/UploadModal';
@@ -135,9 +134,17 @@ export default function App() {
       <main className="main">
         <Topbar crumbs={crumbs} />
         <div className="main-scroll">
-          {route.route === 'home' && <HomePage onRoute={navigate} onAction={onAction} />}
+          {route.route === 'home' && (
+            <HomePage
+              onRoute={navigate}
+              onAction={onAction}
+              // q + scope on the home route are the cross-page search
+              // seed; HomePage reads them on mount.
+              initialSearch={route.q || route.scope ? { query: route.q, scope: route.scope } : undefined}
+            />
+          )}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
-          {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} />}
+          {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} onRoute={navigate} />}
           {route.route === 'activity' && <ActivityPage onAction={onAction} />}
           {route.route === 'tags' && (route.name
             ? <TagDetailPage key={route.name} name={route.name} onAction={onAction} onRoute={setRoute} />
@@ -169,13 +176,7 @@ export default function App() {
       {modal?.kind === 'settings' && (
         <SettingsModal theme={theme} onTheme={setTheme} onClose={() => setModal(null)} />
       )}
-      {modal?.kind === 'search' && (
-        <SearchDrawer
-          initialQuery={modal.payload?.query}
-          initialScope={modal.payload?.scope}
-          onClose={() => setModal(null)}
-        />
-      )}
+      {/* Search is inline on HomePage; no modal here. */}
       {modal?.kind === 'personal-todos' && (
         <TodoListDrawer initialSort={modal.sort} initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} />
       )}

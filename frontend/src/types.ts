@@ -142,7 +142,10 @@ export type SidebarMode = 'expanded' | 'collapsed' | 'hidden';
 export type TodoMode = 'hierarchy' | 'flat';
 
 export type Route =
-  | { route: 'home' }
+  // q + scope seed the inline search on HomePage when present (and the
+  // URL writes ?q= / ?scope= so bookmarks / back-forward replay
+  // naturally). Both default to undefined = no search-mode seed.
+  | { route: 'home'; q?: string; scope?: 'personal' | 'all' | string }
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
   | { route: 'tags'; name?: string }
@@ -160,7 +163,11 @@ export type ModalKind =
   | { kind: 'confirm-rename'; payload: TagRow }
   | { kind: 'new-project' }
   | { kind: 'settings' }
-  | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
+  // `search` is no longer a modal — it's a route. Callers should
+  // navigate via onRoute({ route: 'home', q, scope }). Kept commented
+  // for grep-discoverability if you're looking for "where did the
+  // search modal go" while reading old code.
+  // | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
   | { kind: 'personal-todos'; sort?: TodoSortMode; tagFilter?: TagFilter }
   | { kind: 'personal-notes'; tagFilter?: TagFilter }
   | { kind: 'personal-docs'; tagFilter?: TagFilter };

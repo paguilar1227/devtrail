@@ -1902,6 +1902,26 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border: 0.5px solid var(--hairline);
   border-radius: 12px;
 }
+/* Search-mode chrome: scope chips + predicate chips. Only render when
+   the user is searching (HomePage gates this via `searchActive`). */
+.home-search-scope-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 6px 0;
+}
+.home-search-predicates {
+  margin: 2px 0 6px;
+}
+/* Inline search results take over the home grid area. Padding mirrors
+   the personal-grid section so the visual rhythm holds when the user
+   types or clears. */
+.home-search-results {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 12px;
+}
+.home-search-results .results-count {
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+}
 .home-scope-toggle button {
   border: 0; background: transparent; color: var(--fg-muted);
   padding: 8px 14px; border-radius: 10px; cursor: pointer;

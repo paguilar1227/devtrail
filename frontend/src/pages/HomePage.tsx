@@ -18,7 +18,7 @@
 // All three columns hit the backend with `project_id='null'`.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
@@ -37,8 +37,21 @@ import {
   serializeTagFilter,
   type TagFilter,
 } from '../lib/tagFilter';
-import { parseSearchSyntax, toggleTagInQuery } from '../lib/searchSyntax';
+import {
+  parseSearchSyntax,
+  removeTagFromQuery,
+  removeTypeFromQuery,
+  removeMentionFromQuery,
+  removeProjectFromQuery,
+  removeExcludedFromQuery,
+  toggleTagInQuery,
+} from '../lib/searchSyntax';
 import { SearchInput, type MentionTarget, type ProjectSuggestion } from '../components/SearchInput';
+import { SearchResultsList } from '../components/SearchResultsList';
+import { FilterChip } from '../components/primitives';
+import { search } from '../lib/api';
+import { toUiSearchHit } from '../lib/view';
+import { useDebounced } from '../lib/useDebounced';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -73,11 +86,20 @@ import type { ActionDispatch, Route, Todo } from '../types';
 interface Props {
   onRoute: (r: Route) => void;
   onAction: ActionDispatch;
+  /** Cross-page search seed — set when arriving at home via
+   *  onRoute({ route: 'home', q, scope }) from another page (ProjectPage
+   *  search submit, command palette, etc). HomePage consumes it on
+   *  mount as the initial query/scope; the URL itself is the
+   *  persistent source of truth thereafter. */
+  initialSearch?: { query?: string; scope?: 'personal' | 'all' | string };
 }
 
-type SearchScope = 'personal' | 'all';
+// Scope chip values: 'personal' = no project (Inbox), 'all' = global,
+// any other string = project UUID. Matches the SearchRequest project_id
+// trinary on the wire ('null' for personal, UUID for project, omit for all).
+type SearchScope = 'personal' | 'all' | string;
 
-export function HomePage({ onRoute, onAction }: Props) {
+export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   const qc = useQueryClient();
   // Filter the Activity widget by kind. 'all' is the passthrough.
   // Keyed in the query cache so React Query refetches on flip.
@@ -310,22 +332,151 @@ export function HomePage({ onRoute, onAction }: Props) {
   }, [projects]);
 
   // ── Search ───────────────────────────────────────────────
-  // Universal search bar: the input text IS the source of truth for the
-  // active scope. `#tag` and `in:type` predicates are parsed live via
-  // searchSyntax.ts; tagFilter mirrors the parsed tags via a useEffect
-  // below so the HomeTagFilter chip row stays bidirectionally in sync.
+  // Universal search bar: the input text IS the source of truth for both
+  // the active filter AND the page mode. Empty input → home dashboard
+  // (Personal grid + overview + activity). Non-empty → unified search-
+  // results list takes over the personal-grid section.
+  //
+  // `#tag`, `in:type`, `@name`, `project:name`, and `-prefix` negations
+  // all parse live via searchSyntax.ts. tagFilter mirrors parsed tags
+  // via a useEffect below so the HomeTagFilter chip row stays
+  // bidirectionally in sync (a chip click writes a #tag predicate
+  // back into the input).
+  //
   // Initial value seeded from the URL's ?tag= so existing bookmarks /
   // browser-back states still surface the same scope visibly.
   const [query, setQuery] = useState<string>(() => {
+    // Resolution order on mount:
+    //   1. initialSearch.query (cross-page dispatch from ProjectPage etc)
+    //   2. URL ?q= (direct nav / bookmark / back-forward)
+    //   3. Legacy URL ?tag=foo,bar → seed as `#foo #bar` for back-compat
+    //   4. Empty
+    if (initialSearch?.query) return initialSearch.query;
     if (typeof window === 'undefined') return '';
-    const urlFilter = parseTagFilter(new URLSearchParams(window.location.search));
+    const params = new URLSearchParams(window.location.search);
+    const urlQ = params.get('q');
+    if (urlQ) return urlQ;
+    const urlFilter = parseTagFilter(params);
     return urlFilter.tags.map((t) => `#${t}`).join(' ');
   });
-  const [scope, setScope] = useState<SearchScope>('personal');
-  const submitSearch = () => {
-    if (!query.trim()) return;
-    onAction({ kind: 'search', payload: { query: query.trim(), scope } });
-  };
+  // Scope can now be a project UUID too (matches what the SearchDrawer
+  // used to support). Personal is default — most home use is private.
+  // Initial resolution: initialSearch → URL ?scope= → 'personal'.
+  const [scope, setScope] = useState<SearchScope>(() => {
+    if (initialSearch?.scope) return initialSearch.scope;
+    if (typeof window === 'undefined') return 'personal';
+    const urlScope = new URLSearchParams(window.location.search).get('scope');
+    return urlScope ?? 'personal';
+  });
+
+  // URL sync: any change to query or scope writes ?q= / ?scope= via
+  // replaceState (no history pollution; back button still works because
+  // it pre-dates the replaceState chain). Clears params when empty.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (query.trim().length > 0) url.searchParams.set('q', query);
+    else url.searchParams.delete('q');
+    if (scope !== 'personal') url.searchParams.set('scope', scope);
+    else url.searchParams.delete('scope');
+    window.history.replaceState(null, '', url.toString());
+  }, [query, scope]);
+
+
+  // Live debounce. 180ms matches CommandPalette's tuned value — fast
+  // enough to feel instant, slow enough to skip mid-token requests.
+  const debouncedQuery = useDebounced(query, 180);
+  const parsedQuery = useMemo(() => parseSearchSyntax(debouncedQuery), [debouncedQuery]);
+
+  // `searchActive` is the mode switch. Any signal in the parsed query —
+  // free text OR any predicate bucket — flips the page into results
+  // mode. Empty input drops back to the dashboard.
+  const searchActive =
+    parsedQuery.text.trim().length > 0
+    || parsedQuery.tags.length > 0
+    || parsedQuery.types.length > 0
+    || parsedQuery.mentions.length > 0
+    || parsedQuery.projects.length > 0
+    || parsedQuery.excludedTags.length > 0
+    || parsedQuery.excludedTypes.length > 0
+    || parsedQuery.excludedMentions.length > 0
+    || parsedQuery.excludedProjects.length > 0;
+
+  // updateBoth keeps the input string canonical when the user removes a
+  // predicate chip via the X — same pattern SearchDrawer used.
+  const updateBoth = (next: string) => setQuery(next);
+
+  // Resolve @-mentions and project:names to UUIDs for the wire call.
+  // Same logic SearchDrawer had — global mention pool so a mention can
+  // pull in an item from any project, not just the personal scope the
+  // home dashboard surfaces by default.
+  const { contentItemIds, excludedContentItemIds } = useMemo(() => {
+    const matchByTitle = (name: string): string[] => {
+      const lower = name.toLowerCase();
+      return mentionTargets
+        .filter((m) => m.title.toLowerCase() === lower)
+        .map((m) => m.id);
+    };
+    return {
+      contentItemIds: parsedQuery.mentions.flatMap(matchByTitle),
+      excludedContentItemIds: parsedQuery.excludedMentions.flatMap(matchByTitle),
+    };
+  }, [parsedQuery.mentions, parsedQuery.excludedMentions, mentionTargets]);
+
+  // First positive project: predicate wins over the scope chip toggle.
+  // Mirrors SearchDrawer's resolution rule — keeps the input the
+  // canonical source of truth even when the chips suggest otherwise.
+  const projectIdFromPredicate = useMemo<string | null | undefined>(() => {
+    if (parsedQuery.projects.length === 0) return undefined;
+    const first = parsedQuery.projects[0]!.toLowerCase();
+    const match = projectSuggestions.find((p) => p.name.toLowerCase() === first);
+    return match?.id;
+  }, [parsedQuery.projects, projectSuggestions]);
+
+  const effectiveProjectId =
+    projectIdFromPredicate !== undefined
+      ? projectIdFromPredicate
+      : scope === 'all'
+        ? undefined
+        : scope === 'personal'
+          ? 'null'
+          : scope;
+
+  // Live search hits. Fires whenever the debounced query has any
+  // signal (parsed predicates OR free text). Returns SearchHit[] from
+  // the existing /api/v1/search endpoint with all the PR #12+#14
+  // power-feature plumbing intact (mentions, projects, exclusions,
+  // vector + graph + lexical fusion).
+  const { data: hitsApi, isFetching: searchIsFetching, error: searchError } = useQuery({
+    queryKey: [
+      'search',
+      debouncedQuery,
+      effectiveProjectId ?? 'all',
+      parsedQuery.tags.join(','),
+      parsedQuery.types.join(','),
+      contentItemIds.join(','),
+      parsedQuery.excludedTags.join(','),
+      parsedQuery.excludedTypes.join(','),
+      excludedContentItemIds.join(','),
+    ],
+    queryFn: () =>
+      search({
+        query: parsedQuery.text || debouncedQuery,
+        project_id: effectiveProjectId as 'null' | string | undefined,
+        tags: parsedQuery.tags.length > 0 ? parsedQuery.tags : undefined,
+        entity_types: parsedQuery.types.length > 0 ? parsedQuery.types : undefined,
+        content_item_ids: contentItemIds.length > 0 ? contentItemIds : undefined,
+        excluded_tags: parsedQuery.excludedTags.length > 0 ? parsedQuery.excludedTags : undefined,
+        excluded_entity_types: parsedQuery.excludedTypes.length > 0 ? parsedQuery.excludedTypes : undefined,
+        excluded_content_item_ids: excludedContentItemIds.length > 0 ? excludedContentItemIds : undefined,
+        limit: 30,
+      }),
+    enabled: searchActive,
+  });
+  const searchHits = useMemo(
+    () => (hitsApi ?? []).map((h) => toUiSearchHit(h, projectsById)),
+    [hitsApi, projectsById],
+  );
 
   // query → tagFilter sync. Parses #tag predicates out of the search
   // input and mirrors them into tagFilter.tags (preserving mode). The
@@ -436,7 +587,10 @@ export function HomePage({ onRoute, onAction }: Props) {
           <SearchInput
             value={query}
             onChange={setQuery}
-            onSubmit={submitSearch}
+            // Search is live (debounced) so Enter doesn't need to
+            // submit anything. We provide a no-op so the input still
+            // swallows Enter without bubbling a form submit somewhere.
+            onSubmit={() => { /* live mode — no submit */ }}
             tags={sortedTagsForChipRow.map((t) => ({ name: t.name, total: t.total }))}
             mentions={mentionTargets}
             projects={projectSuggestions}
@@ -472,6 +626,61 @@ export function HomePage({ onRoute, onAction }: Props) {
         </div>
       </div>
 
+      {/* Search-mode chrome — scope chip row + parsed-predicate chips.
+          Visible only while searching so the dashboard isn't cluttered
+          when the user isn't searching. The scope chip row widens
+          beyond the simple Personal|All toggle above to surface every
+          active project (so a search can be scoped to a specific
+          project from the home page without first navigating there). */}
+      {searchActive ? (
+        <>
+          <div className="home-search-scope-row" role="radiogroup" aria-label="Search project scope">
+            <FilterChip active={scope === 'all'} onClick={() => setScope('all')}>All projects</FilterChip>
+            <FilterChip active={scope === 'personal'} onClick={() => setScope('personal')}>Personal</FilterChip>
+            {projectSuggestions.map((p) => (
+              <FilterChip key={p.id} active={scope === p.id} onClick={() => setScope(p.id)}>
+                {p.name}
+              </FilterChip>
+            ))}
+          </div>
+          {(parsedQuery.tags.length
+            + parsedQuery.types.length
+            + parsedQuery.mentions.length
+            + parsedQuery.projects.length
+            + parsedQuery.excludedTags.length
+            + parsedQuery.excludedTypes.length
+            + parsedQuery.excludedMentions.length
+            + parsedQuery.excludedProjects.length) > 0 ? (
+            <div className="search-drawer-predicates home-search-predicates" aria-label="Active predicates">
+              {parsedQuery.tags.map((tag) => (
+                <button key={`tag-${tag}`} type="button" className="search-predicate-chip" onClick={() => updateBoth(removeTagFromQuery(query, tag))}>#{tag} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.types.map((type) => (
+                <button key={`type-${type}`} type="button" className="search-predicate-chip" onClick={() => updateBoth(removeTypeFromQuery(query, type))}>in:{type} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.mentions.map((name) => (
+                <button key={`mention-${name}`} type="button" className="search-predicate-chip" onClick={() => updateBoth(removeMentionFromQuery(query, name))}>@{name} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.projects.map((name) => (
+                <button key={`project-${name}`} type="button" className="search-predicate-chip" onClick={() => updateBoth(removeProjectFromQuery(query, name))}>project:{name} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.excludedTags.map((tag) => (
+                <button key={`ex-tag-${tag}`} type="button" className="search-predicate-chip excluded" onClick={() => updateBoth(removeExcludedFromQuery(query, 'tag', tag))}>-#{tag} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.excludedTypes.map((type) => (
+                <button key={`ex-type-${type}`} type="button" className="search-predicate-chip excluded" onClick={() => updateBoth(removeExcludedFromQuery(query, 'type', type))}>-in:{type} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.excludedMentions.map((name) => (
+                <button key={`ex-mention-${name}`} type="button" className="search-predicate-chip excluded" onClick={() => updateBoth(removeExcludedFromQuery(query, 'mention', name))}>-@{name} <Icons.X size={10} aria-hidden /></button>
+              ))}
+              {parsedQuery.excludedProjects.map((name) => (
+                <button key={`ex-project-${name}`} type="button" className="search-predicate-chip excluded" onClick={() => updateBoth(removeExcludedFromQuery(query, 'project', name))}>-project:{name} <Icons.X size={10} aria-hidden /></button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       {sortedTagsForChipRow.length > 0 || tagFilter.tags.length > 0 ? (
         <HomeTagFilter
           options={sortedTagsForChipRow}
@@ -480,6 +689,26 @@ export function HomePage({ onRoute, onAction }: Props) {
         />
       ) : null}
 
+      {searchActive ? (
+        <div className="home-search-results">
+          {searchError ? (
+            <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+              Search failed: {searchError instanceof Error ? searchError.message : String(searchError)}
+            </div>
+          ) : searchIsFetching && searchHits.length === 0 ? (
+            <div className="page-subtle">Searching…</div>
+          ) : searchHits.length === 0 ? (
+            <div className="page-subtle">No results.</div>
+          ) : (
+            <>
+              <div className="subtle results-count">{searchHits.length} results</div>
+              <SearchResultsList hits={searchHits} />
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {!searchActive ? (<>
       <div className="home-personal-h">
         <h2>Personal</h2>
         <span className="sub">project-less todos, notes, and documents</span>
@@ -766,6 +995,7 @@ export function HomePage({ onRoute, onAction }: Props) {
           ))}
         </div>
       ) : null}
+      </>) : null}
     </div>
   );
 }

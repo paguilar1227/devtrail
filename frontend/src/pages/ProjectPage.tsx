@@ -23,11 +23,12 @@ import { SearchInput, type MentionTarget, type ProjectSuggestion, type TagSugges
 interface Props {
   projectId: string;
   onAction: ActionDispatch;
+  onRoute: (r: import('../types').Route) => void;
 }
 
 type TabId = 'chat' | 'documents' | 'notes' | 'todos';
 
-export function ProjectPage({ projectId, onAction }: Props) {
+export function ProjectPage({ projectId, onAction, onRoute }: Props) {
   const [tab, setTab] = useState<TabId>('chat');
   const [searchDraft, setSearchDraft] = useState('');
   const qc = useQueryClient();
@@ -75,7 +76,10 @@ export function ProjectPage({ projectId, onAction }: Props) {
 
   const submitProjectSearch = () => {
     if (!searchDraft.trim()) return;
-    onAction({ kind: 'search', payload: { query: searchDraft.trim(), scope: projectId } });
+    // Navigate to home with the query + scope; HomePage's inline search
+    // takes over from there. URL is the source of truth so back-button
+    // returns to this project page cleanly.
+    onRoute({ route: 'home', q: searchDraft.trim(), scope: projectId });
   };
 
   const myCounts = countsQ.data?.find((c) => c.project_id === projectId);
