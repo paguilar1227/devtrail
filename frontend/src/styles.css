@@ -820,9 +820,19 @@ input, textarea { font-size: inherit; color: inherit; }
 
 /* ── Search results ── */
 .search-hits { display: flex; flex-direction: column; gap: 8px; }
-.search-hit { grid-template-columns: 32px 1fr auto; }
+/* Card-level click target. The whole row is hit-testable; the title is
+   a real <button> for keyboard access. Excerpt text is still
+   selectable — the click handler bails when a selection exists. */
+.search-hit { grid-template-columns: 32px 1fr; cursor: pointer; }
 .search-hit-head { align-items: center; }
-.search-hit-title { font-size: var(--type-h); font-weight: 600; }
+.search-hit-title {
+  font-size: var(--type-h); font-weight: 600;
+  background: none; border: 0; padding: 0;
+  color: inherit; font: inherit; font-weight: 600;
+  text-align: left; cursor: pointer;
+}
+.search-hit-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.search-hit-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 .search-hit-project { font-size: var(--type-meta); }
 .search-hit-excerpt {
   font-size: var(--type-meta); line-height: 1.55;

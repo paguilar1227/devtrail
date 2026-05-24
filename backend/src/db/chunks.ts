@@ -118,16 +118,30 @@ export async function findChunksByLexical(
   } = {},
 ): Promise<ChunkSearchResult[]> {
   const q = query.trim();
-  if (q.length < 2) return [];
+  const hasText = q.length >= 2;
+  // Filter-only mode (no free text) needs at least one structural filter to
+  // avoid returning the entire corpus.
+  const hasAnyFilter =
+    !!opts.tags?.length || !!opts.contentItemIds?.length ||
+    !!opts.excludedTags?.length || !!opts.excludedContentItemIds?.length ||
+    !!opts.excludedParentTypes?.length || !!opts.parentType ||
+    opts.projectId !== undefined;
+  if (!hasText && !hasAnyFilter) return [];
   // Escape ILIKE metachars in user input so '100%' searches literally for '100%'.
-  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // When hasText is false, the pattern is `%%` which trivially matches; the
+  // WHERE clause below skips the ILIKE predicate so the matcher does nothing.
+  const escaped = hasText
+    ? q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+    : '';
   const pattern = `%${escaped}%`;
 
   const conditions = [
     'ci.archived = false',
     "ci.processing_status = 'ready'",
-    '(ci.title ILIKE $1 OR c.content ILIKE $1)',
   ];
+  if (hasText) {
+    conditions.push('(ci.title ILIKE $1 OR c.content ILIKE $1)');
+  }
   const params: unknown[] = [pattern, limit];
   let i = 3;
   if (opts.projectId === null) {

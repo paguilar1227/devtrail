@@ -461,7 +461,10 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
     ],
     queryFn: () =>
       search({
-        query: parsedQuery.text || debouncedQuery,
+        // Predicate-only inputs (e.g. just `#chore`) have parsedQuery.text === ''.
+        // Send empty so the backend takes the filter-only path; falling back to
+        // the raw `#chore` string would embed garbage and match nothing.
+        query: parsedQuery.text,
         project_id: effectiveProjectId as 'null' | string | undefined,
         tags: parsedQuery.tags.length > 0 ? parsedQuery.tags : undefined,
         entity_types: parsedQuery.types.length > 0 ? parsedQuery.types : undefined,
@@ -702,7 +705,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
           ) : (
             <>
               <div className="subtle results-count">{searchHits.length} results</div>
-              <SearchResultsList hits={searchHits} />
+              <SearchResultsList hits={searchHits} onOpen={(h) => openActivityTarget(h, onAction)} />
             </>
           )}
         </div>

@@ -2,17 +2,49 @@ import { Icons } from './Icons';
 import { Tag } from './primitives';
 import type { SearchHit } from '../types';
 
-export function SearchResultsList({ hits }: { hits: SearchHit[] }) {
+interface Props {
+  hits: SearchHit[];
+  onOpen: (hit: SearchHit) => void;
+}
+
+// Card-level open: any click on the row opens the hit, EXCEPT when the
+// user is actively selecting text (drag-to-copy). The selection check on
+// click preserves "select an excerpt to copy" while making the rest of
+// the card a hit target.
+function hasActiveSelection() {
+  const sel = window.getSelection();
+  return !!sel && sel.toString().length > 0;
+}
+
+export function SearchResultsList({ hits, onOpen }: Props) {
   return (
     <div className="search-hits">
       {hits.map(h => (
-        <div key={h.id} className="doc-row search-hit">
+        <div
+          key={h.id}
+          className="doc-row search-hit"
+          onClick={() => {
+            if (hasActiveSelection()) return;
+            onOpen(h);
+          }}
+          role="button"
+          tabIndex={-1}
+        >
           <div className="ic-box">
             {h.entity_kind === 'document' ? <Icons.Doc /> : h.entity_kind === 'note' ? <Icons.Note /> : <Icons.Check />}
           </div>
           <div>
             <div className="row-flex gap-2 search-hit-head">
-              <span className="search-hit-title">{h.title}</span>
+              <button
+                type="button"
+                className="search-hit-title"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(h);
+                }}
+              >
+                {h.title}
+              </button>
               <Tag kind={h.entity_kind === 'document' ? 'doc' : h.entity_kind === 'note' ? 'note' : 'todo'}>
                 {h.entity_kind}
               </Tag>
@@ -29,7 +61,6 @@ export function SearchResultsList({ hits }: { hits: SearchHit[] }) {
               <span className="search-hit-score">score {h.score.toFixed(2)}</span>
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm">Open</button>
         </div>
       ))}
     </div>

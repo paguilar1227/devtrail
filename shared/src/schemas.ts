@@ -383,7 +383,11 @@ export const SearchHitSchema = z.discriminatedUnion('type', [ChunkHitSchema, Tod
 export type SearchHit = z.infer<typeof SearchHitSchema>;
 
 export const SearchRequestSchema = z.object({
-  query: z.string().min(1),
+  // Empty string is allowed: callers may send predicate-only requests
+  // (e.g. just tag/project filters with no free text), in which case the
+  // backend takes the filter-only listing path and skips embedding +
+  // vector + graph arms.
+  query: z.string(),
   // UUID = scope to a specific project. 'null' literal = personal scope:
   // chunks whose parent content_item has no project_ids and todos whose
   // project_id IS NULL. Omitted = global (all projects + personal).

@@ -454,24 +454,44 @@ export async function findTodosByLexical(
   opts: {
     tags?: string[];
     excludedTags?: string[];
+    /** When true, an empty query is treated as "list everything matching the
+     *  other filters" rather than triggering the noise-floor short-circuit.
+     *  Caller (search service) sets this when it has external signals — like
+     *  entity_types restriction or project scope — that the helper opts
+     *  don't directly carry. */
+    allowEmptyQuery?: boolean;
   } = {},
 ): Promise<TodoSearchResult[]> {
   const q = query.trim();
-  if (q.length < 2) return [];
-  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const hasText = q.length >= 2;
+  // Noise floor: 1-char queries with no caller-asserted signal would match
+  // ~everything via ILIKE %a%. Short-circuit. Filter-only mode (empty query
+  // + tags) is fine.
+  const hasOwnFilter = !!opts.tags?.length || !!opts.excludedTags?.length;
+  if (!hasText && !hasOwnFilter && !opts.allowEmptyQuery) return [];
+  const escaped = hasText
+    ? q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+    : '';
   const pattern = `%${escaped}%`;
 
-  const conditions = ['archived = false', 'content ILIKE $1'];
-  const params: unknown[] = [pattern, limit];
-  let i = 3;
+  // Build conditions + params together; only include pattern when used so
+  // Postgres doesn't choke on an unreferenced typeless parameter.
+  const conditions = ['archived = false'];
+  const params: unknown[] = [];
+  if (hasText) {
+    params.push(pattern);
+    conditions.push(`content ILIKE $${params.length}`);
+  }
   if (opts.tags && opts.tags.length > 0) {
-    conditions.push(`tags @> $${i++}::text[]`);
     params.push(opts.tags);
+    conditions.push(`tags @> $${params.length}::text[]`);
   }
   if (opts.excludedTags && opts.excludedTags.length > 0) {
-    conditions.push(`NOT (tags && $${i++}::text[])`);
     params.push(opts.excludedTags);
+    conditions.push(`NOT (tags && $${params.length}::text[])`);
   }
+  params.push(limit);
+  const limitParam = params.length;
   const result = await db.query(
     `SELECT id, content, project_id, section, parent_id, status, priority,
             due_date, tags, archived, created_at, updated_at,
@@ -482,7 +502,7 @@ export async function findTodosByLexical(
      FROM todos
      WHERE ${conditions.join(' AND ')}
      ORDER BY updated_at DESC
-     LIMIT $2`,
+     LIMIT $${limitParam}`,
     params,
   );
   return result.rows;

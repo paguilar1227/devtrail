@@ -178,7 +178,7 @@ export function toUiSearchHit(
   const projectName = h.todo.project_id
     ? projectsById.get(h.todo.project_id)?.name ?? '—'
     : 'Inbox';
-  const path = h.retrieval_path.map((s) => s.step).filter((s) => s === 'vector' || s === 'graph' || s === 'fts');
+  const path = h.retrieval_path.map((s) => s.step).filter((s) => s === 'vector' || s === 'entity' || s === 'lexical');
   return {
     id: h.todo.id,
     entity_kind: 'todo',

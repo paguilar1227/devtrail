@@ -123,11 +123,34 @@ async function searchWithTimingsImpl(
   // 'todo' in excludedEntityTypes is enforced below in the todo branch.
   const excludeTodos = excludedEntityTypes?.includes('todo') ?? false;
   const totalStart = performance.now();
-  console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, graph: ${graph}`);
+  // Filter-only mode: empty/blank query but predicates are set (e.g. just
+  // `#chore`, `in:todo`, `project:Foo`). Skip the embedding call (Gemini
+  // 400s on empty input) and the vector + graph arms (no seed). The lexical
+  // helpers handle this by dropping their ILIKE predicate when text is
+  // empty; they list rows that match the structural filters.
+  const trimmedQuery = query.trim();
+  // hasQueryText drives embedding skip + vector-arm skip: any non-empty
+  // text justifies embedding (vector path runs even for 1-char queries —
+  // the lexical helpers separately apply their 2-char noise floor).
+  const hasQueryText = trimmedQuery.length > 0;
+  // Service-level "no signal at all" guard: empty query AND no filters of
+  // any kind → return [] without doing any work. Otherwise let arms run.
+  const hasAnySignal =
+    hasQueryText
+    || !!tags?.length || !!excludedTags?.length
+    || !!entityTypes?.length || !!excludedEntityTypes?.length
+    || !!contentItemIds?.length || !!excludedContentItemIds?.length
+    || projectId !== undefined;
+  console.log(`[search] query: "${query.slice(0, 80)}", project: ${projectId ?? 'global'}, types: ${entityTypes?.join(',') ?? 'all'}, graph: ${graph}, filter-only: ${!hasQueryText}`);
+  if (!hasAnySignal) {
+    const totalMs = Math.round(performance.now() - totalStart);
+    console.log(`[search] returning 0 hits (no-signal short-circuit) — total ${totalMs}ms`);
+    return { hits: [], timings: { embed_ms: 0, db_scan_ms: 0, graph_ms: 0, total_ms: totalMs } };
+  }
 
   // ---- 1. Vector seed ----------------------------------------------------
   const embedStart = performance.now();
-  const queryEmbedding = await deps.embeddingProvider.embed(query);
+  const queryEmbedding = hasQueryText ? await deps.embeddingProvider.embed(query) : null;
   const embedMs = Math.round(performance.now() - embedStart);
 
   const searchChunks = !entityTypes || entityTypes.some((t) => t === 'document' || t === 'note');
@@ -145,9 +168,17 @@ async function searchWithTimingsImpl(
     excludedContentItemIds,
     excludedParentTypes: excludedChunkParentTypes,
   };
-  const todoFilterOpts = { tags, excludedTags };
+  // allowEmptyQuery: the todos helper's own opts only carry tags. When the
+  // caller has empty text + no tags but DID specify a service-level filter
+  // (entity_types restriction, projectId scope, etc.), tell the helper to
+  // proceed with a filter-only listing instead of short-circuiting.
+  const todoFilterOpts = {
+    tags,
+    excludedTags,
+    allowEmptyQuery: !hasQueryText && hasAnySignal,
+  };
   const [vectorChunks, todos, lexicalChunks, lexicalTodos] = await Promise.all([
-    searchChunks
+    searchChunks && queryEmbedding
       ? findSimilarChunks(deps.db, queryEmbedding, threshold, limit, chunkFilterOpts)
       : Promise.resolve([]),
     // Todos: skipped when the caller restricted to specific content
@@ -155,13 +186,14 @@ async function searchWithTimingsImpl(
     // content_item_id filter by definition) OR when 'todo' is in the
     // exclusion list. Tag + excluded-tag filters are applied IN-DB by
     // findSimilarTodos so todos can co-exist with tag-scoped searches.
-    searchTodos && !excludeTodos && !(contentItemIds && contentItemIds.length > 0)
+    searchTodos && !excludeTodos && !(contentItemIds && contentItemIds.length > 0) && queryEmbedding
       ? findSimilarTodos(deps.db, queryEmbedding, threshold, limit, todoFilterOpts)
           .then((t) => filterTodosByProject(t, projectId))
       : Promise.resolve([]),
     // Lexical chunk seed — third retrieval arm, fused via RRF below.
     // Same filter opts as vector chunks so scope predicates apply
-    // identically. Short queries (<2 chars) return [] from the helper.
+    // identically. Short queries (<2 chars) return [] from the helper
+    // unless filters are present (filter-only listing mode).
     searchChunks
       ? findChunksByLexical(deps.db, query, limit, chunkFilterOpts)
       : Promise.resolve([]),

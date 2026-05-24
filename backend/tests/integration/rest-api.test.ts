@@ -2731,6 +2731,49 @@ describe('Search API', () => {
     expect(lexicalTodoQ!.params[0]).toBe('%do%');
   });
 
+  it('POST /search with empty query + tags filter returns filter-only listing (regression — predicate-only searches showed 0 results)', async () => {
+    // Repro: user typed just `#chore` in the search bar. parseSearchSyntax
+    // strips the predicate, leaving text === ''. Old code fell back to the
+    // raw `#chore` string and embedded it; the helpers also short-circuited
+    // any q < 2 chars to []. Net result: 0 hits even though 4 chore-tagged
+    // items existed. Fix: lexical helpers do filter-only listing when query
+    // is empty but a filter is set; embedding step is skipped.
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      return { rows: [] } as any;
+    });
+    await app.fetch(new Request('http://localhost/api/v1/search', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '', tags: ['chore'], graph: false }),
+    }));
+    // No vector-similarity queries should fire (embedding step skipped).
+    const vectorQ = queries.find((q) => q.sql.includes('embedding <=>'));
+    expect(vectorQ).toBeUndefined();
+    // Lexical chunks query fires with the tag filter, but WITHOUT an ILIKE
+    // predicate (filter-only mode drops it).
+    const lexicalChunkQ = queries.find(
+      (q) => /FROM chunks c/i.test(q.sql) && !q.sql.includes('embedding <=>'),
+    );
+    expect(lexicalChunkQ).toBeDefined();
+    // ILIKE predicate must be absent from the WHERE clause (it stays in
+    // SELECT/ORDER BY as a no-op since $1 is `%%`). Slice WHERE..ORDER BY.
+    const chunkWhere = lexicalChunkQ!.sql.slice(
+      lexicalChunkQ!.sql.indexOf('WHERE'),
+      lexicalChunkQ!.sql.indexOf('ORDER BY'),
+    );
+    expect(chunkWhere).not.toMatch(/ILIKE/i);
+    expect(lexicalChunkQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes('chore'))).toBe(true);
+    // Lexical todos query also fires with the tag filter, no ILIKE.
+    const lexicalTodoQ = queries.find(
+      (q) => /FROM todos\b/i.test(q.sql) && !q.sql.includes('embedding <=>'),
+    );
+    expect(lexicalTodoQ).toBeDefined();
+    expect(lexicalTodoQ!.sql).not.toMatch(/ILIKE/i);
+    expect(lexicalTodoQ!.params.some((p) => Array.isArray(p) && (p as unknown[]).includes('chore'))).toBe(true);
+  });
+
   it('POST /search skips lexical entirely for queries shorter than 2 chars (noise floor)', async () => {
     // A 1-char query like "a" would match ~everything via ILIKE %a%; the
     // helpers short-circuit to [] in that case so they never even fire SQL.
