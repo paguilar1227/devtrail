@@ -16,7 +16,8 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from './Icons';
-import { listProjects, search } from '../lib/api';
+import { search } from '../lib/api';
+import { useProjects } from '../lib/useProjects';
 import { toUiProjects, toUiTodo } from '../lib/view';
 import { cls } from '../lib/util';
 import type { ActionDispatch, Route, Theme } from '../types';
@@ -56,10 +57,7 @@ export function CommandPalette({ onClose, onRoute, onAction, onToggleTheme, them
   const [q, setQ] = useState('');
   const debouncedQ = useDebounced(q.trim(), 180);
 
-  const { data: apiProjects = [] } = useQuery({
-    queryKey: ['projects', 'all'],
-    queryFn: () => listProjects(),
-  });
+  const { data: apiProjects = [] } = useProjects();
   const projects = useMemo(() => toUiProjects(apiProjects), [apiProjects]);
 
   const { data: hits = [] } = useQuery({

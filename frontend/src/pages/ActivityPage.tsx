@@ -4,7 +4,7 @@ import { ActivityRow } from '../components/ActivityRow';
 import { FilterChip } from '../components/primitives';
 import { listActivity, listProjects } from '../lib/api';
 import { toUiActivity } from '../lib/view';
-import { openActivityTarget } from '../lib/openActivity';
+import { openEntity } from '../lib/openEntity';
 import type { ActionDispatch, ActivityEvent, ActivityKind } from '../types';
 
 type FilterKind = 'all' | ActivityKind;
@@ -93,7 +93,7 @@ export function ActivityPage({ onAction }: Props) {
                   key={a.id}
                   activity={a}
                   showEntityKind
-                  onClick={() => openActivityTarget(a, onAction)}
+                  onClick={() => openEntity(a, onAction)}
                 />
               ))}
             </Fragment>

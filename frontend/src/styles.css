@@ -2850,16 +2850,22 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
    is embedded inside another list drawer (DocListDrawer in detail mode).
    Negative margin pulls it tight under the drawer header so it reads as
    part of the chrome, not the body content. */
+/* `reader-back` is the canonical name (shared by doc/note/todo reader
+   surfaces). `.doc-reader-back` kept as an alias for back-compat with
+   any remaining inline usage; safe to drop once nothing references it. */
+.reader-back,
 .doc-reader-back {
   align-self: flex-start;
   margin: -4px 0 4px;
   padding-left: 4px;
 }
 
-/* Doc-reader scroll region — takes remaining height in the drawer-body flex
+/* Reader scroll region — takes remaining height in the drawer-body flex
    column, scrolls internally. Chrome above it (tags, metadata, action chips)
    stays pinned so the Download / Open / Pin actions are always reachable
-   without scrolling back up. */
+   without scrolling back up. Shared by doc + note readers; `.doc-reader-content`
+   kept as alias for back-compat. */
+.reader-content,
 .doc-reader-content {
   flex: 1;
   min-height: 0;

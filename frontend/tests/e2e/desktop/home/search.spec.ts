@@ -279,4 +279,23 @@ test.describe('search: mode switch', () => {
     await expect(dashboard(page)).toBeVisible();
     await expect(page.locator('.home-search-results')).toHaveCount(0);
   });
+
+  test('clicking sidebar Home from a search-active state resets URL + state (regression)', async ({ page }) => {
+    // Repro: a search and a legacy tag-filter are both active in the URL,
+    // user clicks the sidebar Home item expecting a fresh dashboard. Before
+    // the fix, HomePage's internal query state hung on because its useState
+    // initializers only run on mount — clicking Home re-rendered the same
+    // instance with the same state, and URL params lingered.
+    await page.goto('/?q=%23chore&tag=reference');
+    await expect(input(page)).toHaveValue('#chore');
+    await expect(hits(page).first()).toBeVisible({ timeout: 5000 });
+    // Click the sidebar Home item.
+    await page.locator('aside.sidebar .sb-item:has(.label:text-is("Home"))').click();
+    // URL stripped clean.
+    await expect(page).toHaveURL(/\/$/);
+    // Input cleared, dashboard visible, results gone.
+    await expect(input(page)).toHaveValue('');
+    await expect(dashboard(page)).toBeVisible();
+    await expect(page.locator('.home-search-results')).toHaveCount(0);
+  });
 });

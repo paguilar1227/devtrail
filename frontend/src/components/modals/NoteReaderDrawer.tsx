@@ -1,26 +1,21 @@
-// Read-only note surface that mirrors DocReaderBody. Renders inside a
-// drawer (either standalone via NoteReaderDrawer or embedded via
-// NoteListDrawer's inline-detail mode). The "Edit" button opens the full
-// NoteEditorModal — kept separate so the editor's dirty-guard and
-// markdown editor stay contained in their own surface.
-//
-// Why a reader instead of inline editing: parity with DocReaderBody.
-// Clicking a row should not unmount the surrounding list state; once the
-// user actually wants to edit, the modal pops up, and on save the reader
-// refetches and stays inline. Back returns to the list.
-//
-// Download/Open chips use a synthesized same-origin blob: URL built from
-// the note body — same trick DocReaderBody uses for note-as-doc rows.
+// Read-only note surface. Renders inside a drawer (either standalone via
+// NoteReaderDrawer or embedded via NoteListDrawer's inline-detail mode).
+// The "Edit" button opens the full NoteEditorModal — kept separate so the
+// editor's dirty-guard and markdown editor stay contained in their own
+// surface.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Drawer, Status, Tag } from '../primitives';
 import { MarkdownPreview } from '../MarkdownPreview';
+import { ProjectChips } from '../ProjectChips';
+import { ReaderBackButton } from '../ReaderBackButton';
 import { NoteEditorModal } from './NoteEditorModal';
-import { getContent, listProjects, pinContent, unpinContent } from '../../lib/api';
+import { getContent, pinContent, unpinContent } from '../../lib/api';
 import { fmtRel } from '../../lib/util';
 import { toUiNote } from '../../lib/view';
+import { useMarkdownBlobUrl, markdownFilename } from '../../lib/useMarkdownBlobUrl';
 import type { Note, Route } from '../../types';
 
 interface BodyProps {
@@ -39,11 +34,6 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
     queryKey: ['content', note.id, 'full'],
     queryFn: () => getContent(note.id),
   });
-  const projectsQ = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => listProjects(),
-    staleTime: 60_000,
-  });
   const pinMut = useMutation({
     mutationFn: () => (note.pinned ? unpinContent(note.id) : pinContent(note.id)),
     onSuccess: () => {
@@ -56,27 +46,8 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
   // had so the reader renders something while the fetch is in flight.
   const body = item?.content ?? note.body ?? '';
   const hasBody = body.trim().length > 0;
-
-  // Same trick DocReaderBody uses for text-only docs: synthesize a
-  // same-origin blob: URL from the markdown body. Same-origin honors the
-  // HTML `download` attribute directly, so no Content-Disposition SAS
-  // dance needed. Revoke on unmount to avoid the leak.
-  const blobUrl = useMemo(() => {
-    if (!hasBody) return null;
-    return URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }));
-  }, [hasBody, body]);
-  useEffect(() => {
-    if (!blobUrl) return;
-    return () => URL.revokeObjectURL(blobUrl);
-  }, [blobUrl]);
-  const downloadFilename = `${(note.title || 'note').replace(/[/\\?%*:|"<>]/g, '_')}.md`;
-
-  const projectById = new Map((projectsQ.data ?? []).map(p => [p.id, p]));
-  const goToProject = (id: string) => {
-    if (!onRoute) return;
-    onClose();
-    onRoute({ route: 'project', project: id });
-  };
+  const blobUrl = useMarkdownBlobUrl(body);
+  const downloadFilename = markdownFilename(note.title);
 
   // Editor is local state — opening it doesn't unmount the reader, so
   // the reader's scroll position survives a save. Modal close just flips
@@ -89,19 +60,11 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
 
   return (
     <>
-      {onBack ? (
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm doc-reader-back"
-          onClick={onBack}
-        >
-          <Icons.ChevronLeft size={12} /> Back to list
-        </button>
-      ) : null}
+      {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2 chip-row">
         <Status status={note.processing_status} />
         <Tag>note</Tag>
-        {note.tags.map(t => (
+        {note.tags.map((t) => (
           <Tag key={t}>{t}</Tag>
         ))}
       </div>
@@ -113,25 +76,7 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
         {note.project_ids.length > 0 ? (
           <>
             <span className="subtle">projects</span>
-            <span className="row-flex gap-1 meta-projects">
-              {note.project_ids.map(id => {
-                const p = projectById.get(id);
-                const label = p?.name ?? (projectsQ.isLoading ? '…' : id.slice(0, 8));
-                return onRoute ? (
-                  <button
-                    key={id}
-                    type="button"
-                    className="tag tag-link"
-                    onClick={() => goToProject(id)}
-                    title={p ? `Open ${p.name}` : 'Open project'}
-                  >
-                    {label}
-                  </button>
-                ) : (
-                  <Tag key={id}>{label}</Tag>
-                );
-              })}
-            </span>
+            <ProjectChips ids={note.project_ids} onRoute={onRoute} onClose={onClose} />
           </>
         ) : null}
       </div>
@@ -163,7 +108,7 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
         </button>
       </div>
 
-      <div className="doc-reader-content">
+      <div className="reader-content">
         <div className="md-preview md-preview-card">
           {fullQ.isLoading && !hasBody ? (
             <div className="page-subtle">Loading content…</div>

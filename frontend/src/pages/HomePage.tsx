@@ -79,7 +79,7 @@ import {
   updateTodo,
 } from '../lib/api';
 import { toUiActivity, toUiDocument, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
-import { openActivityTarget } from '../lib/openActivity';
+import { openEntity } from '../lib/openEntity';
 import { cls, fmtRel, isOverdue } from '../lib/util';
 import type { ActionDispatch, Route, Todo } from '../types';
 
@@ -705,7 +705,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
           ) : (
             <>
               <div className="subtle results-count">{searchHits.length} results</div>
-              <SearchResultsList hits={searchHits} onOpen={(h) => openActivityTarget(h, onAction)} />
+              <SearchResultsList hits={searchHits} onOpen={(h) => openEntity(h, onAction)} />
             </>
           )}
         </div>
@@ -968,7 +968,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
                 <ActivityRow
                   key={a.id}
                   activity={a}
-                  onClick={() => openActivityTarget(a, onAction)}
+                  onClick={() => openEntity(a, onAction)}
                 />
               ))}
             </div>

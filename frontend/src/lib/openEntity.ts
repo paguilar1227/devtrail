@@ -7,12 +7,12 @@ import { getContent, getTodo } from './api';
 import { toUiDocument, toUiNote, toUiTodo } from './view';
 import type { ActionDispatch, ActivityEntityKind } from '../types';
 
-interface EntityRef {
+export interface EntityRef {
   entity_kind: ActivityEntityKind;
   entity_id: string;
 }
 
-export async function openActivityTarget(ref: EntityRef, onAction: ActionDispatch): Promise<void> {
+export async function openEntity(ref: EntityRef, onAction: ActionDispatch): Promise<void> {
   try {
     if (ref.entity_kind === 'todo') {
       const t = await getTodo(ref.entity_id);

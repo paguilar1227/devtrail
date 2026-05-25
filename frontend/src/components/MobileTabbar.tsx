@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from './Icons';
-import { listProjectCounts, listProjects } from '../lib/api';
+import { listProjectCounts } from '../lib/api';
+import { useProjects } from '../lib/useProjects';
 import { toUiProjects } from '../lib/view';
 import { cls } from '../lib/util';
 import type { ActionDispatch, Route } from '../types';
@@ -21,11 +22,7 @@ export function MobileTabbar({ route, onRoute, onAction }: Props) {
     { id: 'home' as const, label: 'Home', icon: <Icons.Home /> },
     { id: 'projects' as const, label: 'Projects', icon: <Icons.Folders /> },
   ];
-  // Same query keys the rest of the app uses → cache hit, no extra fetch.
-  const { data: apiProjects = [] } = useQuery({
-    queryKey: ['projects', 'all'],
-    queryFn: () => listProjects(),
-  });
+  const { data: apiProjects = [] } = useProjects();
   const { data: counts = [] } = useQuery({
     queryKey: ['project-counts'],
     queryFn: () => listProjectCounts(),

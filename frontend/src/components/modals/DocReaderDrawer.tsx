@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Drawer, Status, Tag } from '../primitives';
 import { MarkdownPreview } from '../MarkdownPreview';
-import { getContent, listProjects, pinContent, unpinContent } from '../../lib/api';
+import { ProjectChips } from '../ProjectChips';
+import { ReaderBackButton } from '../ReaderBackButton';
+import { getContent, pinContent, unpinContent } from '../../lib/api';
 import { cls, fmtRel } from '../../lib/util';
+import { useMarkdownBlobUrl, markdownFilename } from '../../lib/useMarkdownBlobUrl';
 import type { DocumentItem, Route } from '../../types';
 
 // Pick a preview surface from the mime type. The text-only branch covers
@@ -176,13 +179,6 @@ export function DocReaderBody({
     queryKey: ['content', doc.id, 'full'],
     queryFn: () => getContent(doc.id),
   });
-  // Project list is cheap and already cached by the sidebar in most sessions;
-  // we re-use the cache via the same queryKey to avoid a duplicate request.
-  const projectsQ = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => listProjects(),
-    staleTime: 60_000,
-  });
   const pinMut = useMutation({
     mutationFn: () => (doc.pinned ? unpinContent(doc.id) : pinContent(doc.id)),
     onSuccess: () => {
@@ -205,20 +201,10 @@ export function DocReaderBody({
   const mode = previewModeFor(doc.mime, !!previewUrl);
   const hasBody = body.trim().length > 0;
 
-  // Text-only docs (note-as-doc) have no Azure blob — the content lives in the
-  // DB content column. Synthesize a same-origin blob: URL from the markdown
-  // body so Download / Open chips still work. Because blob: URLs are
-  // same-origin, the HTML `download` attribute is honored directly; no SAS
-  // rscd trick needed. Revoke the URL on cleanup to avoid the leak.
-  const isTextWithBody = mode === 'text' && hasBody;
-  const synthesizedTextUrl = useMemo(() => {
-    if (!isTextWithBody) return null;
-    return URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }));
-  }, [isTextWithBody, body]);
-  useEffect(() => {
-    if (!synthesizedTextUrl) return;
-    return () => URL.revokeObjectURL(synthesizedTextUrl);
-  }, [synthesizedTextUrl]);
+  // Text-only docs (note-as-doc) have no Azure blob. Synthesize a
+  // same-origin blob: URL from the markdown body so Download / Open
+  // chips still work. Shared with NoteReaderBody via useMarkdownBlobUrl.
+  const synthesizedTextUrl = useMarkdownBlobUrl(mode === 'text' ? body : null);
 
   // Effective URLs: server-signed for binaries, synthesized blob for text.
   // `downloadIsSynthesized` flips whether the <a> needs the `download` attr —
@@ -227,7 +213,7 @@ export function DocReaderBody({
   const effectiveDownloadUrl = downloadUrl ?? synthesizedTextUrl;
   const effectiveOpenUrl = previewUrl ?? synthesizedTextUrl;
   const downloadIsSynthesized = !downloadUrl && !!synthesizedTextUrl;
-  const synthesizedFilename = `${(doc.title || 'document').replace(/[/\\?%*:|"<>]/g, '_')}.md`;
+  const synthesizedFilename = markdownFilename(doc.title);
 
   const [pdfOpen, setPdfOpen] = useState(false);
   // Same propagation guard as the image lightbox above — keep Esc from
@@ -243,24 +229,9 @@ export function DocReaderBody({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [pdfOpen]);
 
-  const projectById = new Map((projectsQ.data ?? []).map(p => [p.id, p]));
-  const goToProject = (id: string) => {
-    if (!onRoute) return;
-    onClose();
-    onRoute({ route: 'project', project: id });
-  };
-
   return (
     <>
-      {onBack ? (
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm doc-reader-back"
-          onClick={onBack}
-        >
-          <Icons.ChevronLeft size={12} /> Back to list
-        </button>
-      ) : null}
+      {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2 chip-row">
         <Status status={doc.processing_status} error={doc.processing_error} />
         <Tag>{doc.type}</Tag>
@@ -291,26 +262,12 @@ export function DocReaderBody({
             <span className="meta-url">{doc.source_url}</span>
           </>
         ) : null}
-        <span className="subtle">projects</span>
-        <span className="row-flex gap-1 meta-projects">
-          {doc.project_ids.map(id => {
-            const p = projectById.get(id);
-            const label = p?.name ?? (projectsQ.isLoading ? '…' : id.slice(0, 8));
-            return onRoute ? (
-              <button
-                key={id}
-                type="button"
-                className="tag tag-link"
-                onClick={() => goToProject(id)}
-                title={p ? `Open ${p.name}` : 'Open project'}
-              >
-                {label}
-              </button>
-            ) : (
-              <Tag key={id}>{label}</Tag>
-            );
-          })}
-        </span>
+        {doc.project_ids.length > 0 ? (
+          <>
+            <span className="subtle">projects</span>
+            <ProjectChips ids={doc.project_ids} onRoute={onRoute} onClose={onClose} />
+          </>
+        ) : null}
       </div>
 
       <div className="row-flex gap-2 chip-row">
@@ -348,7 +305,7 @@ export function DocReaderBody({
           drawer-body column) and scrolls internally, keeping the chrome
           above (chips, metadata, action buttons) pinned and always reachable
           without scrolling back up. */}
-      <div className="doc-reader-content">
+      <div className="reader-content">
         <DocPreview doc={doc} previewUrl={previewUrl} onExpandPdf={() => setPdfOpen(true)} />
 
         {/* For binary docs the extracted text is supplementary — useful for

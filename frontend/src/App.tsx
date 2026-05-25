@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabbar } from './components/MobileTabbar';
 import { Sidebar } from './components/Sidebar';
@@ -14,7 +13,7 @@ import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
 import { TodoListDrawer } from './components/modals/TodoListDrawer';
 import { UploadModal } from './components/modals/UploadModal';
 import { useIsMobile } from './lib/useIsMobile';
-import { listProjects } from './lib/api';
+import { useProjects } from './lib/useProjects';
 import { cls } from './lib/util';
 import { ActivityPage } from './pages/ActivityPage';
 import { HomePage } from './pages/HomePage';
@@ -77,19 +76,28 @@ export default function App() {
 
   const onAction = useCallback((m: ModalKind) => setModal(m), []);
 
+  // Bumped whenever the user explicitly "goes home" with no search seed
+  // (sidebar Home click, palette Go to Home, etc). Used as a `key` on the
+  // HomePage instance so internal state resets cleanly — useState
+  // initializers re-run, the URL is re-read fresh. Without this, clicking
+  // Home while a search is active leaves the search active because the
+  // existing HomePage instance hangs onto its query state.
+  const [homeNonce, setHomeNonce] = useState(0);
+
   const navigate = useCallback((r: Route) => {
+    if (r.route === 'home' && !r.q && !r.scope) {
+      // "Fresh home" intent — wipe URL view-state (q, scope, tag, mode)
+      // and force a HomePage remount so its internal state matches.
+      window.history.replaceState(null, '', '/');
+      setHomeNonce((n) => n + 1);
+    }
     setRoute(r);
     if (r.route === 'projects' && r.action === 'new') {
       setModal({ kind: 'new-project' });
     }
   }, []);
 
-  // Same query key the sidebar already uses, so we share the cache and
-  // don't double-fetch.
-  const { data: projects = [] } = useQuery({
-    queryKey: ['projects', 'all'],
-    queryFn: () => listProjects(),
-  });
+  const { data: projects = [] } = useProjects();
   const project = route.route === 'project' ? projects.find((p) => p.id === route.project) ?? null : null;
 
   const crumbs: Crumb[] = (() => {
@@ -136,6 +144,7 @@ export default function App() {
         <div className="main-scroll">
           {route.route === 'home' && (
             <HomePage
+              key={homeNonce}
               onRoute={navigate}
               onAction={onAction}
               // q + scope on the home route are the cross-page search
