@@ -52,6 +52,7 @@ import { FilterChip } from '../components/primitives';
 import { search } from '../lib/api';
 import { toUiSearchHit } from '../lib/view';
 import { useDebounced } from '../lib/useDebounced';
+import { useFitCount } from '../lib/useFitCount';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -595,6 +596,15 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   const [todoDraft, setTodoDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
 
+  // Per-column fit counts. Each hook returns [count, refCallback];
+  // the callback is what React's ref system attaches to the
+  // .pcol-rows element. Average row heights are slightly pessimistic
+  // so we show one fewer row rather than clip one. Re-measures on
+  // viewport resize via ResizeObserver inside the hook.
+  const [todoFitCount, todoRowsRef] = useFitCount(72);
+  const [noteFitCount, noteRowsRef] = useFitCount(56);
+  const [docFitCount, docRowsRef] = useFitCount(56);
+
   if (error) {
     return (
       <div className="page">
@@ -645,6 +655,16 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
                 const raw = (notesQ.data ?? []).find((n) => n.id === target.id);
                 if (raw && raw.type === 'note') onAction({ kind: 'note-edit', payload: toUiNote(raw) });
               }
+            }}
+            // ArrowDown from the input descends focus into the first
+            // search hit — so the flow is: type → ↓ → ↓ → Enter without
+            // ever touching Tab. The results region defines its own
+            // ↑/↓/Enter handler from there (see SearchResultsList).
+            onArrowDownExit={() => {
+              const first = document.querySelector<HTMLButtonElement>(
+                '.home-search-results .search-hit-title',
+              );
+              first?.focus();
             }}
             placeholder="Search… try #tag, in:todo, or @docname"
           />
@@ -780,16 +800,16 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               disabled={todoCreate.isPending}
             />
           </div>
-          {filteredTodos.length === 0 ? (
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="todos" filter={tagFilter} />
+          <div className="pcol-rows" ref={todoRowsRef}>
+            {filteredTodos.length === 0 ? (
+              tagFilter.tags.length > 0 ? (
+                <FilterEmpty entity="todos" filter={tagFilter} />
+              ) : (
+                <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+              )
             ) : (
-              <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
-            )
-          ) : (
-            <>
               <SortableTodoList
-                rows={filteredTodos.slice(0, 6)}
+                rows={filteredTodos.slice(0, todoFitCount)}
                 allRows={filteredTodos}
                 isExpanded={isExpanded}
                 onToggleExpand={toggleExpand}
@@ -801,17 +821,17 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
                   })
                 }
               />
-              {filteredTodos.length > 6 ? (
-                <button
-                  className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-todos', tagFilter })}
-                >
-                  View {filteredTodos.length - 6} more
-                  <Icons.ChevronRight size={11} />
-                </button>
-              ) : null}
-            </>
-          )}
+            )}
+          </div>
+          {filteredTodos.length > todoFitCount ? (
+            <button
+              className="pcol-more"
+              onClick={() => onAction({ kind: 'personal-todos', tagFilter })}
+            >
+              View {filteredTodos.length - todoFitCount} more
+              <Icons.ChevronRight size={11} />
+            </button>
+          ) : null}
         </div>
 
         <div className="pcol" data-pcol="notes">
@@ -836,32 +856,32 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               disabled={noteCreate.isPending}
             />
           </div>
-          {filteredNotes.length === 0 ? (
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="notes" filter={tagFilter} />
+          <div className="pcol-rows" ref={noteRowsRef}>
+            {filteredNotes.length === 0 ? (
+              tagFilter.tags.length > 0 ? (
+                <FilterEmpty entity="notes" filter={tagFilter} />
+              ) : (
+                <div className="pcol-empty">No personal notes — capture above.</div>
+              )
             ) : (
-              <div className="pcol-empty">No personal notes — capture above.</div>
-            )
-          ) : (
-            <>
-              {filteredNotes.slice(0, 6).map((n) => (
+              filteredNotes.slice(0, noteFitCount).map((n) => (
                 <NoteRow
                   key={n.id}
                   note={toUiNote(n)}
                   onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
                 />
-              ))}
-              {filteredNotes.length > 6 ? (
-                <button
-                  className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-notes', tagFilter })}
-                >
-                  View {filteredNotes.length - 6} more
-                  <Icons.ChevronRight size={11} />
-                </button>
-              ) : null}
-            </>
-          )}
+              ))
+            )}
+          </div>
+          {filteredNotes.length > noteFitCount ? (
+            <button
+              className="pcol-more"
+              onClick={() => onAction({ kind: 'personal-notes', tagFilter })}
+            >
+              View {filteredNotes.length - noteFitCount} more
+              <Icons.ChevronRight size={11} />
+            </button>
+          ) : null}
         </div>
 
         <div className="pcol" data-pcol="documents">
@@ -870,32 +890,32 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
             count={filteredDocs.length}
             sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
           />
-          {filteredDocs.length === 0 ? (
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="documents" filter={tagFilter} />
+          <div className="pcol-rows" ref={docRowsRef}>
+            {filteredDocs.length === 0 ? (
+              tagFilter.tags.length > 0 ? (
+                <FilterEmpty entity="documents" filter={tagFilter} />
+              ) : (
+                <div className="pcol-empty">No personal documents — upload or save from URL.</div>
+              )
             ) : (
-              <div className="pcol-empty">No personal documents — upload or save from URL.</div>
-            )
-          ) : (
-            <>
-              {filteredDocs.slice(0, 6).map((d) => (
+              filteredDocs.slice(0, docFitCount).map((d) => (
                 <DocRow
                   key={d.id}
                   doc={d}
                   onClick={() => onAction({ kind: 'doc-read', payload: d })}
                 />
-              ))}
-              {filteredDocs.length > 6 ? (
-                <button
-                  className="pcol-more"
-                  onClick={() => onAction({ kind: 'personal-docs', tagFilter })}
-                >
-                  View {filteredDocs.length - 6} more
-                  <Icons.ChevronRight size={11} />
-                </button>
-              ) : null}
-            </>
-          )}
+              ))
+            )}
+          </div>
+          {filteredDocs.length > docFitCount ? (
+            <button
+              className="pcol-more"
+              onClick={() => onAction({ kind: 'personal-docs', tagFilter })}
+            >
+              View {filteredDocs.length - docFitCount} more
+              <Icons.ChevronRight size={11} />
+            </button>
+          ) : null}
         </div>
       </div>
 

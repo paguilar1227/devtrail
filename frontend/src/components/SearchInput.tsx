@@ -61,6 +61,10 @@ interface Props {
   projects?: ProjectSuggestion[];
   /** Called when user picks a mention from typeahead — host navigates. */
   onMentionSelect?: (target: MentionTarget) => void;
+  /** Called when the user presses ArrowDown while the typeahead popover is
+   *  NOT open. Host uses this to descend focus into a results list (so the
+   *  flow is: type → ↓ → ↓ → Enter without ever touching Tab). */
+  onArrowDownExit?: () => void;
   placeholder?: string;
 }
 
@@ -118,6 +122,7 @@ export function SearchInput({
   mentions,
   projects = [],
   onMentionSelect,
+  onArrowDownExit,
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -235,6 +240,14 @@ export function SearchInput({
     }
     if (e.key === 'Enter') {
       onSubmit();
+      return;
+    }
+    // No popover open + ArrowDown → hand focus off to the results list
+    // (host wires this to focus the first search hit). Lets users go from
+    // typing straight into list navigation without Tabbing.
+    if (e.key === 'ArrowDown' && onArrowDownExit) {
+      e.preventDefault();
+      onArrowDownExit();
     }
   };
 

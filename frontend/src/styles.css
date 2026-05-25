@@ -822,17 +822,46 @@ input, textarea { font-size: inherit; color: inherit; }
 .search-hits { display: flex; flex-direction: column; gap: 8px; }
 /* Card-level click target. The whole row is hit-testable; the title is
    a real <button> for keyboard access. Excerpt text is still
-   selectable — the click handler bails when a selection exists. */
-.search-hit { grid-template-columns: 32px 1fr; cursor: pointer; }
+   selectable — the click handler bails when a selection exists. The
+   third grid column is reserved for the chevron affordance. */
+.search-hit {
+  grid-template-columns: 32px 1fr 22px;
+  cursor: pointer;
+  position: relative;
+}
+/* Keyboard-focus inside a card (e.g. title button) lifts the chevron
+   so users see the next/Enter target. */
+.search-hit:focus-within { border-color: var(--glass-border-strong); background: var(--glass-bg-strong); }
 .search-hit-head { align-items: center; }
 .search-hit-title {
   font-size: var(--type-h); font-weight: 600;
   background: none; border: 0; padding: 0;
   color: inherit; font: inherit; font-weight: 600;
   text-align: left; cursor: pointer;
+  /* Always-on subtle underline cues "this is a link" without waiting
+     for hover. Stronger on hover. */
+  text-decoration: underline;
+  text-decoration-color: var(--fg-subtle);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
-.search-hit-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.search-hit-title:hover { text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
 .search-hit-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+/* Chevron sits in the third grid column. Subtle by default, accent on
+   hover or keyboard focus inside — signals "this card opens". */
+.search-hit-chevron {
+  align-self: center;
+  color: var(--fg-subtle);
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s, transform 0.12s;
+  pointer-events: none;
+}
+.search-hit:hover .search-hit-chevron,
+.search-hit:focus-within .search-hit-chevron {
+  opacity: 1;
+  color: var(--accent);
+  transform: translateX(2px);
+}
 .search-hit-project { font-size: var(--type-meta); }
 .search-hit-excerpt {
   font-size: var(--type-meta); line-height: 1.55;
@@ -2276,8 +2305,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .home-personal-grid {
   display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
   margin-bottom: 24px;
+  /* Stretch columns to fill a viewport-relative band so the rows
+     widget shows as many items as fit. Floor keeps small viewports
+     usable (~4-5 rows visible); clamp caps so the Overview/Activity
+     widgets below stay in view without a full page-scroll. */
+  align-items: stretch;
+  min-height: clamp(360px, 60vh, 720px);
 }
-.app[data-mobile="true"] .home-personal-grid { grid-template-columns: 1fr; }
+.app[data-mobile="true"] .home-personal-grid { grid-template-columns: 1fr; min-height: 0; }
 .pcol {
   border: 0.5px solid var(--hairline); border-radius: 14px;
   background: var(--glass-bg);
@@ -2288,6 +2323,16 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
      when one has heavier rows (todos with subtasks / due chips)
      than the other (plain notes). */
   display: flex; flex-direction: column;
+}
+/* Wrapper around the row stack inside each column. flex:1 so it
+   absorbs remaining vertical space; overflow:hidden so a brief
+   measurement-mismatch can't leak a clipped row past the bottom edge
+   while the fit-count hook recomputes on resize. */
+.pcol-rows {
+  flex: 1;
+  min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
 .pcol .pcol-h {
   display: flex; align-items: center; gap: 8px;

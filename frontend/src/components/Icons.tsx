@@ -116,7 +116,11 @@ export const Icons = {
     <path d="M3.5 6V3.5H6M10 3.5h2.5V6M12.5 10v2.5H10M6 12.5H3.5V10" />,
   ),
   Compact: make(
-    <path d="M6 3.5V6H3.5M10 6V3.5h2.5M10 12.5V10h2.5M3.5 10H6v2.5" />,
+    // Four brackets each pointing INWARD from a viewBox corner — the
+    // visual inverse of Expand. Elbows inset 2.5 units from each edge.
+    // Previously the top-right segment had its elbow on the corner
+    // instead of inset, making the icon look lopsided.
+    <path d="M6 3.5V6H3.5M12.5 6H10V3.5M12.5 10H10V12.5M3.5 10H6v2.5" />,
   ),
   Globe: make(
     <>
