@@ -280,6 +280,35 @@ test.describe('search: mode switch', () => {
     await expect(page.locator('.home-search-results')).toHaveCount(0);
   });
 
+  test('dashboard scope toggle updates section heading, tag chip row, and widget data (regression)', async ({ page }) => {
+    // Repro: the scope toggle was wired to search-mode only; the dashboard
+    // (heading + tag chip strip + column widgets) ignored it because their
+    // queries were hard-keyed to ['tags', 'home', 'personal'] etc. Toggle
+    // now propagates everywhere — verify each surface.
+    await expect(page.locator('.home-personal-h h2')).toHaveText('Personal');
+    const personalTags = await page.locator('.home-tag-filter .filter-chip, .home-tag-filter button').allTextContents();
+    expect(personalTags.length).toBeGreaterThan(0);
+
+    // Click "All projects" in the small dashboard scope toggle.
+    await page.locator('.home-scope-toggle button', { hasText: 'All projects' }).click();
+
+    // Heading flips.
+    await expect(page.locator('.home-personal-h h2')).toHaveText('All projects');
+    // Tag chip row refetched: different set OR different counts.
+    await page.waitForFunction(
+      (prev) => {
+        const cur = Array.from(document.querySelectorAll('.home-tag-filter .filter-chip, .home-tag-filter button')).map((el) => el.textContent);
+        return JSON.stringify(cur) !== JSON.stringify(prev);
+      },
+      personalTags,
+      { timeout: 3000 },
+    );
+
+    // Flip back to Personal — heading reverts.
+    await page.locator('.home-scope-toggle button', { hasText: 'Personal' }).click();
+    await expect(page.locator('.home-personal-h h2')).toHaveText('Personal');
+  });
+
   test('clicking sidebar Home from a search-active state resets URL + state (regression)', async ({ page }) => {
     // Repro: a search and a legacy tag-filter are both active in the URL,
     // user clicks the sidebar Home item expecting a fresh dashboard. Before

@@ -99,11 +99,43 @@ interface Props {
 // trinary on the wire ('null' for personal, UUID for project, omit for all).
 type SearchScope = 'personal' | 'all' | string;
 
+// Convert the SearchScope union (used by both the search bar and the
+// dashboard scope toggle) into the trinary `project_id` arg the REST
+// list/content/todo endpoints accept:
+//   'personal' → 'null'    (server-side filter for rows with no project)
+//   'all'      → undefined (no filter — global)
+//   <uuid>     → uuid       (specific project)
+function scopeToProjectId(scope: SearchScope): 'null' | string | undefined {
+  if (scope === 'personal') return 'null';
+  if (scope === 'all') return undefined;
+  return scope;
+}
+
+// listTags speaks a slightly different dialect: it takes either a
+// `scope: 'personal' | 'all'` flag or a `project_id` UUID — never both.
+function scopeToTagsArg(scope: SearchScope): { scope: 'personal' | 'all' } | { project_id: string } {
+  if (scope === 'personal' || scope === 'all') return { scope };
+  return { project_id: scope };
+}
+
 export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   const qc = useQueryClient();
   // Filter the Activity widget by kind. 'all' is the passthrough.
   // Keyed in the query cache so React Query refetches on flip.
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
+
+  // Scope (Personal / All projects / specific project UUID) governs the
+  // whole dashboard view — the 3 column widgets, the tag chip row, AND
+  // the universal search. Hoisted up here (before the useQueries call)
+  // so the personal-section queries can be keyed on it. URL-seeded so
+  // bookmarks / deep-links replay the user's chosen scope.
+  const [scope, setScope] = useState<SearchScope>(() => {
+    if (initialSearch?.scope) return initialSearch.scope;
+    if (typeof window === 'undefined') return 'personal';
+    const urlScope = new URLSearchParams(window.location.search).get('scope');
+    return urlScope ?? 'personal';
+  });
+  const scopeProjectId = scopeToProjectId(scope);
 
   // Tag filter — URL-backed (?tag=foo,bar&mode=and). Synchronous init from
   // location.search so the first paint reflects the URL with no flicker.
@@ -154,13 +186,12 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
       { queryKey: ['stats'], queryFn: () => getStats() },
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
       { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
-      { queryKey: ['todos', 'inbox'], queryFn: () => listTodos({ project_id: 'null' }) },
-      // Backend filter: project_id='null' = rows with no project
-      // membership. Server-side keeps Home fast as the corpus grows
-      // instead of relying on a client-side filter over every note.
-      { queryKey: ['content', 'notes', 'personal'], queryFn: () => listContent({ type: 'note', project_id: 'null' }) },
-      // Personal documents — same server-side filter pattern, type=document.
-      { queryKey: ['content', 'documents', 'personal'], queryFn: () => listContent({ type: 'document', project_id: 'null' }) },
+      // Column data: todos / notes / docs scoped by the dashboard's
+      // scope toggle. Cache key includes `scope` so flipping the toggle
+      // hits a different cache slot and refetches the right data.
+      { queryKey: ['todos', 'home', scope], queryFn: () => listTodos(scopeProjectId === undefined ? {} : { project_id: scopeProjectId }) },
+      { queryKey: ['content', 'notes', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'note' } : { type: 'note', project_id: scopeProjectId }) },
+      { queryKey: ['content', 'documents', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'document' } : { type: 'document', project_id: scopeProjectId }) },
       {
         queryKey: ['activity', 'recent', activityFilter],
         queryFn: () =>
@@ -169,11 +200,9 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
             ...(activityFilter === 'all' ? {} : { kinds: activityFilter }),
           }),
       },
-      // Top tags drive the dashboard "what am I working on" strip.
-      // Defaults to personal scope (tags on items with no project
-      // membership) so the home dashboard reflects the user's private
-      // workspace — the project pages have their own scoped strips.
-      { queryKey: ['tags', 'home', 'personal'], queryFn: () => listTags({ scope: 'personal' }) },
+      // Top tags strip reflects whichever scope the dashboard is on so
+      // counts + which tags appear match the widgets below.
+      { queryKey: ['tags', 'home', scope], queryFn: () => listTags(scopeToTagsArg(scope)) },
     ],
   });
   const [statsQ, projectsQ, countsQ, todosQ, notesQ, docsQ, activityQ, tagsQ] = queries;
@@ -188,6 +217,23 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
     [projectsRaw, countsQ.data],
   );
   const pinned = projects.filter((p) => p.pinned && p.status === 'active');
+
+  // Section heading + subtitle reflect whatever scope the dashboard is
+  // on. Project scope resolves the UUID to the project name (falls back
+  // to a short id while the projects list is still loading).
+  const scopeHeading = useMemo<{ title: string; subtitle: string }>(() => {
+    if (scope === 'personal') {
+      return { title: 'Personal', subtitle: 'project-less todos, notes, and documents' };
+    }
+    if (scope === 'all') {
+      return { title: 'All projects', subtitle: 'every todo, note, and document across the workspace' };
+    }
+    const p = projectsById.get(scope);
+    return {
+      title: p?.name ?? '…',
+      subtitle: p ? `todos, notes, and documents in ${p.name}` : 'loading project…',
+    };
+  }, [scope, projectsById]);
   // Widget caps at depth=1 — anything deeper rolls up into a "+N deeper"
   // hint on the deepest visible row. Drawer (TodoListDrawer) gets the
   // full tree. Both surfaces honor the same per-parent expansion state.
@@ -359,15 +405,9 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
     const urlFilter = parseTagFilter(params);
     return urlFilter.tags.map((t) => `#${t}`).join(' ');
   });
-  // Scope can now be a project UUID too (matches what the SearchDrawer
-  // used to support). Personal is default — most home use is private.
-  // Initial resolution: initialSearch → URL ?scope= → 'personal'.
-  const [scope, setScope] = useState<SearchScope>(() => {
-    if (initialSearch?.scope) return initialSearch.scope;
-    if (typeof window === 'undefined') return 'personal';
-    const urlScope = new URLSearchParams(window.location.search).get('scope');
-    return urlScope ?? 'personal';
-  });
+  // (scope state hoisted to top of component so the dashboard widget
+  // queries can be keyed on it — see scopeToProjectId / scopeToTagsArg
+  // helpers + the useQueries call above.)
 
   // URL sync: any change to query or scope writes ?q= / ?scope= via
   // replaceState (no history pollution; back button still works because
@@ -713,8 +753,8 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
 
       {!searchActive ? (<>
       <div className="home-personal-h">
-        <h2>Personal</h2>
-        <span className="sub">project-less todos, notes, and documents</span>
+        <h2>{scopeHeading.title}</h2>
+        <span className="sub">{scopeHeading.subtitle}</span>
       </div>
 
       <div className="home-personal-grid">
