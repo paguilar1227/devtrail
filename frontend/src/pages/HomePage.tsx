@@ -28,7 +28,7 @@ import { sortPersonalTodos } from '../lib/todoSort';
 import { useTodoSortMode } from '../lib/useTodoSortMode';
 import { useNoteSortMode, compareNotesForMode } from '../lib/useNoteSortMode';
 import { NoteSortDropdown, SortDropdown, TodoSortDropdown } from '../components/SortDropdown';
-import { PersonalColumnHeader } from '../components/PersonalColumnHeader';
+import { ColumnWidget } from '../components/ColumnWidget';
 import { FilterEmpty, HomeTagFilter } from '../components/HomeTagFilter';
 import {
   EMPTY_FILTER,
@@ -52,7 +52,6 @@ import { FilterChip } from '../components/primitives';
 import { search } from '../lib/api';
 import { toUiSearchHit } from '../lib/view';
 import { useDebounced } from '../lib/useDebounced';
-import { useFitCount } from '../lib/useFitCount';
 
 // Activity widget filter — maps to the backend `kinds` query param.
 // 'all' is the unfiltered passthrough; the other three match the
@@ -596,14 +595,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   const [todoDraft, setTodoDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
 
-  // Per-column fit counts. Each hook returns [count, refCallback];
-  // the callback is what React's ref system attaches to the
-  // .pcol-rows element. Average row heights are slightly pessimistic
-  // so we show one fewer row rather than clip one. Re-measures on
-  // viewport resize via ResizeObserver inside the hook.
-  const [todoFitCount, todoRowsRef] = useFitCount(72);
-  const [noteFitCount, noteRowsRef] = useFitCount(56);
-  const [docFitCount, docRowsRef] = useFitCount(56);
+  // Fit count + ResizeObserver wiring now lives inside <ColumnWidget>.
 
   if (error) {
     return (
@@ -778,13 +770,12 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
       </div>
 
       <div className="home-personal-grid">
-        <div className="pcol" data-pcol="todos">
-          <PersonalColumnHeader
-            title="Todos"
-            count={filteredTodos.length}
-            sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
-          />
-          <div className="pcol-add">
+        <ColumnWidget
+          id="todos"
+          title="Todos"
+          count={filteredTodos.length}
+          sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
+          quickAdd={
             <input
               placeholder="+ New todo (no project) — press Enter to add"
               value={todoDraft}
@@ -799,48 +790,41 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               }}
               disabled={todoCreate.isPending}
             />
-          </div>
-          <div className="pcol-rows" ref={todoRowsRef}>
-            {filteredTodos.length === 0 ? (
-              tagFilter.tags.length > 0 ? (
-                <FilterEmpty entity="todos" filter={tagFilter} />
-              ) : (
-                <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
-              )
+          }
+          rowPx={72}
+          isEmpty={filteredTodos.length === 0}
+          empty={
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="todos" filter={tagFilter} />
             ) : (
-              <SortableTodoList
-                rows={filteredTodos.slice(0, todoFitCount)}
-                allRows={filteredTodos}
-                isExpanded={isExpanded}
-                onToggleExpand={toggleExpand}
-                onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
-                onToggleDone={(t) =>
-                  todoToggle.mutate({
-                    id: t.id,
-                    status: t.status === 'done' ? 'not_started' : 'done',
-                  })
-                }
-              />
-            )}
-          </div>
-          {filteredTodos.length > todoFitCount ? (
-            <button
-              className="pcol-more"
-              onClick={() => onAction({ kind: 'personal-todos', tagFilter })}
-            >
-              View {filteredTodos.length - todoFitCount} more
-              <Icons.ChevronRight size={11} />
-            </button>
-          ) : null}
-        </div>
+              <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
+            )
+          }
+          renderRows={(fit) => (
+            <SortableTodoList
+              rows={filteredTodos.slice(0, fit)}
+              allRows={filteredTodos}
+              isExpanded={isExpanded}
+              onToggleExpand={toggleExpand}
+              onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
+              onToggleDone={(t) =>
+                todoToggle.mutate({
+                  id: t.id,
+                  status: t.status === 'done' ? 'not_started' : 'done',
+                })
+              }
+            />
+          )}
+          totalRows={filteredTodos.length}
+          onMore={() => onAction({ kind: 'personal-todos', tagFilter })}
+        />
 
-        <div className="pcol" data-pcol="notes">
-          <PersonalColumnHeader
-            title="Notes"
-            count={filteredNotes.length}
-            sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
-          />
-          <div className="pcol-add">
+        <ColumnWidget
+          id="notes"
+          title="Notes"
+          count={filteredNotes.length}
+          sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
+          quickAdd={
             <input
               placeholder="+ Quick note — press Enter to capture"
               value={noteDraft}
@@ -855,68 +839,55 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               }}
               disabled={noteCreate.isPending}
             />
-          </div>
-          <div className="pcol-rows" ref={noteRowsRef}>
-            {filteredNotes.length === 0 ? (
-              tagFilter.tags.length > 0 ? (
-                <FilterEmpty entity="notes" filter={tagFilter} />
-              ) : (
-                <div className="pcol-empty">No personal notes — capture above.</div>
-              )
+          }
+          rowPx={56}
+          isEmpty={filteredNotes.length === 0}
+          empty={
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="notes" filter={tagFilter} />
             ) : (
-              filteredNotes.slice(0, noteFitCount).map((n) => (
-                <NoteRow
-                  key={n.id}
-                  note={toUiNote(n)}
-                  onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
-                />
-              ))
-            )}
-          </div>
-          {filteredNotes.length > noteFitCount ? (
-            <button
-              className="pcol-more"
-              onClick={() => onAction({ kind: 'personal-notes', tagFilter })}
-            >
-              View {filteredNotes.length - noteFitCount} more
-              <Icons.ChevronRight size={11} />
-            </button>
-          ) : null}
-        </div>
+              <div className="pcol-empty">No personal notes — capture above.</div>
+            )
+          }
+          renderRows={(fit) =>
+            filteredNotes.slice(0, fit).map((n) => (
+              <NoteRow
+                key={n.id}
+                note={toUiNote(n)}
+                onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
+              />
+            ))
+          }
+          totalRows={filteredNotes.length}
+          onMore={() => onAction({ kind: 'personal-notes', tagFilter })}
+        />
 
-        <div className="pcol" data-pcol="documents">
-          <PersonalColumnHeader
-            title="Documents"
-            count={filteredDocs.length}
-            sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
-          />
-          <div className="pcol-rows" ref={docRowsRef}>
-            {filteredDocs.length === 0 ? (
-              tagFilter.tags.length > 0 ? (
-                <FilterEmpty entity="documents" filter={tagFilter} />
-              ) : (
-                <div className="pcol-empty">No personal documents — upload or save from URL.</div>
-              )
+        <ColumnWidget
+          id="documents"
+          title="Documents"
+          count={filteredDocs.length}
+          sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
+          rowPx={56}
+          isEmpty={filteredDocs.length === 0}
+          empty={
+            tagFilter.tags.length > 0 ? (
+              <FilterEmpty entity="documents" filter={tagFilter} />
             ) : (
-              filteredDocs.slice(0, docFitCount).map((d) => (
-                <DocRow
-                  key={d.id}
-                  doc={d}
-                  onClick={() => onAction({ kind: 'doc-read', payload: d })}
-                />
-              ))
-            )}
-          </div>
-          {filteredDocs.length > docFitCount ? (
-            <button
-              className="pcol-more"
-              onClick={() => onAction({ kind: 'personal-docs', tagFilter })}
-            >
-              View {filteredDocs.length - docFitCount} more
-              <Icons.ChevronRight size={11} />
-            </button>
-          ) : null}
-        </div>
+              <div className="pcol-empty">No personal documents — upload or save from URL.</div>
+            )
+          }
+          renderRows={(fit) =>
+            filteredDocs.slice(0, fit).map((d) => (
+              <DocRow
+                key={d.id}
+                doc={d}
+                onClick={() => onAction({ kind: 'doc-read', payload: d })}
+              />
+            ))
+          }
+          totalRows={filteredDocs.length}
+          onMore={() => onAction({ kind: 'personal-docs', tagFilter })}
+        />
       </div>
 
       <div className="home-top-row">
