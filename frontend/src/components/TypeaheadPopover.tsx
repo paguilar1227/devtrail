@@ -91,7 +91,12 @@ export function TypeaheadPopover({
             }}
             onMouseEnter={() => onHover(i)}
           >
-            {item.icon ? <span className="typeahead-icon" aria-hidden>{item.icon}</span> : null}
+            {/* Always render the icon slot so the grid's first column
+                isn't filled by the label (which would overflow 18px
+                and overlap the sublabel). Empty placeholder when no
+                icon — costs 18px but keeps layout consistent across
+                rows with and without icons. */}
+            <span className="typeahead-icon" aria-hidden>{item.icon ?? null}</span>
             <span className="typeahead-label">{item.label}</span>
             {item.sublabel ? <span className="typeahead-sublabel">{item.sublabel}</span> : null}
           </button>
