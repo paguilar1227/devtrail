@@ -259,7 +259,17 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
                 setActiveIndex(0);
               }}
               onKeyDown={onTagKeyDown}
-              onBlur={() => { if (!tagDraft.trim()) setEditingTag(false); }}
+              // On blur: commit any typed-but-uncommitted draft AND
+              // close the input. Without the commit we'd silently drop
+              // what the user typed; without the close the input lingers
+              // visually even after focus moved elsewhere. The popover's
+              // onMouseDown preventDefault keeps focus on the input
+              // when selecting suggestions, so this only fires on a
+              // genuine click-away.
+              onBlur={() => {
+                if (tagDraft.trim()) addTag(tagDraft);
+                setEditingTag(false);
+              }}
               autoComplete="off"
               spellCheck={false}
               role="combobox"
