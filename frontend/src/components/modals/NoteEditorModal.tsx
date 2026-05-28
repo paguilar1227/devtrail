@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Status, Tag } from '../primitives';
 import { MarkdownEditor } from '../MarkdownEditor';
-import { createNote, editContentBody, updateContent } from '../../lib/api';
+import { TypeaheadPopover, type TypeaheadItem } from '../TypeaheadPopover';
+import { createNote, editContentBody, listTags, updateContent } from '../../lib/api';
 import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import { fmtRel } from '../../lib/util';
 import type { Note } from '../../types';
@@ -17,6 +18,17 @@ interface Props {
   onClose: () => void;
 }
 
+// Resolve the tag-suggestion scope for the note being edited. Single
+// project membership → scope to that project. Empty membership →
+// personal. Multi-project → fall back to global (no filter) since
+// neither single-project nor personal applies.
+function tagsScopeFor(note: Note | null, defaultProjectId?: string): { project_id: string } | { scope: 'personal' | 'all' } {
+  const ids = note?.project_ids ?? (defaultProjectId ? [defaultProjectId] : []);
+  if (ids.length === 1) return { project_id: ids[0] };
+  if (ids.length === 0) return { scope: 'personal' };
+  return { scope: 'all' };
+}
+
 export function NoteEditorModal({ note, projectId, onClose }: Props) {
   const isNew = !note;
   const [body, setBody] = useState(note?.body ?? NEW_NOTE_BODY_PLACEHOLDER);
@@ -27,21 +39,35 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
 
+  // Scope-aware tag suggestions for the typeahead. Same source-of-
+  // truth listTags endpoint the home page uses, scoped to wherever
+  // the note lives so the user sees relevant tags first.
+  const tagsScope = useMemo(() => tagsScopeFor(note, projectId), [note, projectId]);
+  const tagsQ = useQuery({
+    queryKey: ['tags', 'note-editor', JSON.stringify(tagsScope)],
+    queryFn: () => listTags(tagsScope),
+    staleTime: 60_000,
+  });
+
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
     qc.invalidateQueries({ queryKey: ['project-counts'] });
     qc.invalidateQueries({ queryKey: ['stats'] });
     qc.invalidateQueries({ queryKey: ['activity'] });
+    qc.invalidateQueries({ queryKey: ['tags'] });
   };
 
+  // Both mutations take the final tag list as an arg (not from closure)
+  // so a draft committed in save() is reflected even though setTags is
+  // async and the mutationFn captures the previous render's state.
   const createMut = useMutation({
-    mutationFn: () =>
+    mutationFn: (finalTags: string[]) =>
       createNote({
         type: 'note',
         title: title.trim() || 'Untitled note',
         content: body,
         project_ids: projectId ? [projectId] : [],
-        tags,
+        tags: finalTags,
       }),
     onSuccess: () => { invalidateAll(); onClose(); },
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
@@ -50,20 +76,19 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
   // Edit splits into two backend calls: metadata (PUT) for title/tags
   // and edit-body (async, 202 ack) when the body actually changed. We
   // gate each call on a real diff so we don't pay the re-chunk cost on
-  // a tag-only tweak. Both are awaited before the modal closes so the
-  // user sees the metadata update reflected on first refetch.
+  // a tag-only tweak.
   const editMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (finalTags: string[]) => {
       if (!note) return;
       const cleanTitle = title.trim() || 'Untitled note';
       const titleChanged = cleanTitle !== note.title;
-      const tagsChanged = JSON.stringify(tags) !== JSON.stringify(note.tags ?? []);
+      const tagsChanged = JSON.stringify(finalTags) !== JSON.stringify(note.tags ?? []);
       const bodyChanged = body !== note.body;
 
       if (titleChanged || tagsChanged) {
         await updateContent(note.id, {
           ...(titleChanged ? { title: cleanTitle } : {}),
-          ...(tagsChanged ? { tags } : {}),
+          ...(tagsChanged ? { tags: finalTags } : {}),
         });
       }
       if (bodyChanged) {
@@ -79,24 +104,103 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
   // Dirty = user has actually edited something compared to the initial
   // state. For a new note that means stepping away from the placeholder
   // defaults; for an existing note it means any field differs from the
-  // server's copy. We compare tag arrays by stringify since order is
-  // user-controlled and meaningful.
+  // server's copy. Pending tag draft also counts as dirty so Cancel
+  // doesn't quietly lose it.
   const cleanTitle = title.trim() || NEW_NOTE_TITLE_PLACEHOLDER;
+  const draftIsNovel = tagDraft.trim().length > 0 && !tags.includes(tagDraft.trim().toLowerCase());
   const isDirty = isNew
     ? (
         body !== NEW_NOTE_BODY_PLACEHOLDER ||
         cleanTitle !== NEW_NOTE_TITLE_PLACEHOLDER ||
-        tags.length > 0
+        tags.length > 0 ||
+        draftIsNovel
       )
     : (
         body !== note!.body ||
         cleanTitle !== note!.title ||
-        JSON.stringify(tags) !== JSON.stringify(note!.tags ?? [])
+        JSON.stringify(tags) !== JSON.stringify(note!.tags ?? []) ||
+        draftIsNovel
       );
 
-  // Backdrop / Escape / Cancel route through here. Save-success paths
-  // call `onClose` directly so they bypass the gate.
   const tryClose = useDirtyCloseGuard(isDirty, onClose, pending);
+
+  // Compute the final tag list including any uncommitted draft. Used
+  // by both save() and the typeahead's selection logic. Centralized
+  // so the "you can click Save without pressing Enter and it still
+  // saves your typed tag" promise is consistent.
+  const commitDraftInto = (current: string[]): string[] => {
+    const t = tagDraft.trim().toLowerCase();
+    if (!t || current.includes(t)) return current;
+    return [...current, t];
+  };
+
+  const addTag = (tagName: string) => {
+    const t = tagName.trim().toLowerCase();
+    if (!t || tags.includes(t)) return;
+    setTags([...tags, t]);
+    setTagDraft('');
+    setActiveIndex(0);
+    // Leave editingTag=true so the user can chain-add another tag
+    // without re-clicking Add. Escape / blur (with empty draft) closes.
+  };
+
+  // Typeahead state — popover open while the user is editing a tag
+  // and there's something to suggest. Caller selects with ↓↑ + Enter
+  // (parent-owned cursor pattern, same as SearchInput).
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  // Filtered suggestion items: scope-tagged tags that aren't already
+  // applied, matching the current draft as a prefix or substring.
+  // Top 8 by usage count.
+  const tagItems = useMemo<TypeaheadItem[]>(() => {
+    const prefix = tagDraft.trim().toLowerCase();
+    const applied = new Set(tags.map((t) => t.toLowerCase()));
+    return (tagsQ.data ?? [])
+      .filter((t) => !applied.has(t.name.toLowerCase()))
+      .filter((t) => !prefix || t.name.toLowerCase().includes(prefix))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+      .map((t) => ({ key: t.name, value: t.name, label: t.name, sublabel: String(t.total) }));
+  }, [tagDraft, tags, tagsQ.data]);
+
+  const popoverOpen = editingTag && tagItems.length > 0;
+
+  const onTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (popoverOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveIndex((i) => Math.min(tagItems.length - 1, i + 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        addTag(tagItems[activeIndex].value);
+        return;
+      }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (popoverOpen && tagItems[activeIndex]) {
+        addTag(tagItems[activeIndex].value);
+      } else if (tagDraft.trim()) {
+        addTag(tagDraft);
+      } else {
+        setEditingTag(false);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setTagDraft('');
+      setEditingTag(false);
+    }
+  };
 
   const save = () => {
     setError(null);
@@ -104,14 +208,13 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
       setError('Body is required.');
       return;
     }
-    if (isNew) createMut.mutate();
-    else editMut.mutate();
-  };
-
-  const addTag = () => {
-    const t = tagDraft.trim().toLowerCase();
-    if (t && !tags.includes(t)) setTags([...tags, t]);
+    // Commit any pending draft into the tag list before mutating —
+    // saves users from "I typed it but forgot to press Enter" data loss.
+    const finalTags = commitDraftInto(tags);
+    if (finalTags !== tags) setTags(finalTags);
     setTagDraft('');
+    if (isNew) createMut.mutate(finalTags);
+    else editMut.mutate(finalTags);
   };
 
   return (
@@ -143,26 +246,36 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
           </Tag>
         ))}
         {editingTag ? (
-          <span className="input-tag-wrap">
+          <span className="input-tag-wrap" style={{ position: 'relative' }}>
             <span className="hash">#</span>
             <input
+              ref={inputRef}
               autoFocus
               className="input-tag"
               placeholder="add tag"
               value={tagDraft}
-              onChange={(e) => setTagDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  if (!tagDraft.trim()) { setEditingTag(false); return; }
-                  addTag();
-                } else if (e.key === 'Escape') {
-                  setTagDraft('');
-                  setEditingTag(false);
-                }
+              onChange={(e) => {
+                setTagDraft(e.target.value);
+                setActiveIndex(0);
               }}
+              onKeyDown={onTagKeyDown}
               onBlur={() => { if (!tagDraft.trim()) setEditingTag(false); }}
+              autoComplete="off"
+              spellCheck={false}
+              role="combobox"
+              aria-expanded={popoverOpen}
+              aria-autocomplete="list"
             />
+            {popoverOpen ? (
+              <TypeaheadPopover
+                items={tagItems}
+                activeIndex={activeIndex}
+                onSelect={(item) => addTag(item.value)}
+                onHover={setActiveIndex}
+                onDismiss={() => setEditingTag(false)}
+                ariaLabel="Tag suggestions"
+              />
+            ) : null}
           </span>
         ) : (
           <button className="btn btn-ghost btn-sm" onClick={() => setEditingTag(true)}>
