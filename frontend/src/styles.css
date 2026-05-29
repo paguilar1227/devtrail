@@ -2526,6 +2526,12 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   margin-top: 2px;
 }
 .prow .ti-sub.due-overdue { color: oklch(0.72 0.14 25); }
+/* Tag chips on a row (e.g. notes drawer) — wrap below the sub-line so a
+   #tag filter's completeness is visible at a glance. */
+.prow-tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 5px;
+}
 .prow .ats {
   font-size: var(--type-meta); color: var(--fg-subtle);
 }

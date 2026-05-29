@@ -167,6 +167,7 @@ export function NoteListDrawer({ onClose, onAction, onRoute, initialTagFilter }:
                 key={h.entity_id}
                 note={{ title: h.title }}
                 sub={h.excerpt}
+                tags={h.tags}
                 onClick={() => openHit(h.entity_id)}
               />
             ))}
@@ -195,6 +196,7 @@ export function NoteListDrawer({ onClose, onAction, onRoute, initialTagFilter }:
                 <NoteRow
                   key={ui.id}
                   note={ui}
+                  tags={ui.tags}
                   onClick={() => setSelected(ui)}
                 />
               );

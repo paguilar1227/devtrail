@@ -115,6 +115,9 @@ export interface SearchHit {
   title: string;
   project: string;
   excerpt: string;
+  /** Tags on the parent entity — lets result rows show provenance so the
+   *  user can confirm a #tag filter actually caught everything. */
+  tags: string[];
   retrieval_path: RetrievalPath[];
   score: number;
 }

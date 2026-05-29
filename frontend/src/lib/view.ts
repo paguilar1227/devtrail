@@ -170,6 +170,7 @@ export function toUiSearchHit(
       title: h.chunk.parent_title,
       project: projectName,
       excerpt: h.chunk.content,
+      tags: h.chunk.parent_tags,
       retrieval_path: (path.length ? path : ['vector']) as UiRetrievalPath[],
       score: h.final_score,
     };
@@ -186,6 +187,7 @@ export function toUiSearchHit(
     title: h.todo.content,
     project: projectName,
     excerpt: `${h.todo.status.replace('_', ' ')} · ${h.todo.priority ?? '—'}`,
+    tags: h.todo.tags,
     retrieval_path: (path.length ? path : ['vector']) as UiRetrievalPath[],
     score: h.final_score ?? h.similarity ?? 0,
   };

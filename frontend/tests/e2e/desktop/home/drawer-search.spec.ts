@@ -83,6 +83,16 @@ test.describe('drawer + tab search: unified SearchInput + hybrid search', () => 
     await expect(drawer.locator('.prow-note').first()).toBeVisible({ timeout: 5000 });
   });
 
+  test('notes drawer: rows show tag chips so #tag filter completeness is visible', async ({ page }) => {
+    const drawer = await openDrawer(page, 'Notes');
+    await searchAndSettle(page, drawer, '#chore');
+    const firstRow = drawer.locator('.todo-list-drawer-rows .prow-note').first();
+    await expect(firstRow).toBeVisible({ timeout: 5000 });
+    // Each #chore result visibly carries the #chore chip — the user can see
+    // the filter caught the right notes.
+    await expect(firstRow.locator('.prow-tags .tag').filter({ hasText: 'chore' })).toHaveCount(1);
+  });
+
   test('notes drawer: free-text runs hybrid search → rows, no schema crash', async ({ page }) => {
     const drawer = await openDrawer(page, 'Notes');
     await searchAndSettle(page, drawer, 'travel');
