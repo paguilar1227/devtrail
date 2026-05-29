@@ -54,7 +54,7 @@ export function TodoListDrawer({ onClose, onAction, initialSort, initialTagFilte
 
   const { query, setQuery, searchActive, rawHits, isFetching: searchFetching, error: searchError } =
     useEntitySearch({ projectId: 'null', entityTypes: ['todo'] });
-  const tagSuggestions = useTagSuggestions();
+  const tagSuggestions = useTagSuggestions({ scope: 'personal', type: 'todo' });
 
   // Todo hits carry the full todo → render full (flat, ranked) rows.
   const todoSearchRows = useMemo(() => {

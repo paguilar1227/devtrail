@@ -36,7 +36,7 @@ export function TodosTab({ project, onAction }: Props) {
   // flat ranked result list; clearing returns to the hierarchy/groups view.
   const { query, setQuery, searchActive, rawHits, isFetching: searchFetching, error: searchError } =
     useEntitySearch({ projectId: project.id, entityTypes: ['todo'] });
-  const tagSuggestions = useTagSuggestions();
+  const tagSuggestions = useTagSuggestions({ project_id: project.id, type: 'todo' });
   const todoSearchRows = useMemo(() => {
     const seen = new Set<string>();
     const out: Todo[] = [];

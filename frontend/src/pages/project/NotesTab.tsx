@@ -30,7 +30,7 @@ export function NotesTab({ project, onAction }: Props) {
   // ranked result list; clearing returns to browse.
   const { query, setQuery, searchActive, hits, isFetching: searchFetching, error: searchError } =
     useEntitySearch({ projectId: project.id, entityTypes: ['note'] });
-  const tagSuggestions = useTagSuggestions();
+  const tagSuggestions = useTagSuggestions({ project_id: project.id, type: 'note' });
 
   const noteHits = useMemo(() => {
     const seen = new Set<string>();

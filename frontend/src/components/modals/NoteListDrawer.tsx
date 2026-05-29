@@ -53,8 +53,9 @@ export function NoteListDrawer({ onClose, onAction, onRoute, initialTagFilter }:
   const { query, setQuery, searchActive, hits, isFetching: searchFetching, error: searchError } =
     useEntitySearch({ projectId: 'null', entityTypes: ['note'] });
 
-  // Tag inventory powers the `#` typeahead (shared across surfaces).
-  const tagSuggestions = useTagSuggestions();
+  // Tag inventory powers the `#` typeahead — scoped to personal notes so
+  // suggestions + counts match what this drawer's search actually returns.
+  const tagSuggestions = useTagSuggestions({ scope: 'personal', type: 'note' });
 
   // Browse pages — independent of the search query (search has its own path).
   const pages = useInfiniteQuery({

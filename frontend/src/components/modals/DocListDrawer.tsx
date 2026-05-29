@@ -40,7 +40,7 @@ export function DocListDrawer({ onClose, onAction: _onAction, onRoute, initialTa
 
   const { query, setQuery, searchActive, hits, isFetching: searchFetching, error: searchError } =
     useEntitySearch({ projectId: 'null', entityTypes: ['document'] });
-  const tagSuggestions = useTagSuggestions();
+  const tagSuggestions = useTagSuggestions({ scope: 'personal', type: 'document' });
 
   // Dedupe chunk-level hits to one row per document, preserving rank.
   const docHits = useMemo(() => {

@@ -68,6 +68,21 @@ test.describe('drawer + tab search: unified SearchInput + hybrid search', () => 
     await expect(drawer.locator('.search-drawer-error')).toHaveCount(0);
   });
 
+  test('notes drawer: tag typeahead is scoped to personal notes (no project-only tags)', async ({ page }) => {
+    const drawer = await openDrawer(page, 'Notes');
+    await searchInput(drawer).fill('#');
+    const popover = page.locator('.typeahead-popover');
+    await expect(popover).toBeVisible({ timeout: 3000 });
+    // #rag lives only on project items (RAG Research) → suggesting it here
+    // would promise hits the personal-notes search returns 0 of. It must be
+    // scoped out; #chore (on personal notes) must remain.
+    await expect(popover).not.toContainText('rag');
+    await expect(popover).toContainText('chore');
+    // And a suggested tag yields actual results — count matches the search.
+    await searchAndSettle(page, drawer, '#chore');
+    await expect(drawer.locator('.prow-note').first()).toBeVisible({ timeout: 5000 });
+  });
+
   test('notes drawer: free-text runs hybrid search → rows, no schema crash', async ({ page }) => {
     const drawer = await openDrawer(page, 'Notes');
     await searchAndSettle(page, drawer, 'travel');
