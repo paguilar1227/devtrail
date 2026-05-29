@@ -333,12 +333,15 @@ export type TodoCommentCreateRequest = z.infer<typeof TodoCommentCreateRequestSc
 // (with the confidence as the relevance signal). Both shapes share `step`.
 export const RetrievalStepSchema = z.object({
   step: z.string(), // 'vector' | 'entity' | 'rrf' — kept open for graph evolution
-  score: z.number().optional(),
+  // Nullable, not just optional: a step that didn't contribute a numeric
+  // signal (e.g. the `vector` step on a lexical-only hit) comes back as
+  // `null`, not absent. Same reason similarity/vector_score are nullable.
+  score: z.number().nullable().optional(),
   entity: z.object({
     canonical_name: z.string(),
     type: z.string(),
   }).optional(),
-  confidence: z.number().optional(),
+  confidence: z.number().nullable().optional(),
 });
 export type RetrievalStep = z.infer<typeof RetrievalStepSchema>;
 

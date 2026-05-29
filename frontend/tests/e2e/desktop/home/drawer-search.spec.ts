@@ -52,11 +52,20 @@ async function searchAndSettle(page: Page, scope: Locator | Page, value: string)
 }
 
 test.describe('drawer + tab search: unified SearchInput + hybrid search', () => {
-  test('notes drawer: # opens the tag typeahead (the missing affordance)', async ({ page }) => {
+  test('notes drawer: # opens the tag typeahead AND the search does not crash', async ({ page }) => {
     const drawer = await openDrawer(page, 'Notes');
+    // The bare '#' query returns lexical/graph hits whose similarity AND
+    // retrieval_path[].score are null — these must parse, not error out the
+    // search (regression: behind the typeahead, the body was a ZodError wall).
+    const fetchPromise = page.waitForResponse(
+      (r) => r.url().includes('/api/v1/search') && r.request().method() === 'POST',
+      { timeout: 6000 },
+    );
     await searchInput(drawer).fill('#');
     await expect(page.locator('.typeahead-popover')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('.typeahead-popover')).toContainText('#');
+    await fetchPromise;
+    await expect(drawer.locator('.search-drawer-error')).toHaveCount(0);
   });
 
   test('notes drawer: free-text runs hybrid search → rows, no schema crash', async ({ page }) => {
