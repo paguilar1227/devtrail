@@ -1943,6 +1943,12 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 /* Search-mode chrome: scope chips + predicate chips. Only render when
    the user is searching (HomePage gates this via `searchActive`). */
+/* Back-to-dashboard affordance shown only in search mode (first element of
+   the search chrome). Sits on its own line under the search box. */
+.home-search-back {
+  margin: 8px 0 2px;
+  padding-left: 6px;
+}
 .home-search-scope-row {
   display: flex; flex-wrap: wrap; gap: 6px;
   margin: 6px 0;

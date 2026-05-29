@@ -689,6 +689,16 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
           project from the home page without first navigating there). */}
       {searchActive ? (
         <>
+          {/* Visible escape hatch out of search mode back to the dashboard.
+              Reuses App's canonical "fresh home" path (wipe URL view-state +
+              remount via homeNonce) — identical to the sidebar Home click. */}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm home-search-back"
+            onClick={() => onRoute({ route: 'home' })}
+          >
+            <Icons.ChevronLeft size={12} /> Back to home
+          </button>
           <div className="home-search-scope-row" role="radiogroup" aria-label="Search project scope">
             <FilterChip active={scope === 'all'} onClick={() => setScope('all')}>All projects</FilterChip>
             <FilterChip active={scope === 'personal'} onClick={() => setScope('personal')}>Personal</FilterChip>
