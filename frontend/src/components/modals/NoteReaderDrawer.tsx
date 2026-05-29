@@ -16,6 +16,7 @@ import { getContent, pinContent, unpinContent } from '../../lib/api';
 import { fmtRel } from '../../lib/util';
 import { toUiNote } from '../../lib/view';
 import { useMarkdownBlobUrl, markdownFilename } from '../../lib/useMarkdownBlobUrl';
+import { isFolderTag } from '../../lib/folders';
 import type { Note, Route } from '../../types';
 
 interface BodyProps {
@@ -23,9 +24,12 @@ interface BodyProps {
   onClose: () => void;
   onBack?: () => void;
   onRoute?: (r: Route) => void;
+  /** Hide folder-path (slash) tags from the chip row — used by the Notes
+   *  view, which shows/edits folders in its own bottom bar. */
+  hideFolderTags?: boolean;
 }
 
-export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
+export function NoteReaderBody({ note, onClose, onBack, onRoute, hideFolderTags }: BodyProps) {
   const qc = useQueryClient();
   // Refetch full content so any edits from the modal are reflected here.
   // The list view ships a body too, but it's the snapshot from initial
@@ -64,7 +68,7 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
       <div className="row-flex gap-2 chip-row">
         <Status status={note.processing_status} />
         <Tag>note</Tag>
-        {note.tags.map((t) => (
+        {(hideFolderTags ? note.tags.filter((t) => !isFolderTag(t)) : note.tags).map((t) => (
           <Tag key={t}>{t}</Tag>
         ))}
       </div>

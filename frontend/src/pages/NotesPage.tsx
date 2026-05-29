@@ -234,6 +234,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                   note={selectedNote}
                   onClose={() => setSelectedId(null)}
                   onRoute={onRoute}
+                  hideFolderTags
                 />
               </div>
               <FolderPathEditor
