@@ -22,6 +22,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TagsPage } from './pages/TagsPage';
 import { TagDetailPage } from './pages/TagDetailPage';
+import { NotesPage } from './pages/NotesPage';
 import { RenameTagModal } from './components/modals/RenameTagModal';
 import { TrashPage } from './pages/TrashPage';
 import type { ModalKind, Route, SidebarMode, Theme } from './types';
@@ -115,6 +116,8 @@ export default function App() {
         return [{ label: 'Activity' }];
       case 'tags':
         return [{ label: 'Tags' }];
+      case 'notes':
+        return [{ label: 'Notes' }];
       case 'trash':
         return [{ label: 'Archived' }];
       default:
@@ -158,6 +161,9 @@ export default function App() {
           {route.route === 'tags' && (route.name
             ? <TagDetailPage key={route.name} name={route.name} onAction={onAction} onRoute={setRoute} />
             : <TagsPage onAction={onAction} onRoute={setRoute} />
+          )}
+          {route.route === 'notes' && (
+            <NotesPage onAction={onAction} onRoute={navigate} initialPath={route.path} initialScope={route.scope} />
           )}
           {route.route === 'trash' && <TrashPage />}
         </div>

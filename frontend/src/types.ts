@@ -152,6 +152,9 @@ export type Route =
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
   | { route: 'tags'; name?: string }
+  // Notes browser organized by Folders (hierarchical slash-tags). `path`
+  // deep-links a selected folder, `scope` the project scope.
+  | { route: 'notes'; path?: string; scope?: 'personal' | 'all' | string }
   | { route: 'activity' }
   | { route: 'trash' };
 

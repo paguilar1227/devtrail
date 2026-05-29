@@ -3344,3 +3344,109 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   background: var(--glass-bg-soft);
 }
 
+/* ===================================================================
+   Notes view — Bear-style 3-column folder browser (NotesPage).
+   Fills the scroll area; each column scrolls independently.
+   =================================================================== */
+.notes-view {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+}
+.notes-view-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 24px;
+  padding: 22px var(--pad-page) 14px;
+}
+.notes-view-head h1 { font-size: var(--type-hero); font-weight: 600; letter-spacing: -0.01em; }
+.notes-view-head code {
+  font-family: var(--font-mono); font-size: 0.9em;
+  background: var(--glass-bg-soft); padding: 1px 5px; border-radius: 4px;
+}
+.notes-cols {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: 248px 340px 1fr;
+  border-top: 0.5px solid var(--hairline);
+}
+
+/* ---- left: folder tree ---- */
+.notes-tree {
+  overflow-y: auto; min-height: 0;
+  border-right: 0.5px solid var(--hairline);
+  padding: 8px;
+  scrollbar-width: thin;
+}
+.notes-tree-empty { padding: 10px 8px; }
+.notes-tree-empty code, .notes-folder-input::placeholder {
+  font-family: var(--font-mono); font-size: 0.9em;
+}
+.notes-tree-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+  padding: 5px 8px; border-radius: 7px;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--fg); font-size: var(--type-body); text-align: left;
+  transition: background 90ms;
+}
+.notes-tree-row:hover { background: var(--glass-bg-soft); }
+.notes-tree-row.active { background: var(--glass-bg-strong, var(--glass-bg-soft)); color: var(--fg); font-weight: 500; }
+.notes-tree-row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-tree-row .ct { font-size: var(--type-meta); color: var(--fg-subtle); }
+.notes-tree-chev {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; flex-shrink: 0;
+  background: transparent; border: 0; cursor: pointer; color: var(--fg-subtle);
+  transition: transform 120ms;
+}
+.notes-tree-chev.open { transform: rotate(90deg); }
+.notes-tree-chev-spacer { width: 14px; flex-shrink: 0; }
+
+/* ---- middle: search + notes list ---- */
+.notes-list {
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 0.5px solid var(--hairline);
+}
+.notes-list-search { padding: 10px; border-bottom: 0.5px solid var(--hairline); }
+.notes-list-rows {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: 0 6px;
+  scrollbar-width: thin;
+}
+.notes-list-rows .prow { padding-left: 10px; padding-right: 10px; }
+.notes-list-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
+.notes-list-rows .page-subtle { padding: 14px 10px; }
+
+/* ---- right: note content + folder bar ---- */
+.notes-detail { display: flex; flex-direction: column; min-height: 0; }
+.notes-detail-body {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: 20px 24px;
+  display: flex; flex-direction: column;
+  scrollbar-width: thin;
+}
+.notes-detail-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+}
+.notes-folder-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px;
+  border-top: 0.5px solid var(--hairline);
+  background: var(--glass-bg-soft);
+}
+.notes-folder-ic { display: inline-flex; color: var(--fg-subtle); }
+.notes-folder-empty { font-style: italic; }
+.notes-folder-input {
+  background: var(--glass-bg); border: 0.5px solid var(--hairline);
+  border-radius: 6px; padding: 3px 8px;
+  color: var(--fg); font-family: var(--font-mono); font-size: var(--type-meta);
+  outline: none; min-width: 140px;
+}
+.notes-folder-input:focus { border-color: var(--accent, var(--hairline)); }
+
+/* Mobile / narrow: stack to a single column (tree + list collapse to the
+   list; detail opens below). Keeps it usable though desktop is the target. */
+@media (max-width: 900px) {
+  .notes-cols { grid-template-columns: 1fr; }
+  .notes-tree, .notes-list { border-right: 0; }
+}
+

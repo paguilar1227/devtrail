@@ -330,13 +330,47 @@ async function main() {
     { title: 'Quotes to remember', content: '"Strong opinions, weakly held." — Saffo\n"The first draft of anything is shit." — Hemingway\n"Compare yourself to who you were yesterday, not to who someone else is today." — Peterson' },
   ];
 
+  // Folder paths (Folders feature) — a slash-tag files a note into the
+  // hierarchical tree shown in the Notes view. Mapped by title so the seed
+  // ships a realistic multi-level tree (cooking, travel, health, journal,
+  // work, home, media, reading) out of the box.
+  const FOLDER_MAP: Record<string, string> = {
+    'Recipe — Sunday sourdough': 'cooking/recipes',
+    'Recipe — weeknight ramen': 'cooking/recipes',
+    'Pour-over recipe — Hario V60': 'cooking/coffee',
+    'Espresso recipe — Onyx Monarch': 'cooking/coffee',
+    'Café shortlist for deep-work mornings': 'cooking/coffee',
+    'Travel — Tokyo bucket list': 'travel/japan',
+    'Travel — Lisbon trip ideas': 'travel/portugal',
+    'Hiking — Sierra trip prep': 'travel/hiking',
+    'Hiking — Marin shortlist': 'travel/hiking',
+    'Workout block — Q2': 'health/fitness',
+    'Stretches I keep forgetting': 'health/mobility',
+    'Decision journal — May': 'journal/decisions',
+    'Annual review prompts': 'journal/reviews',
+    'Weekly review template': 'journal/reviews',
+    'Conference talk ideas': 'work/speaking',
+    'Networking follow-ups': 'work/networking',
+    'Home maintenance schedule': 'home/maintenance',
+    'Plant care notes': 'home/maintenance',
+    'Bookshelf wishlist': 'home/shopping',
+    'Gift ideas — family': 'home/shopping',
+    'Gift ideas — partner': 'home/shopping',
+    'Music — recent finds': 'media/music',
+    'Podcasts to try': 'media/podcasts',
+    'Movies queued': 'media/movies',
+    'Reading list — non-fiction': 'reading/non-fiction',
+    'Reading list — tech': 'reading/tech',
+  };
+
   for (const n of personalNoteSpecs) {
+    const folder = FOLDER_MAP[n.title];
     const created = await api<{ id: string; status: string }>('POST', '/api/v1/content', {
       type: 'note',
       title: n.title,
       content: n.content,
       project_ids: [],
-      tags: n.tags ?? [],
+      tags: [...(n.tags ?? []), ...(folder ? [folder] : [])],
     });
     console.log(`  + personal note "${n.title}"`);
     // No-op the returned id — we don't reference these by handle.
