@@ -1,17 +1,21 @@
 // Notes browser — a Bear-style three-column view over notes organized by
 // FOLDERS (hierarchical slash-tags; see lib/folders.ts). Left: the folder
-// tree. Middle: notes in the selected folder (or hybrid search results when
-// the SearchInput has a query) — the SAME SearchInput used on Home. Right:
-// the selected note's content + an editable folder-path chip bar.
+// tree (collapsible, resizable). Middle: notes in the selected folder (or
+// hybrid search results) with the SAME SearchInput as Home. Right: the note
+// content + a single, click-to-edit folder-path chip.
 //
-// Scope (personal / all / a project) mirrors the Tags view's dropdown.
-// Everything is derived client-side from the notes in scope — no backend
-// changes (a Folder is just a tag containing '/').
+// A note belongs to exactly ONE folder (one slash-tag) at a time. Editing
+// the chip re-files the note and re-navigates the tree/middle to its new
+// home. Scope (personal / all / project) mirrors the Tags view.
+//
+// Columns are resizable (drag the dividers) and collapsible:
+//   Cmd/Ctrl+1 — toggle the folder tree
+//   Cmd/Ctrl+2 — toggle tree + list together (follows the list's state)
+//   Cmd/Ctrl+3 — toggle "only the note" (hide both side columns)
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
-import { Tag } from '../components/primitives';
 import { SortDropdown } from '../components/SortDropdown';
 import { SearchInput, type SigilKind } from '../components/SearchInput';
 import { NoteRow } from '../components/NoteRow';
@@ -21,7 +25,7 @@ import { toUiNote, toUiProjects } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
 import { useTagSuggestions } from '../lib/useTagSuggestions';
 import {
-  buildFolderTree, noteInFolder, withFolders, splitTags, normalizeFolderPath,
+  buildFolderTree, noteInFolder, withFolders, isFolderTag, normalizeFolderPath, ancestorsOf,
   type FolderNode,
 } from '../lib/folders';
 import { cls } from '../lib/util';
@@ -39,6 +43,8 @@ interface Props {
 
 const NOTE_SIGILS: readonly SigilKind[] = ['tag'];
 const NO_MENTIONS: never[] = [];
+const TREE_MIN = 160, TREE_MAX = 460, LIST_MIN = 220, LIST_MAX = 560;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const scopeToProjectId = (scope: ScopeMode): 'null' | string | undefined =>
   scope === 'personal' ? 'null' : scope === 'all' ? undefined : scope;
@@ -48,7 +54,30 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   const [scope, setScope] = useState<ScopeMode>(initialScope ?? 'personal');
   const [selectedPath, setSelectedPath] = useState<string | null>(initialPath ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPath ? ancestorsOf(initialPath) : []));
+
+  // Column layout: visibility + widths (resizable).
+  const [showTree, setShowTree] = useState(true);
+  const [showList, setShowList] = useState(true);
+  const [treeW, setTreeW] = useState(248);
+  const [listW, setListW] = useState(340);
+
+  const expand = (path: string) => setExpanded((s) => {
+    const n = new Set(s);
+    for (const a of ancestorsOf(path)) n.add(a);
+    return n;
+  });
+  const toggle = (path: string) => setExpanded((s) => {
+    const n = new Set(s);
+    n.has(path) ? n.delete(path) : n.add(path);
+    return n;
+  });
+  // Selecting a folder reveals its children (never collapses on click — the
+  // chevron does that), so the nesting is visible immediately.
+  const selectFolder = (path: string | null) => {
+    setSelectedPath(path);
+    if (path) expand(path);
+  };
 
   // --- scope dropdown options (Personal / All / each active project) ---
   const projectsQ = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
@@ -103,27 +132,52 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
     return out;
   }, [hits]);
 
-  // Reset the open note when the visible list changes out from under it.
-  useEffect(() => { setSelectedId(null); }, [selectedPath, scope]);
-
   const selectedNote: Note | null = useMemo(() => {
     if (!selectedId) return null;
     const ci = notes.find((n) => n.id === selectedId);
     return ci ? toUiNote(ci) : null;
   }, [notes, selectedId]);
 
-  // --- folder-path editing on the open note ---
-  const saveFolders = useMutation({
+  // When a note is opened, reveal its folder in the tree so the left panel
+  // reflects where the note lives (the nesting the user expects to see).
+  const selectedFolder = selectedNote?.tags.find(isFolderTag) ?? null;
+  useEffect(() => { if (selectedFolder) expand(selectedFolder); }, [selectedFolder]);
+
+  // --- folder editing: a note has ONE folder; editing re-files + navigates ---
+  const saveFolder = useMutation({
     mutationFn: ({ id, tags }: { id: string; tags: string[] }) => updateContent(id, { tags }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['content', 'note', 'notes-view'] });
       qc.invalidateQueries({ queryKey: ['tags'] });
     },
   });
-  const setNoteFolders = (note: Note, folders: string[]) =>
-    saveFolders.mutate({ id: note.id, tags: withFolders(note.tags, folders) });
+  const setNoteFolder = (note: Note, path: string | null) => {
+    saveFolder.mutate({ id: note.id, tags: withFolders(note.tags, path ? [path] : []) });
+    // Re-navigate so the moved note's new group shows in the middle and the
+    // new path is revealed/highlighted in the tree. Note stays open.
+    setSelectedPath(path);
+    if (path) expand(path);
+  };
+
+  // --- keyboard: column toggles ---
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.key === '1') { e.preventDefault(); setShowTree((t) => !t); }
+      else if (e.key === '2') { e.preventDefault(); const next = !showList; setShowTree(next); setShowList(next); }
+      else if (e.key === '3') {
+        e.preventDefault();
+        const onlyNote = !showTree && !showList;
+        setShowTree(onlyNote); setShowList(onlyNote); // if only-note → restore; else focus note
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showTree, showList]);
 
   const scopeNoteCount = notes.length;
+  const gridCols =
+    `${showTree ? treeW : 0}px ${showTree ? 5 : 0}px ${showList ? listW : 0}px ${showList ? 5 : 0}px minmax(0, 1fr)`;
 
   return (
     <div className="notes-view">
@@ -132,6 +186,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
           <h1>Notes</h1>
           <p className="page-subtle">
             {scopeNoteCount} notes · organized by Folders (nested <code>#a/b/c</code> tags).
+            <span className="notes-kbd-hint"> ⌘1/2/3 toggle columns</span>
           </p>
         </div>
         <SortDropdown<ScopeMode>
@@ -144,20 +199,21 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
         />
       </div>
 
-      <div className="notes-cols">
+      <div className="notes-cols" style={{ gridTemplateColumns: gridCols }} data-tree={showTree} data-list={showList}>
         {/* ---- LEFT: folder tree ---- */}
-        <nav className="notes-tree" aria-label="Folders">
+        <nav className="notes-tree" aria-label="Folders" aria-hidden={!showTree}>
           <button
             className={cls('notes-tree-row', selectedPath === null && 'active')}
-            onClick={() => setSelectedPath(null)}
+            onClick={() => selectFolder(null)}
           >
+            <span className="notes-tree-chev-spacer" aria-hidden="true" />
             <Icons.Layers size={13} />
             <span className="lbl">All notes</span>
             <span className="ct">{scopeNoteCount}</span>
           </button>
           {roots.length === 0 ? (
             <div className="page-subtle notes-tree-empty">
-              No folders yet. Tag a note <code>#area/topic</code> to start a tree.
+              No folders yet. Add a folder to a note (bottom of the reader) to start a tree.
             </div>
           ) : (
             roots.map((n) => (
@@ -167,15 +223,17 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                 depth={0}
                 selectedPath={selectedPath}
                 expanded={expanded}
-                onToggle={(p) => setExpanded((s) => { const n2 = new Set(s); n2.has(p) ? n2.delete(p) : n2.add(p); return n2; })}
-                onSelect={setSelectedPath}
+                onToggle={toggle}
+                onSelect={selectFolder}
               />
             ))
           )}
         </nav>
 
+        <ColResizer onResize={(d) => setTreeW((w) => clamp(w + d, TREE_MIN, TREE_MAX))} active={showTree} />
+
         {/* ---- MIDDLE: search + notes list ---- */}
-        <div className="notes-list">
+        <div className="notes-list" aria-hidden={!showList}>
           <div className="notes-list-search">
             <div className="search-box">
               <Icons.Search size={13} />
@@ -224,7 +282,9 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
           </div>
         </div>
 
-        {/* ---- RIGHT: note content + folder-path editor ---- */}
+        <ColResizer onResize={(d) => setListW((w) => clamp(w + d, LIST_MIN, LIST_MAX))} active={showList} />
+
+        {/* ---- RIGHT: note content + single folder chip ---- */}
         <div className="notes-detail">
           {selectedNote ? (
             <>
@@ -239,8 +299,8 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
               </div>
               <FolderPathEditor
                 note={selectedNote}
-                pending={saveFolders.isPending}
-                onChange={(folders) => setNoteFolders(selectedNote, folders)}
+                pending={saveFolder.isPending}
+                onChange={(path) => setNoteFolder(selectedNote, path)}
               />
             </>
           ) : (
@@ -251,6 +311,35 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
         </div>
       </div>
     </div>
+  );
+}
+
+// ---- draggable column divider ----
+function ColResizer({ onResize, active }: { onResize: (deltaX: number) => void; active: boolean }) {
+  const last = useRef(0);
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (!active) return;
+    e.preventDefault();
+    last.current = e.clientX;
+    const move = (ev: PointerEvent) => { onResize(ev.clientX - last.current); last.current = ev.clientX; };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  return (
+    <div
+      className={cls('notes-col-resizer', !active && 'hidden')}
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={onPointerDown}
+    />
   );
 }
 
@@ -283,7 +372,7 @@ function FolderTreeNode({
             aria-label={isOpen ? 'Collapse' : 'Expand'}
             onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}
           >
-            <Icons.ChevronRight size={10} />
+            <Icons.ChevronRight size={11} />
           </button>
         ) : (
           <span className="notes-tree-chev-spacer" aria-hidden="true" />
@@ -308,37 +397,32 @@ function FolderTreeNode({
   );
 }
 
-// ---- editable folder-path chip bar (pinned at the bottom of the detail) ----
+// ---- single folder-path chip, click-to-edit (pinned at the detail bottom) ----
 function FolderPathEditor({
   note, pending, onChange,
 }: {
   note: Note;
   pending: boolean;
-  onChange: (folders: string[]) => void;
+  onChange: (path: string | null) => void;
 }) {
-  const { folders } = splitTags(note.tags);
+  const folder = note.tags.find(isFolderTag) ?? null;
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [adding, setAdding] = useState(false);
 
+  // Drop edit state when switching notes.
+  useEffect(() => { setEditing(false); setDraft(''); }, [note.id]);
+
+  const startEdit = () => { setDraft(folder ?? ''); setEditing(true); };
   const commit = () => {
-    const p = normalizeFolderPath(draft);
-    setDraft('');
-    setAdding(false);
-    if (p && !folders.includes(p)) onChange([...folders, p]);
+    setEditing(false);
+    const next = normalizeFolderPath(draft) || null;
+    if (next !== folder) onChange(next);
   };
 
   return (
-    <div className="notes-folder-bar" aria-label="Folders for this note">
+    <div className="notes-folder-bar" aria-label="Folder for this note">
       <span className="notes-folder-ic"><Icons.Layers size={12} /></span>
-      {folders.length === 0 && !adding ? (
-        <span className="page-subtle notes-folder-empty">No folder</span>
-      ) : null}
-      {folders.map((f) => (
-        <Tag key={f} kind="note" removable onRemove={() => onChange(folders.filter((x) => x !== f))}>
-          {f}
-        </Tag>
-      ))}
-      {adding ? (
+      {editing ? (
         <input
           className="notes-folder-input"
           autoFocus
@@ -347,12 +431,16 @@ function FolderPathEditor({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') { e.preventDefault(); commit(); }
-            if (e.key === 'Escape') { setDraft(''); setAdding(false); }
+            if (e.key === 'Escape') { setEditing(false); setDraft(''); }
           }}
           onBlur={commit}
         />
+      ) : folder ? (
+        <button className="notes-folder-chip" onClick={startEdit} title="Click to edit folder">
+          {folder}
+        </button>
       ) : (
-        <button className="btn btn-ghost btn-sm notes-folder-add" disabled={pending} onClick={() => setAdding(true)}>
+        <button className="btn btn-ghost btn-sm notes-folder-add" disabled={pending} onClick={startEdit}>
           <Icons.Plus size={11} /> Folder
         </button>
       )}

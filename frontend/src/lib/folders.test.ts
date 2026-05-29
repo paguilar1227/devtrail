@@ -3,8 +3,15 @@
 // default vitest env), keeping this test runnable on its own.
 import { describe, it, expect } from 'vitest';
 import {
-  isFolderTag, splitTags, normalizeFolderPath, buildFolderTree, noteInFolder, withFolders,
+  isFolderTag, splitTags, normalizeFolderPath, buildFolderTree, noteInFolder, withFolders, ancestorsOf,
 } from './folders';
+
+describe('ancestorsOf', () => {
+  it('returns every inclusive ancestor path', () => {
+    expect(ancestorsOf('a/b/c')).toEqual(['a', 'a/b', 'a/b/c']);
+    expect(ancestorsOf('media')).toEqual(['media']);
+  });
+});
 
 describe('isFolderTag', () => {
   it('treats slash-containing tags as folders, flat tags as not', () => {

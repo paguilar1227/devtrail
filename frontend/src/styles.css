@@ -3371,11 +3371,21 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 
 /* ---- left: folder tree ---- */
 .notes-tree {
-  overflow-y: auto; min-height: 0;
-  border-right: 0.5px solid var(--hairline);
+  overflow: hidden auto; min-height: 0; min-width: 0;
   padding: 8px;
   scrollbar-width: thin;
 }
+/* Fully collapse a hidden column — zero its padding so no sliver remains. */
+.notes-cols[data-tree="false"] .notes-tree { padding: 0; }
+/* Draggable divider between columns; lives in a 5px grid column. */
+.notes-col-resizer {
+  cursor: col-resize;
+  background: var(--hairline);
+  transition: background 100ms;
+}
+.notes-col-resizer:hover { background: var(--fg-subtle); }
+.notes-col-resizer.hidden { background: transparent; pointer-events: none; cursor: default; }
+.notes-kbd-hint { margin-left: 8px; opacity: 0.6; }
 .notes-tree-empty { padding: 10px 8px; }
 .notes-tree-empty code, .notes-folder-input::placeholder {
   font-family: var(--font-mono); font-size: 0.9em;
@@ -3404,7 +3414,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 /* ---- middle: search + notes list ---- */
 .notes-list {
   display: flex; flex-direction: column; min-height: 0;
-  border-right: 0.5px solid var(--hairline);
+  overflow: hidden;
 }
 .notes-list-search { padding: 10px; border-bottom: 0.5px solid var(--hairline); }
 .notes-list-rows {
@@ -3442,11 +3452,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   outline: none; min-width: 140px;
 }
 .notes-folder-input:focus { border-color: var(--accent, var(--hairline)); }
+/* The single folder path, rendered as a click-to-edit chip. */
+.notes-folder-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px; border-radius: 5px;
+  background: var(--glass-bg-soft); border: 0.5px solid var(--hairline);
+  color: var(--fg); font-family: var(--font-mono); font-size: var(--type-meta); font-weight: 500;
+  cursor: text; transition: border-color 100ms, background 100ms;
+}
+.notes-folder-chip:hover { border-color: var(--fg-subtle); background: var(--glass-bg); }
 
-/* Mobile / narrow: stack to a single column (tree + list collapse to the
-   list; detail opens below). Keeps it usable though desktop is the target. */
+/* Mobile / narrow: stack to a single column. Desktop is the target. */
 @media (max-width: 900px) {
-  .notes-cols { grid-template-columns: 1fr; }
-  .notes-tree, .notes-list { border-right: 0; }
+  .notes-cols { grid-template-columns: 1fr !important; }
 }
 

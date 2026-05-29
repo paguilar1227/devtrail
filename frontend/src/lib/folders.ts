@@ -91,6 +91,13 @@ export function buildFolderTree(notes: { tags: string[] }[]): FolderNode[] {
   return roots;
 }
 
+/** All ancestor paths of a folder path, inclusive:
+ *  "a/b/c" → ["a", "a/b", "a/b/c"]. */
+export function ancestorsOf(path: string): string[] {
+  const segs = path.split(FOLDER_SEP).filter(Boolean);
+  return segs.map((_, i) => segs.slice(0, i + 1).join(FOLDER_SEP));
+}
+
 /** Does a note belong under `path` (exact match or any descendant)? */
 export function noteInFolder(tags: string[], path: string): boolean {
   return tags.filter(isFolderTag).some((fp) => fp === path || fp.startsWith(path + FOLDER_SEP));

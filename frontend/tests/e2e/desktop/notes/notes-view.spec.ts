@@ -39,23 +39,36 @@ test.describe('Notes view: Folders browser', () => {
     await expect(treeRow(page, 'recipes')).toBeVisible();
   });
 
-  test('selecting a folder filters the notes list (incl. descendants)', async ({ page }) => {
+  test('clicking a folder reveals its children + filters the list (incl. descendants)', async ({ page }) => {
     await openNotes(page);
+    // Clicking the row both selects AND reveals children (no chevron needed).
     await treeRow(page, 'cooking').click();
     await expect(listRows(page)).toHaveCount(5); // coffee(3) + recipes(2)
-    await treeRow(page, 'cooking').locator('.notes-tree-chev').click();
+    await expect(treeRow(page, 'coffee')).toBeVisible();
+    await expect(treeRow(page, 'recipes')).toBeVisible();
     await treeRow(page, 'coffee').click();
     await expect(listRows(page)).toHaveCount(3);
     await expect(page.locator('.notes-list-rows')).toContainText('Pour-over recipe — Hario V60');
   });
 
-  test('selecting a note shows its content + an editable folder-path chip', async ({ page }) => {
+  test('selecting a note shows its content + a single click-to-edit folder chip', async ({ page }) => {
     await openNotes(page);
     await treeRow(page, 'cooking').click();
     await listRows(page).first().click();
     await expect(page.locator('.notes-detail-body')).toBeVisible();
-    // The bottom folder bar shows a cooking/* path chip and an add affordance.
-    await expect(page.locator('.notes-folder-bar .tag')).toContainText('cooking/');
-    await expect(page.locator('.notes-folder-add')).toBeVisible();
+    // ONE folder chip (a note belongs to one folder); no remove × and no
+    // "+ Folder" button while a folder exists.
+    await expect(page.locator('.notes-folder-chip')).toContainText('cooking/');
+    await expect(page.locator('.notes-folder-add')).toHaveCount(0);
+    await expect(page.locator('.notes-folder-bar .tag .x')).toHaveCount(0);
+  });
+
+  test('Cmd/Ctrl+1 toggles the folder tree column', async ({ page }) => {
+    await openNotes(page);
+    await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+1');
+    await expect(page.locator('.notes-cols[data-tree="false"]')).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+1');
+    await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();
   });
 });
