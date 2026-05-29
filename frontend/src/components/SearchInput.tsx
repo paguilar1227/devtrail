@@ -65,8 +65,16 @@ interface Props {
    *  NOT open. Host uses this to descend focus into a results list (so the
    *  flow is: type → ↓ → ↓ → Enter without ever touching Tab). */
   onArrowDownExit?: () => void;
+  /** Which sigil typeaheads are active. Defaults to all four. Scope it
+   *  to the surface — e.g. `['tag']` inside a notes drawer, where
+   *  `@docname` / `in:type` / `project:` don't apply. Pass a stable
+   *  (module-scope or memoized) array to avoid re-renders. */
+  sigils?: readonly SigilKind[];
   placeholder?: string;
 }
+
+export type SigilKind = 'tag' | 'type' | 'mention' | 'project';
+const ALL_SIGILS: readonly SigilKind[] = ['tag', 'type', 'mention', 'project'];
 
 type SigilContext =
   | { kind: 'tag'; prefix: string; negated: boolean }
@@ -123,6 +131,7 @@ export function SearchInput({
   projects = [],
   onMentionSelect,
   onArrowDownExit,
+  sigils = ALL_SIGILS,
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -131,10 +140,12 @@ export function SearchInput({
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
 
   const currentToken = useMemo(() => tokenAtCursor(value, cursor), [value, cursor]);
-  const sigil = useMemo(
-    () => (dismissedToken === currentToken ? null : detectSigilContext(value, cursor)),
-    [value, cursor, dismissedToken, currentToken],
-  );
+  const sigil = useMemo(() => {
+    if (dismissedToken === currentToken) return null;
+    const detected = detectSigilContext(value, cursor);
+    // Only honor sigils the host enabled for this surface.
+    return detected && sigils.includes(detected.kind) ? detected : null;
+  }, [value, cursor, dismissedToken, currentToken, sigils]);
 
   const items = useMemo<TypeaheadItem[]>(() => {
     if (!sigil) return [];

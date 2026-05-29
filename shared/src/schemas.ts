@@ -353,7 +353,9 @@ const ChunkBaseSchema = z.object({
   content: z.string(),
   metadata: z.record(z.unknown()).nullable().optional(),
   created_at: z.string().datetime({ offset: true }),
-  similarity: z.number(),
+  // Nullable: hits from the lexical/graph arms with no vector match carry
+  // no cosine similarity (mirrors vector_score, which is already nullable).
+  similarity: z.number().nullable(),
   parent_type: ContentTypeSchema,
   parent_title: z.string(),
   parent_project_ids: z.array(UuidSchema),
@@ -363,7 +365,9 @@ const ChunkBaseSchema = z.object({
 
 export const ChunkHitSchema = z.object({
   type: z.literal('chunk'),
-  similarity: z.number(),
+  // Nullable: hits from the lexical/graph arms with no vector match carry
+  // no cosine similarity (mirrors vector_score, which is already nullable).
+  similarity: z.number().nullable(),
   final_score: z.number(),
   vector_score: z.number().nullable().optional(),
   retrieval_path: z.array(RetrievalStepSchema),
@@ -372,7 +376,9 @@ export const ChunkHitSchema = z.object({
 
 export const TodoHitSchema = z.object({
   type: z.literal('todo'),
-  similarity: z.number(),
+  // Nullable: hits from the lexical/graph arms with no vector match carry
+  // no cosine similarity (mirrors vector_score, which is already nullable).
+  similarity: z.number().nullable(),
   final_score: z.number().optional(),
   vector_score: z.number().nullable().optional(),
   retrieval_path: z.array(RetrievalStepSchema),

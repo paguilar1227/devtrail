@@ -187,7 +187,7 @@ export function toUiSearchHit(
     project: projectName,
     excerpt: `${h.todo.status.replace('_', ' ')} · ${h.todo.priority ?? '—'}`,
     retrieval_path: (path.length ? path : ['vector']) as UiRetrievalPath[],
-    score: h.final_score ?? h.similarity,
+    score: h.final_score ?? h.similarity ?? 0,
   };
 }
 

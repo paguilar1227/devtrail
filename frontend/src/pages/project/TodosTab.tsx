@@ -3,9 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
 import { BulkCheckbox, Checkbox, FilterChip, Priority, Tag } from '../../components/primitives';
 import { TodoSortDropdown } from '../../components/SortDropdown';
-import { SearchBox } from '../../components/SearchBox';
+import { SearchInput, type SigilKind } from '../../components/SearchInput';
+import { TodoRow } from '../../components/TodoRow';
 import { archiveTodo, createTodo, listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
+import { useEntitySearch } from '../../lib/useEntitySearch';
+import { useTagSuggestions } from '../../lib/useTagSuggestions';
 import { compareForMode } from '../../lib/todoSort';
 import { useTodoSortMode } from '../../lib/useTodoSortMode';
 import { cls, fmtRel, isOverdue } from '../../lib/util';
@@ -18,21 +21,37 @@ interface Props {
 
 type HierMode = 'hierarchy' | 'flat';
 
+const TODO_SIGILS: readonly SigilKind[] = ['tag'];
+const NO_MENTIONS: never[] = [];
+
 export function TodosTab({ project, onAction }: Props) {
   const qc = useQueryClient();
-  const [q, setQ] = useState('');
   const { data, isLoading, error } = useQuery({
-    queryKey: ['todos', 'project', project.id, q],
-    queryFn: () => listTodos({ project_id: project.id, ...(q ? { q } : {}) }),
+    queryKey: ['todos', 'project', project.id],
+    queryFn: () => listTodos({ project_id: project.id }),
   });
   const all = useMemo(() => (data ?? []).map(toUiTodo), [data]);
+
+  // Hybrid search scoped to this project's todos — typing flips the tab to a
+  // flat ranked result list; clearing returns to the hierarchy/groups view.
+  const { query, setQuery, searchActive, rawHits, isFetching: searchFetching, error: searchError } =
+    useEntitySearch({ projectId: project.id, entityTypes: ['todo'] });
+  const tagSuggestions = useTagSuggestions();
+  const todoSearchRows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Todo[] = [];
+    for (const h of rawHits) {
+      if (h.type !== 'todo' || seen.has(h.todo.id)) continue;
+      seen.add(h.todo.id);
+      out.push(toUiTodo(h.todo));
+    }
+    return out;
+  }, [rawHits]);
 
   const [hierMode, setHierMode] = useState<HierMode>('hierarchy');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState('');
-  // Per-project sort key — the owner's "Project X is distinct from Home"
-  // requirement. Switching projects re-reads localStorage via the hook.
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode(`project:${project.id}`);
 
   const invalidate = () => {
@@ -55,9 +74,6 @@ export function TodosTab({ project, onAction }: Props) {
     onSuccess: invalidate,
   });
 
-  // Sort the project's open and done lists by the chosen mode. The
-  // open/done split is structural (the panel renders two collapsible
-  // groups), so the sort applies inside each group.
   const groups = useMemo(() => {
     const cmp = compareForMode(sortMode);
     const open = all.filter(t => t.status !== 'done').slice().sort(cmp);
@@ -168,64 +184,110 @@ export function TodosTab({ project, onAction }: Props) {
 
   return (
     <div>
-      <div className="todo-input-row">
-        <div className="field">
-          <Icons.Plus />
-          <input
-            placeholder={`Add a todo to ${project.name} — Enter to save, Tab to nest`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && draft.trim() && !createMut.isPending) {
-                e.preventDefault();
-                const content = draft.trim();
-                setDraft('');
-                createMut.mutate(content);
-              }
-            }}
-            disabled={createMut.isPending}
-          />
-          <span className="depth-pill">
-            <button className="active">Top</button>
-            <button>Sub</button>
-          </span>
-        </div>
-        <button className="btn">Add details</button>
-      </div>
-      {createMut.error ? (
-        <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 4 }}>
-          Failed to create todo: {createMut.error instanceof Error ? createMut.error.message : String(createMut.error)}
-        </div>
-      ) : null}
+      {searchActive ? null : (
+        <>
+          <div className="todo-input-row">
+            <div className="field">
+              <Icons.Plus />
+              <input
+                placeholder={`Add a todo to ${project.name} — Enter to save, Tab to nest`}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && draft.trim() && !createMut.isPending) {
+                    e.preventDefault();
+                    const content = draft.trim();
+                    setDraft('');
+                    createMut.mutate(content);
+                  }
+                }}
+                disabled={createMut.isPending}
+              />
+              <span className="depth-pill">
+                <button className="active">Top</button>
+                <button>Sub</button>
+              </span>
+            </div>
+            <button className="btn">Add details</button>
+          </div>
+          {createMut.error ? (
+            <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 4 }}>
+              Failed to create todo: {createMut.error instanceof Error ? createMut.error.message : String(createMut.error)}
+            </div>
+          ) : null}
+        </>
+      )}
 
       <div className="filter-bar">
-        <FilterChip active>
-          All <span style={{ marginLeft: 4 }}>{all.length}</span>
-        </FilterChip>
-        <FilterChip>
-          Open <span style={{ marginLeft: 4 }}>{groups.open.length}</span>
-        </FilterChip>
-        <FilterChip>
-          Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
-        </FilterChip>
-        <FilterChip>Today</FilterChip>
-        <FilterChip>P1</FilterChip>
+        {searchActive ? null : (
+          <>
+            <FilterChip active>
+              All <span style={{ marginLeft: 4 }}>{all.length}</span>
+            </FilterChip>
+            <FilterChip>
+              Open <span style={{ marginLeft: 4 }}>{groups.open.length}</span>
+            </FilterChip>
+            <FilterChip>
+              Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
+            </FilterChip>
+            <FilterChip>Today</FilterChip>
+            <FilterChip>P1</FilterChip>
+          </>
+        )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <SearchBox value={q} onChange={setQ} placeholder="Search todos…" />
-          <TodoSortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
-          <span className="seg-toggle">
-            <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
-              Hierarchy
-            </button>
-            <button className={hierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
-              Flat
-            </button>
-          </span>
+          <div className="search-box">
+            <Icons.Search size={13} />
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              onSubmit={() => { /* live search — no submit */ }}
+              tags={tagSuggestions}
+              mentions={NO_MENTIONS}
+              sigils={TODO_SIGILS}
+              placeholder={`Search ${project.name} todos… try #tag`}
+            />
+          </div>
+          {searchActive ? null : (
+            <>
+              <TodoSortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
+              <span className="seg-toggle">
+                <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
+                  Hierarchy
+                </button>
+                <button className={hierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
+                  Flat
+                </button>
+              </span>
+            </>
+          )}
         </span>
       </div>
 
-      {all.length === 0 ? (
-        <div className="page-subtle">{q ? 'No todos match.' : 'No todos in this project yet.'}</div>
+      {searchActive ? (
+        searchError ? (
+          <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+            Search failed: {searchError instanceof Error ? searchError.message : String(searchError)}
+          </div>
+        ) : searchFetching && todoSearchRows.length === 0 ? (
+          <div className="page-subtle">Searching…</div>
+        ) : todoSearchRows.length === 0 ? (
+          <div className="page-subtle">No todos match.</div>
+        ) : (
+          <div className="todo-list-drawer-rows">
+            {todoSearchRows.map((t) => (
+              <TodoRow
+                key={t.id}
+                todo={t}
+                onClick={() => onAction({ kind: 'todo-detail', payload: t })}
+                onToggleDone={() =>
+                  toggleMut.mutate({ id: t.id, status: t.status === 'done' ? 'not_started' : 'done' })
+                }
+              />
+            ))}
+          </div>
+        )
+      ) : all.length === 0 ? (
+        <div className="page-subtle">No todos in this project yet.</div>
       ) : (
         <>
           <div className="todo-group">
@@ -248,7 +310,7 @@ export function TodosTab({ project, onAction }: Props) {
         </>
       )}
 
-      {selected.size > 0 ? (
+      {!searchActive && selected.size > 0 ? (
         <div className="bulk-bar">
           <span className="ct">{selected.size} selected</span>
           <span className="sep" />

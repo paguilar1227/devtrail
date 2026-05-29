@@ -2,10 +2,14 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
 import { FilterChip, Status, Tag } from '../../components/primitives';
-import { SearchBox } from '../../components/SearchBox';
+import { SearchInput, type SigilKind } from '../../components/SearchInput';
+import { NoteRow } from '../../components/NoteRow';
 import { NoteSortDropdown } from '../../components/SortDropdown';
 import { listContent } from '../../lib/api';
 import { toUiNote } from '../../lib/view';
+import { useEntitySearch } from '../../lib/useEntitySearch';
+import { useTagSuggestions } from '../../lib/useTagSuggestions';
+import { openEntity } from '../../lib/openEntity';
 import { useNoteSortMode, compareNotesForMode } from '../../lib/useNoteSortMode';
 import { fmtRel } from '../../lib/util';
 import type { ActionDispatch, Project } from '../../types';
@@ -15,19 +19,36 @@ interface Props {
   onAction: ActionDispatch;
 }
 
+const NOTE_SIGILS: readonly SigilKind[] = ['tag'];
+const NO_MENTIONS: never[] = [];
+
 export function NotesTab({ project, onAction }: Props) {
-  const [q, setQ] = useState('');
   const { mode: sortMode, setMode: setSortMode } = useNoteSortMode(`project:${project.id}`);
 
+  // Hybrid search scoped to this project's notes — same component + path as
+  // Home / the drawers. Typing flips the tab from the card grid to a flat
+  // ranked result list; clearing returns to browse.
+  const { query, setQuery, searchActive, hits, isFetching: searchFetching, error: searchError } =
+    useEntitySearch({ projectId: project.id, entityTypes: ['note'] });
+  const tagSuggestions = useTagSuggestions();
+
+  const noteHits = useMemo(() => {
+    const seen = new Set<string>();
+    const out: typeof hits = [];
+    for (const h of hits) {
+      if (h.entity_kind !== 'note' || seen.has(h.entity_id)) continue;
+      seen.add(h.entity_id);
+      out.push(h);
+    }
+    return out;
+  }, [hits]);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ['content', 'note', project.id, q],
-    queryFn: () => listContent({ type: 'note', project_id: project.id, ...(q ? { q } : {}) }),
+    queryKey: ['content', 'note', project.id],
+    queryFn: () => listContent({ type: 'note', project_id: project.id }),
   });
 
   const notes = useMemo(() => {
-    // Sort on the wire shape (ContentItem) before mapping — the
-    // comparator is typed against ContentItem and toUiNote drops some
-    // fields it needs.
     const sorted = (data ?? []).slice().sort(compareNotesForMode(sortMode));
     return sorted.map(toUiNote);
   }, [data, sortMode]);
@@ -44,26 +65,64 @@ export function NotesTab({ project, onAction }: Props) {
   return (
     <div>
       <div className="filter-bar">
-        <FilterChip active>
-          All <span style={{ marginLeft: 4 }}>{notes.length}</span>
-        </FilterChip>
-        <FilterChip>
-          Pinned <span style={{ marginLeft: 4 }}>{pinnedCount}</span>
-        </FilterChip>
-        <FilterChip>
-          Processing <span style={{ marginLeft: 4 }}>{pendingCount}</span>
-        </FilterChip>
+        {searchActive ? null : (
+          <>
+            <FilterChip active>
+              All <span style={{ marginLeft: 4 }}>{notes.length}</span>
+            </FilterChip>
+            <FilterChip>
+              Pinned <span style={{ marginLeft: 4 }}>{pinnedCount}</span>
+            </FilterChip>
+            <FilterChip>
+              Processing <span style={{ marginLeft: 4 }}>{pendingCount}</span>
+            </FilterChip>
+          </>
+        )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <SearchBox value={q} onChange={setQ} placeholder="Search notes…" />
-          <NoteSortDropdown id={`project-${project.id}-notes-sort`} mode={sortMode} onChange={setSortMode} />
+          <div className="search-box">
+            <Icons.Search size={13} />
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              onSubmit={() => { /* live search — no submit */ }}
+              tags={tagSuggestions}
+              mentions={NO_MENTIONS}
+              sigils={NOTE_SIGILS}
+              placeholder={`Search ${project.name} notes… try #tag`}
+            />
+          </div>
+          {searchActive ? null : (
+            <NoteSortDropdown id={`project-${project.id}-notes-sort`} mode={sortMode} onChange={setSortMode} />
+          )}
           <button className="btn btn-sm" onClick={() => onAction({ kind: 'note-edit', payload: null, projectId: project.id })}>
             <Icons.Plus /> New note
           </button>
         </span>
       </div>
 
-      {notes.length === 0 ? (
-        <div className="page-subtle">{q ? 'No notes match.' : 'No notes in this project yet.'}</div>
+      {searchActive ? (
+        searchError ? (
+          <div className="page-subtle" style={{ color: 'var(--danger)' }}>
+            Search failed: {searchError instanceof Error ? searchError.message : String(searchError)}
+          </div>
+        ) : searchFetching && noteHits.length === 0 ? (
+          <div className="page-subtle">Searching…</div>
+        ) : noteHits.length === 0 ? (
+          <div className="page-subtle">No notes match.</div>
+        ) : (
+          <div className="todo-list-drawer-rows">
+            {noteHits.map((h) => (
+              <NoteRow
+                key={h.entity_id}
+                note={{ title: h.title }}
+                sub={h.excerpt}
+                onClick={() => openEntity(h, onAction)}
+              />
+            ))}
+          </div>
+        )
+      ) : notes.length === 0 ? (
+        <div className="page-subtle">No notes in this project yet.</div>
       ) : (
         <div className="note-grid">
           {notes.map(n => (

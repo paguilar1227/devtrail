@@ -9,17 +9,22 @@ import { fmtRel } from '../lib/util';
 import type { DocumentItem } from '../types';
 
 interface Props {
-  doc: DocumentItem;
+  // Structural minimum — a full DocumentItem satisfies it, and a search
+  // hit (title only, no type/mime/timestamp) can populate title + sub.
+  doc: Pick<DocumentItem, 'title'> & Partial<Pick<DocumentItem, 'type' | 'mime' | 'size' | 'created_at'>>;
   onClick?: () => void;
+  /** Override the sub-line (e.g. a search-match snippet). When set, the
+   *  right-side timestamp is omitted since hits carry no created time. */
+  sub?: string;
 }
 
-function TypeIcon({ type }: { type: DocumentItem['type'] }) {
-  if (type === 'binary') return <Icons.Doc />;
+function TypeIcon({ type }: { type?: DocumentItem['type'] }) {
   if (type === 'url') return <Icons.Globe />;
-  return <Icons.Note />;
+  if (type && type !== 'binary') return <Icons.Note />;
+  return <Icons.Doc />;
 }
 
-export function DocRow({ doc, onClick }: Props) {
+export function DocRow({ doc, onClick, sub }: Props) {
   return (
     <div
       className="prow prow-doc"
@@ -37,11 +42,10 @@ export function DocRow({ doc, onClick }: Props) {
       <div>
         <div className="ti" title={doc.title}>{doc.title}</div>
         <div className="ti-sub">
-          {doc.mime || doc.type}
-          {doc.size ? ` · ${doc.size}` : ''}
+          {sub ?? `${doc.mime || doc.type || ''}${doc.size ? ` · ${doc.size}` : ''}`}
         </div>
       </div>
-      <span className="ats">{fmtRel(doc.created_at)}</span>
+      {sub == null && doc.created_at ? <span className="ats">{fmtRel(doc.created_at)}</span> : null}
     </div>
   );
 }

@@ -2,14 +2,18 @@
 // personal-notes column and the personal notes drawer.
 
 import { fmtRel } from '../lib/util';
-import type { Note } from '../types';
 
 interface Props {
-  note: Note;
+  // Structural minimum the row renders — a full Note satisfies it, and a
+  // search hit (which carries no timestamps) can populate title + sub.
+  note: { title: string; created_at?: string; updated_at?: string };
   onClick?: () => void;
+  /** Override the sub-line (e.g. a search-match snippet). When set, the
+   *  right-side timestamp is omitted since hits carry no edited time. */
+  sub?: string;
 }
 
-export function NoteRow({ note, onClick }: Props) {
+export function NoteRow({ note, onClick, sub }: Props) {
   const at = note.updated_at ?? note.created_at;
   return (
     <div
@@ -26,9 +30,9 @@ export function NoteRow({ note, onClick }: Props) {
     >
       <div>
         <div className="ti" title={note.title}>{note.title}</div>
-        <div className="ti-sub">edited {fmtRel(at)}</div>
+        <div className="ti-sub">{sub ?? (at ? `edited ${fmtRel(at)}` : '')}</div>
       </div>
-      <span className="ats">{fmtRel(at)}</span>
+      {sub == null && at ? <span className="ats">{fmtRel(at)}</span> : null}
     </div>
   );
 }
