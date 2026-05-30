@@ -6,7 +6,7 @@
 //   cooking → coffee(3) + recipes(2) = 5; travel(4); health(2); etc.
 
 import { expect, test, type Page } from '@playwright/test';
-import '../../helpers/setup';
+import { stamp } from '../../helpers/setup';
 
 async function openNotes(page: Page) {
   await page.locator('.sidebar .sb-item', { has: page.locator('.label:text-is("Notes")') }).click();
@@ -102,5 +102,26 @@ test.describe('Notes view: Folders browser', () => {
     await page.locator('.notes-folder-input').fill('travel/japan');
     await page.locator('.notes-folder-input').press('Enter');
     await expect(page.locator('.notes-folder-chip')).toHaveText('travel/japan');
+  });
+
+  // The middle-column "New note" button opens the editor and files the note
+  // into the folder currently selected in the tree — so it shows up in the
+  // list you're looking at, not silently at root. The e2e:-prefixed title is
+  // swept by the shared afterEach hook.
+  test('New note button files a new note into the selected folder', async ({ page }) => {
+    await openNotes(page);
+    await treeRow(page, 'travel').click();
+    await expect(treeRow(page, 'travel').locator('.ct')).toHaveText('4');
+
+    const title = stamp();
+    await page.locator('.notes-new-note').click();
+    const titleInput = page.locator('.note-title-input');
+    await expect(titleInput).toBeVisible();
+    await titleInput.fill(title);
+    await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+
+    // It lands under "travel": shows in the list and bumps the folder count 4→5.
+    await expect(page.locator('.notes-list-rows')).toContainText(title);
+    await expect(treeRow(page, 'travel').locator('.ct')).toHaveText('5');
   });
 });

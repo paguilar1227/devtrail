@@ -163,7 +163,7 @@ export type RouteName = Route['route'];
 
 export type ModalKind =
   | { kind: 'upload'; payload: Project | null }
-  | { kind: 'note-edit'; payload: Note | null; projectId?: string }
+  | { kind: 'note-edit'; payload: Note | null; projectId?: string; folder?: string | null }
   | { kind: 'doc-read'; payload: DocumentItem }
   | { kind: 'todo-detail'; payload: Todo }
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }

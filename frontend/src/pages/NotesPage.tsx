@@ -247,6 +247,14 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                 placeholder="Search notes… try #tag"
               />
             </div>
+            <button
+              className="btn btn-ghost btn-icon notes-new-note"
+              title={selectedPath ? `New note in ${selectedPath}` : 'New note'}
+              aria-label="New note"
+              onClick={() => onAction({ kind: 'note-edit', payload: null, folder: selectedPath })}
+            >
+              <Icons.Plus size={16} />
+            </button>
           </div>
           <div className="notes-list-rows">
             {notesQ.isLoading ? (

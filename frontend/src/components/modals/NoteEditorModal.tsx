@@ -15,6 +15,9 @@ const NEW_NOTE_TITLE_PLACEHOLDER = 'Untitled note';
 interface Props {
   note: Note | null;
   projectId?: string;
+  /** Folder to file a NEW note into (the Notes view passes its selected
+   *  folder so the new note lands where the user is browsing). Edit ignores it. */
+  initialFolder?: string | null;
   onClose: () => void;
 }
 
@@ -29,7 +32,7 @@ function tagsScopeFor(note: Note | null, defaultProjectId?: string): { project_i
   return { scope: 'all' };
 }
 
-export function NoteEditorModal({ note, projectId, onClose }: Props) {
+export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Props) {
   const isNew = !note;
   const [body, setBody] = useState(note?.body ?? NEW_NOTE_BODY_PLACEHOLDER);
   const [title, setTitle] = useState(note?.title ?? NEW_NOTE_TITLE_PLACEHOLDER);
@@ -68,6 +71,7 @@ export function NoteEditorModal({ note, projectId, onClose }: Props) {
         content: body,
         project_ids: projectId ? [projectId] : [],
         tags: finalTags,
+        folder: initialFolder ?? null,
       }),
     onSuccess: () => { invalidateAll(); onClose(); },
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),

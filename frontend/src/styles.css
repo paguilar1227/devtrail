@@ -3424,7 +3424,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   display: flex; flex-direction: column; min-height: 0;
   overflow: hidden;
 }
-.notes-list-search { padding: 10px; border-bottom: 0.5px solid var(--hairline); }
+.notes-list-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px; border-bottom: 0.5px solid var(--hairline);
+}
+.notes-list-search .search-box { flex: 1; min-width: 0; }
+.notes-new-note { flex-shrink: 0; color: var(--fg-muted); }
+.notes-new-note:hover { color: var(--fg); }
 .notes-list-rows {
   flex: 1; overflow-y: auto; min-height: 0;
   padding: 0 6px;
