@@ -3404,12 +3404,20 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .notes-tree-row .ct { font-size: var(--type-meta); color: var(--fg-subtle); }
 .notes-tree-chev {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; flex-shrink: 0;
-  background: transparent; border: 0; cursor: pointer; color: var(--fg-subtle);
-  transition: transform 120ms;
+  width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px;
+  background: transparent; border: 0; cursor: pointer; color: var(--fg-muted);
+  transition: transform 120ms, color 90ms, background 90ms;
 }
+/* Bolder disclosure triangle (size comes from the icon prop) so it's easy
+ * to spot at a glance. */
+.notes-tree-chev svg { stroke-width: 2.25; }
 .notes-tree-chev.open { transform: rotate(90deg); }
-.notes-tree-chev-spacer { width: 14px; flex-shrink: 0; }
+/* Brighten on row hover / selection and on direct hover of the chevron
+ * itself, so "has sub-levels" + open/closed read clearly. */
+.notes-tree-row:hover .notes-tree-chev,
+.notes-tree-row.active .notes-tree-chev { color: var(--fg); }
+.notes-tree-chev:hover { color: var(--fg); background: var(--glass-bg-soft); }
+.notes-tree-chev-spacer { width: 20px; flex-shrink: 0; }
 
 /* ---- middle: search + notes list ---- */
 .notes-list {

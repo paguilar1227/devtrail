@@ -371,7 +371,7 @@ function FolderTreeNode({
             aria-label={isOpen ? 'Collapse' : 'Expand'}
             onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}
           >
-            <Icons.ChevronRight size={11} />
+            <Icons.ChevronRight size={16} />
           </button>
         ) : (
           <span className="notes-tree-chev-spacer" aria-hidden="true" />
