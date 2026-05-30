@@ -16,7 +16,7 @@
 // caller picks via whether they pass `onToggleExpand`.
 
 import { Icons } from './Icons';
-import { Checkbox, Priority } from './primitives';
+import { Checkbox, Priority, Tag } from './primitives';
 import { cls, fmtDue, fmtRel, isOverdue } from '../lib/util';
 import type { Todo } from '../types';
 
@@ -126,6 +126,13 @@ export function TodoRow({
             title={`${hiddenDescendants} item${hiddenDescendants === 1 ? '' : 's'} deeper — open the drawer to see all`}
           >
             +{hiddenDescendants} deeper
+          </div>
+        ) : null}
+        {/* Tags are root-only, so subtasks carry none — this renders nothing
+            for them and a chip row for tagged root todos. */}
+        {t.tags.length > 0 ? (
+          <div className="prow-tags">
+            {t.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </div>
         ) : null}
       </div>

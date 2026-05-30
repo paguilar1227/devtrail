@@ -62,6 +62,9 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   const [tags, setTags] = useState<string[]>(todo.tags);
   const [tagDraft, setTagDraft] = useState('');
   const [addingTag, setAddingTag] = useState(false);
+  // Tags are a root-only concept (the user's decision): only top-level todos
+  // carry them; subtasks inherit their grouping from the parent.
+  const isRoot = !todo.parent_id;
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -233,7 +236,8 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
         <Priority p={priority} />
         <span className="todo-status-pill">{todo.status.replace('_', ' ')}</span>
-        {tags.map(t => (
+        {/* Tags are a root-only concept — subtasks never show them. */}
+        {isRoot && tags.map(t => (
           <Tag key={t}>{t}</Tag>
         ))}
       </div>
@@ -260,47 +264,53 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
           }}
           disabled={updateMut.isPending}
         />
-        <span className="subtle">tags</span>
-        <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
-          {tags.map((t) => (
-            <Tag key={t} removable onRemove={() => removeTag(t)}>
-              {t}
-            </Tag>
-          ))}
-          {addingTag ? (
-            <span className="input-tag-wrap">
-              <span className="hash">#</span>
-              <input
-                autoFocus
-                className="input-tag"
-                placeholder="add tag"
-                value={tagDraft}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addTag();
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setTagDraft('');
-                    setAddingTag(false);
-                  }
-                }}
-                onBlur={addTag}
-              />
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => setAddingTag(true)}
-              disabled={updateMut.isPending}
-            >
-              <Icons.Plus size={11} /> Add
-            </button>
-          )}
-        </div>
+        {/* Tags are root-only: a subtask inherits its grouping from the
+            parent, so the editor is hidden entirely for subtasks. */}
+        {isRoot ? (
+          <>
+            <span className="subtle">tags</span>
+            <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
+              {tags.map((t) => (
+                <Tag key={t} removable onRemove={() => removeTag(t)}>
+                  {t}
+                </Tag>
+              ))}
+              {addingTag ? (
+                <span className="input-tag-wrap">
+                  <span className="hash">#</span>
+                  <input
+                    autoFocus
+                    className="input-tag"
+                    placeholder="add tag"
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addTag();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setTagDraft('');
+                        setAddingTag(false);
+                      }
+                    }}
+                    onBlur={addTag}
+                  />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setAddingTag(true)}
+                  disabled={updateMut.isPending}
+                >
+                  <Icons.Plus size={11} /> Add
+                </button>
+              )}
+            </div>
+          </>
+        ) : null}
         <span className="subtle">created</span>
         <span>{fmtRel(todo.created_at)}</span>
         <span className="subtle">project</span>

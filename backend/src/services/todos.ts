@@ -74,7 +74,8 @@ export async function createTodo(
     parentId: input.parentId ?? null,
     priority: input.priority ?? null,
     dueDate: input.dueDate ?? null,
-    tags: input.tags ?? [],
+    // Root-only tags: a subtask (created under a parent) never carries tags.
+    tags: input.parentId ? [] : (input.tags ?? []),
     embedding,
   };
   return insertTodo(deps.db, todo);
@@ -136,6 +137,17 @@ export async function updateTodo(
   if (patch.parentId !== undefined && patch.parentId !== null) {
     await assertParentDepthAllowed(deps, patch.parentId);
   }
+  // Root-only tags: tags live only on root todos. Re-parenting a tagged root
+  // into a subtask clears its tags, and tag edits on an existing subtask are
+  // dropped. (The UI hides the tag editor on subtasks; this is the backstop.)
+  let tags = patch.tags;
+  if (patch.parentId !== undefined && patch.parentId !== null) {
+    tags = []; // becoming a subtask → drop any tags
+  } else if (patch.tags !== undefined && patch.parentId === undefined) {
+    const cur = await getTodoById(deps.db, id);
+    if (cur?.parent_id) tags = []; // tag edit on an existing subtask → ignore
+  }
+
   let embedding: number[] | null | undefined;
   if (patch.content !== undefined) {
     embedding = await deps.embeddingProvider.embed(patch.content);
@@ -148,7 +160,7 @@ export async function updateTodo(
     const cur = await getTodoById(deps.db, id);
     prevStatus = cur?.status;
   }
-  const result = await dbUpdateTodo(deps.db, id, { ...patch, embedding });
+  const result = await dbUpdateTodo(deps.db, id, { ...patch, tags, embedding });
 
   // Cascade is symmetric:
   //   done   ← (any non-done) → mark non-done descendants done
