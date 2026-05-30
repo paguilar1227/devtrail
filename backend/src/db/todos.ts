@@ -239,11 +239,13 @@ export async function bulkAddTagsTodos(
   ids: string[],
   tags: string[],
 ): Promise<BulkTodoResult> {
+  // Root-only tags: bulk add never tags subtasks (parent_id IS NULL guard), so
+  // a subtask id in the batch is simply left untouched.
   const sql = `
     UPDATE todos
        SET tags = ARRAY(SELECT DISTINCT t FROM UNNEST(tags || $2::text[]) AS t ORDER BY t),
            updated_at = now()
-     WHERE id = ANY($1::uuid[])
+     WHERE id = ANY($1::uuid[]) AND parent_id IS NULL
      RETURNING id`;
   return runTodoBulk(db, ids, sql, [tags]);
 }

@@ -694,12 +694,13 @@ async function main() {
     { content: 'Plan home office overhaul', priority: 'P2', status: 'in_progress', tags: ['home'], pin: true,
       comments: ["Shortlist desks under $500", 'Need to measure the wall before ordering'] },
     // 1: subtask with its own comments AND a grandchild — exercises
-    // depth=2 + comments-on-subtask paths.
-    { content: 'Pick a standing desk', priority: 'P3', status: 'in_progress', parent: 0, tags: ['home'],
+    // depth=2 + comments-on-subtask paths. Tags are root-only, so subtasks
+    // carry none (the parent's #home covers the subtree for filtering).
+    { content: 'Pick a standing desk', priority: 'P3', status: 'in_progress', parent: 0,
       comments: ['Compared Uplift v2 vs Fully Jarvis — leaning Uplift for the 80x30 top'] },                       // 1
-    { content: 'Measure wall outlet height', priority: 'P3', status: 'not_started', parent: 1, tags: ['home'] },   // 2 grandchild
-    { content: 'Order monitor arm', priority: 'P3', status: 'done', parent: 0, tags: ['home'] },                   // 3
-    { content: 'Cable management', priority: 'P3', status: 'not_started', parent: 0, tags: ['home'] },             // 4
+    { content: 'Measure wall outlet height', priority: 'P3', status: 'not_started', parent: 1 },   // 2 grandchild
+    { content: 'Order monitor arm', priority: 'P3', status: 'done', parent: 0 },                   // 3
+    { content: 'Cable management', priority: 'P3', status: 'not_started', parent: 0 },             // 4
 
     // standalones — variety on status, due, tags
     { content: 'Reply to Sebastian about the dataset request', priority: 'P2', status: 'not_started',

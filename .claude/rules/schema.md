@@ -8,7 +8,7 @@ paths:
 
 Loads when touching `migrations/` or `backend/src/db/`. Migration list, pgvector handling, B1ms / HNSW constraint.
 
-## Migrations (9 total)
+## Migrations (10 total)
 
 - `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
 - `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
@@ -19,6 +19,7 @@ Loads when touching `migrations/` or `backend/src/db/`. Migration list, pgvector
 - `007_pinned.sql` — nullable `pinned_at` TIMESTAMPTZ on content_items, todos, projects, with partial indexes
 - `008_manual_order.sql` — nullable INTEGER `manual_order` on todos for user-defined sort within sibling groups
 - `009_content_folder.sql` — nullable `folder` TEXT on content_items (single hierarchical path, e.g. `cooking/italian`) — the first-class field behind the Notes-view folder tree. **Folders are separate from tags now**: a single-segment path like `travel` is a valid top-level folder. Backfills existing rows by moving the first slash-containing tag into `folder` and stripping slash-tags out of `tags`. **Insert param order shifted** — `folder` is `$10`, so source_url/published_at/processing_status moved to `$13/$14/$15`.
+- `010_subtask_tags_cleanup.sql` — idempotent backfill clearing `tags` on subtasks (`parent_id IS NOT NULL`). Tags are **root-only**: enforced on create/update (service) + bulk-add (`AND parent_id IS NULL`); this strips legacy subtask tags. Probe runs only while offending rows exist.
 
 Auto-migration runs on container startup (`runMigrations()` in `backend/src/server.ts`). It checks for table/column existence and applies missing migrations idempotently. Adding a new migration: add the file under `migrations/` AND add a new existence probe in `runMigrations()` — without the probe the new migration won't be auto-applied.
 

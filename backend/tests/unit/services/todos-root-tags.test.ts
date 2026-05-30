@@ -5,6 +5,7 @@
 // is the server-side backstop.
 import { describe, it, expect, vi } from 'vitest';
 import { createTodo, updateTodo } from '../../../src/services/todos.js';
+import { bulkAddTagsTodos } from '../../../src/db/todos.js';
 import { mockDb, mockEmbeddingProvider } from '../../helpers/mocks.js';
 import type { ServiceDeps } from '../../../src/services/index.js';
 
@@ -84,5 +85,16 @@ describe('root-only tags', () => {
     });
     await updateTodo(deps, 't1', { tags: ['work', 'reading'] });
     expect(findTagUpdate(calls)!.params).toContainEqual(['work', 'reading']);
+  });
+
+  it('bulkAddTagsTodos only tags root todos (parent_id IS NULL guard)', async () => {
+    const db = mockDb();
+    let captured = '';
+    (db.query as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string) => {
+      captured = sql;
+      return { rows: [] };
+    });
+    await bulkAddTagsTodos(db, ['some-id'], ['work']);
+    expect(captured).toMatch(/parent_id\s+IS\s+NULL/i);
   });
 });

@@ -216,6 +216,19 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 009 complete.');
     }
 
+    // Migration 010: strip tags off subtasks (root-only tags invariant).
+    // Idempotent data backfill — only runs while offending rows exist.
+    const m010Check = await deps.db.pool.query(
+      `SELECT count(*) AS count FROM todos WHERE parent_id IS NOT NULL AND cardinality(tags) > 0`,
+    );
+    const m010Count = parseInt(m010Check.rows[0].count);
+    if (m010Count > 0) {
+      console.log(`Running migration 010 — subtask-tags cleanup (${m010Count} rows)...`);
+      const sql = readFileSync(migration('010_subtask_tags_cleanup.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 010 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

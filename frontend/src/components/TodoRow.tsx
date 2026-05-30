@@ -128,9 +128,9 @@ export function TodoRow({
             +{hiddenDescendants} deeper
           </div>
         ) : null}
-        {/* Tags are root-only, so subtasks carry none — this renders nothing
-            for them and a chip row for tagged root todos. */}
-        {t.tags.length > 0 ? (
+        {/* Tags are root-only — never render them on a subtask, even if legacy
+            data left some behind (the chip would be unremovable here). */}
+        {!t.parent_id && t.tags.length > 0 ? (
           <div className="prow-tags">
             {t.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </div>
