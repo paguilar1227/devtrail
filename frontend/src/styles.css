@@ -3387,7 +3387,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .notes-col-resizer.hidden { background: transparent; pointer-events: none; cursor: default; }
 .notes-kbd-hint { margin-left: 8px; opacity: 0.6; }
 .notes-tree-empty { padding: 10px 8px; }
-.notes-tree-empty code, .notes-folder-input::placeholder {
+.notes-tree-empty code, .folder-field-input::placeholder {
   font-family: var(--font-mono); font-size: 0.9em;
 }
 .notes-tree-row {
@@ -3451,30 +3451,34 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .notes-detail-empty {
   flex: 1; display: flex; align-items: center; justify-content: center;
 }
+/* Notes-view bottom-bar chrome that hosts the reusable FolderPathField. */
 .notes-folder-bar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   padding: 10px 16px;
   border-top: 0.5px solid var(--hairline);
   background: var(--glass-bg-soft);
 }
-.notes-folder-ic { display: inline-flex; color: var(--fg-subtle); }
-.notes-folder-empty { font-style: italic; }
-.notes-folder-input {
+
+/* Reusable folder-path field (components/FolderPathField.tsx) — chip / input /
+ * "+ Folder" affordances. Used in the Notes view bottom bar AND the note
+ * editor modal, so it carries no view-specific chrome of its own. */
+.folder-field { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.folder-field-ic { display: inline-flex; color: var(--fg-subtle); }
+.folder-field-input {
   background: var(--glass-bg); border: 0.5px solid var(--hairline);
   border-radius: 6px; padding: 3px 8px;
   color: var(--fg); font-family: var(--font-mono); font-size: var(--type-meta);
   outline: none; min-width: 140px;
 }
-.notes-folder-input:focus { border-color: var(--accent, var(--hairline)); }
+.folder-field-input:focus { border-color: var(--accent, var(--hairline)); }
 /* The single folder path, rendered as a click-to-edit chip. */
-.notes-folder-chip {
+.folder-field-chip {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 9px; border-radius: 5px;
   background: var(--glass-bg-soft); border: 0.5px solid var(--hairline);
   color: var(--fg); font-family: var(--font-mono); font-size: var(--type-meta); font-weight: 500;
   cursor: text; transition: border-color 100ms, background 100ms;
 }
-.notes-folder-chip:hover { border-color: var(--fg-subtle); background: var(--glass-bg); }
+.folder-field-chip:hover { border-color: var(--fg-subtle); background: var(--glass-bg); }
 
 /* Mobile / narrow: stack to a single column. Desktop is the target. */
 @media (max-width: 900px) {

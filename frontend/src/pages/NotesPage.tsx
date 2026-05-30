@@ -19,13 +19,14 @@ import { Icons } from '../components/Icons';
 import { SortDropdown } from '../components/SortDropdown';
 import { SearchInput, type SigilKind } from '../components/SearchInput';
 import { NoteRow } from '../components/NoteRow';
+import { FolderPathField } from '../components/FolderPathField';
 import { NoteReaderBody } from '../components/modals/NoteReaderDrawer';
 import { listContent, listProjects, updateContent } from '../lib/api';
 import { toUiNote, toUiProjects } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
 import { useTagSuggestions } from '../lib/useTagSuggestions';
 import {
-  buildFolderTree, noteInFolder, normalizeFolderPath, ancestorsOf,
+  buildFolderTree, noteInFolder, ancestorsOf,
   type FolderNode,
 } from '../lib/folders';
 import { cls } from '../lib/util';
@@ -304,11 +305,14 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                   onRoute={onRoute}
                 />
               </div>
-              <FolderPathEditor
-                note={selectedNote}
-                pending={saveFolder.isPending}
-                onChange={(path) => setNoteFolder(selectedNote, path)}
-              />
+              <div className="notes-folder-bar">
+                <FolderPathField
+                  value={selectedNote.folder}
+                  onChange={(path) => setNoteFolder(selectedNote, path)}
+                  pending={saveFolder.isPending}
+                  resetKey={selectedNote.id}
+                />
+              </div>
             </>
           ) : (
             <div className="notes-detail-empty page-subtle">
@@ -404,54 +408,3 @@ function FolderTreeNode({
   );
 }
 
-// ---- single folder-path chip, click-to-edit (pinned at the detail bottom) ----
-function FolderPathEditor({
-  note, pending, onChange,
-}: {
-  note: Note;
-  pending: boolean;
-  onChange: (path: string | null) => void;
-}) {
-  const folder = note.folder;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-
-  // Drop edit state when switching notes.
-  useEffect(() => { setEditing(false); setDraft(''); }, [note.id]);
-
-  const startEdit = () => { setDraft(folder ?? ''); setEditing(true); };
-  const commit = () => {
-    setEditing(false);
-    const next = normalizeFolderPath(draft) || null;
-    if (next !== folder) onChange(next);
-  };
-
-  return (
-    <div className="notes-folder-bar" aria-label="Folder for this note">
-      <span className="notes-folder-ic"><Icons.Layers size={12} /></span>
-      {editing ? (
-        <input
-          className="notes-folder-input"
-          autoFocus
-          placeholder="area/topic/sub"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
-            if (e.key === 'Escape') { setEditing(false); setDraft(''); }
-          }}
-          onBlur={commit}
-        />
-      ) : folder ? (
-        <button className="notes-folder-chip" onClick={startEdit} title="Click to edit folder">
-          {folder}
-        </button>
-      ) : (
-        <button className="btn btn-ghost btn-sm notes-folder-add" disabled={pending} onClick={startEdit}>
-          <Icons.Plus size={11} /> Folder
-        </button>
-      )}
-      {pending ? <span className="page-subtle">saving…</span> : null}
-    </div>
-  );
-}

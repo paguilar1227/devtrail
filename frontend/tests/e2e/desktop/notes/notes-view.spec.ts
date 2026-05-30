@@ -1,6 +1,7 @@
 // Notes view (Folders browser) — Bear-style 3-column view reached from the
-// sidebar. Folders are hierarchical slash-tags; the tree, the filtered list,
-// and the editable folder-path chip are all derived from notes in scope.
+// sidebar. A note's folder is a first-class `folder` field (a single path like
+// "cooking/italian"); the tree, the filtered list, and the editable folder-path
+// chip are all derived from the folders of the notes in scope.
 //
 // Pinned against the deterministic seed (scripts/seed-local.ts FOLDER_MAP):
 //   cooking → coffee(3) + recipes(2) = 5; travel(4); health(2); etc.
@@ -58,8 +59,8 @@ test.describe('Notes view: Folders browser', () => {
     await expect(page.locator('.notes-detail-body')).toBeVisible();
     // ONE folder chip (a note belongs to one folder); no remove × and no
     // "+ Folder" button while a folder exists.
-    await expect(page.locator('.notes-folder-chip')).toContainText('cooking/');
-    await expect(page.locator('.notes-folder-add')).toHaveCount(0);
+    await expect(page.locator('.folder-field-chip')).toContainText('cooking/');
+    await expect(page.locator('.folder-field-add')).toHaveCount(0);
     await expect(page.locator('.notes-folder-bar .tag .x')).toHaveCount(0);
   });
 
@@ -83,25 +84,25 @@ test.describe('Notes view: Folders browser', () => {
     await treeRow(page, 'travel').click();
     await treeRow(page, 'japan').click();
     await listRows(page).first().click();
-    await expect(page.locator('.notes-folder-chip')).toHaveText('travel/japan');
+    await expect(page.locator('.folder-field-chip')).toHaveText('travel/japan');
 
     // Move up a level: travel/japan → travel (a single-segment top-level folder).
-    await page.locator('.notes-folder-chip').click();
-    await page.locator('.notes-folder-input').fill('travel');
-    await page.locator('.notes-folder-input').press('Enter');
+    await page.locator('.folder-field-chip').click();
+    await page.locator('.folder-field-input').fill('travel');
+    await page.locator('.folder-field-input').press('Enter');
 
     // The note keeps a (single-segment) folder and shows under "travel" —
     // it does NOT vanish, and the chip is NOT replaced by "+ Folder".
-    await expect(page.locator('.notes-folder-chip')).toHaveText('travel');
-    await expect(page.locator('.notes-folder-add')).toHaveCount(0);
+    await expect(page.locator('.folder-field-chip')).toHaveText('travel');
+    await expect(page.locator('.folder-field-add')).toHaveCount(0);
     await treeRow(page, 'travel').click();
     await expect(page.locator('.notes-list-rows')).toContainText('Travel — Tokyo bucket list');
 
     // Restore the seed: move it back to travel/japan.
-    await page.locator('.notes-folder-chip').click();
-    await page.locator('.notes-folder-input').fill('travel/japan');
-    await page.locator('.notes-folder-input').press('Enter');
-    await expect(page.locator('.notes-folder-chip')).toHaveText('travel/japan');
+    await page.locator('.folder-field-chip').click();
+    await page.locator('.folder-field-input').fill('travel/japan');
+    await page.locator('.folder-field-input').press('Enter');
+    await expect(page.locator('.folder-field-chip')).toHaveText('travel/japan');
   });
 
   // The middle-column "New note" button opens the editor and files the note
@@ -123,5 +124,28 @@ test.describe('Notes view: Folders browser', () => {
     // It lands under "travel": shows in the list and bumps the folder count 4→5.
     await expect(page.locator('.notes-list-rows')).toContainText(title);
     await expect(treeRow(page, 'travel').locator('.ct')).toHaveText('5');
+  });
+
+  // The reusable FolderPathField also lives inside the note editor modal, so a
+  // note's folder can be set there (not just in the Notes view bottom bar).
+  // Starting from "All notes" the new note is unfiled until set via the field.
+  test('note editor modal sets the folder via the reusable FolderPathField', async ({ page }) => {
+    await openNotes(page); // "All notes" selected by default → unfiled new note
+    const title = stamp();
+    await page.locator('.notes-new-note').click();
+    await page.locator('.note-title-input').fill(title);
+
+    // Same component as the Notes view — "+ Folder" → type a path → commit.
+    await page.locator('.modal .folder-field-add').click();
+    await page.locator('.modal .folder-field-input').fill('e2efolder/sub');
+    await page.locator('.modal .folder-field-input').press('Enter');
+    await expect(page.locator('.modal .folder-field-chip')).toHaveText('e2efolder/sub');
+
+    await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+
+    // The folder it created shows in the tree and the note is filed under it.
+    await expect(treeRow(page, 'e2efolder')).toBeVisible();
+    await treeRow(page, 'e2efolder').click();
+    await expect(page.locator('.notes-list-rows')).toContainText(title);
   });
 });

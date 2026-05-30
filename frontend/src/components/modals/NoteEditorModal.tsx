@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
 import { Modal, Status, Tag } from '../primitives';
 import { MarkdownEditor } from '../MarkdownEditor';
+import { FolderPathField } from '../FolderPathField';
 import { TypeaheadPopover, type TypeaheadItem } from '../TypeaheadPopover';
 import { createNote, editContentBody, listTags, updateContent } from '../../lib/api';
 import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
@@ -37,6 +38,9 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
   const [body, setBody] = useState(note?.body ?? NEW_NOTE_BODY_PLACEHOLDER);
   const [title, setTitle] = useState(note?.title ?? NEW_NOTE_TITLE_PLACEHOLDER);
   const [tags, setTags] = useState<string[]>(note?.tags ?? []);
+  // Folder the note is filed under. New notes default to the folder the caller
+  // is browsing (initialFolder); edits start from the note's current folder.
+  const [folder, setFolder] = useState<string | null>(note?.folder ?? initialFolder ?? null);
   const [tagDraft, setTagDraft] = useState('');
   const [editingTag, setEditingTag] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +75,7 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
         content: body,
         project_ids: projectId ? [projectId] : [],
         tags: finalTags,
-        folder: initialFolder ?? null,
+        folder,
       }),
     onSuccess: () => { invalidateAll(); onClose(); },
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
@@ -87,12 +91,14 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
       const cleanTitle = title.trim() || 'Untitled note';
       const titleChanged = cleanTitle !== note.title;
       const tagsChanged = JSON.stringify(finalTags) !== JSON.stringify(note.tags ?? []);
+      const folderChanged = (folder ?? null) !== (note.folder ?? null);
       const bodyChanged = body !== note.body;
 
-      if (titleChanged || tagsChanged) {
+      if (titleChanged || tagsChanged || folderChanged) {
         await updateContent(note.id, {
           ...(titleChanged ? { title: cleanTitle } : {}),
           ...(tagsChanged ? { tags: finalTags } : {}),
+          ...(folderChanged ? { folder } : {}),
         });
       }
       if (bodyChanged) {
@@ -117,12 +123,14 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
         body !== NEW_NOTE_BODY_PLACEHOLDER ||
         cleanTitle !== NEW_NOTE_TITLE_PLACEHOLDER ||
         tags.length > 0 ||
+        (folder ?? null) !== (initialFolder ?? null) ||
         draftIsNovel
       )
     : (
         body !== note!.body ||
         cleanTitle !== note!.title ||
         JSON.stringify(tags) !== JSON.stringify(note!.tags ?? []) ||
+        (folder ?? null) !== (note!.folder ?? null) ||
         draftIsNovel
       );
 
@@ -299,6 +307,13 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
         <span style={{ marginLeft: 'auto' }}>
           <Status status={note?.processing_status || 'ready'} />
         </span>
+      </div>
+      <div className="note-editor-folder" style={{ marginBottom: 12 }}>
+        <FolderPathField
+          value={folder}
+          onChange={setFolder}
+          resetKey={note?.id ?? 'new'}
+        />
       </div>
       <div
         className="note-editor-pane"
