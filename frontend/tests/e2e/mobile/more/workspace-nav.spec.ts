@@ -1,5 +1,5 @@
 // Mobile More sheet — Workspace section nav rows. Each row routes to a
-// page that has a corresponding hero h1. Walking all four in one test
+// page that has a corresponding hero h1. Walking them all in one test
 // keeps the suite tight (one More-open per row would re-open the sheet
 // after every tap, since `go` closes it on selection).
 import { expect, test } from '@playwright/test';
@@ -8,6 +8,7 @@ import '../../helpers/setup';
 
 test('mobile more: every Workspace row routes to the right page', async ({ page }) => {
   const rows: Array<[string, RegExp]> = [
+    ['Notes', /^Notes$/],
     ['Activity', /^Activity$/],
     ['Tags', /^Tags$/],
     ['Archived', /^Archived$/],

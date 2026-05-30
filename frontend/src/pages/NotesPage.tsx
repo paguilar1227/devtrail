@@ -1,17 +1,19 @@
-// Notes browser — a Bear-style three-column view over notes organized by
-// FOLDERS (hierarchical slash-tags; see lib/folders.ts). Left: the folder
-// tree (collapsible, resizable). Middle: notes in the selected folder (or
-// hybrid search results) with the SAME SearchInput as Home. Right: the note
-// content + a single, click-to-edit folder-path chip.
+// Notes browser — a Bear-style view over notes organized by FOLDERS (each
+// note's first-class `folder` path; see lib/folders.ts). Left: the folder
+// tree. Middle: notes in the selected folder (or hybrid search results) with
+// the SAME SearchInput as Home. Right: the note content + a single,
+// click-to-edit folder-path chip (the reusable FolderPathField).
 //
-// A note belongs to exactly ONE folder (one slash-tag) at a time. Editing
-// the chip re-files the note and re-navigates the tree/middle to its new
-// home. Scope (personal / all / project) mirrors the Tags view.
+// A note belongs to exactly ONE folder at a time. Editing the chip re-files
+// the note and re-navigates the tree/middle to its new home. Scope
+// (personal / all / project) mirrors the Tags view.
 //
-// Columns are resizable (drag the dividers) and collapsible:
+// DESKTOP: a three-column grid — resizable (drag the dividers) and collapsible
 //   Cmd/Ctrl+1 — toggle the folder tree
 //   Cmd/Ctrl+2 — toggle tree + list together (follows the list's state)
 //   Cmd/Ctrl+3 — toggle "only the note" (hide both side columns)
+// MOBILE (< 820px): the three columns become a one-panel-at-a-time drill-down
+//   (folders → list → note) with a back arrow between them.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -25,6 +27,7 @@ import { listContent, listProjects, updateContent } from '../lib/api';
 import { toUiNote, toUiProjects } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
 import { useTagSuggestions } from '../lib/useTagSuggestions';
+import { useIsMobile } from '../lib/useIsMobile';
 import {
   buildFolderTree, noteInFolder, ancestorsOf,
   type FolderNode,
@@ -57,11 +60,16 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPath ? ancestorsOf(initialPath) : []));
 
-  // Column layout: visibility + widths (resizable).
+  // Column layout: visibility + widths (resizable). Desktop only.
   const [showTree, setShowTree] = useState(true);
   const [showList, setShowList] = useState(true);
   const [treeW, setTreeW] = useState(248);
   const [listW, setListW] = useState(340);
+
+  // Mobile (< 820px): the three columns become a Bear-style drill-down — one
+  // panel at a time (folders → list → note) with a back arrow between them.
+  const isMobile = useIsMobile();
+  const [mobileView, setMobileView] = useState<'folders' | 'list' | 'note'>('folders');
 
   const expand = (path: string) => setExpanded((s) => {
     const n = new Set(s);
@@ -78,6 +86,18 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   const selectFolder = (path: string | null) => {
     setSelectedPath(path);
     if (path) expand(path);
+  };
+
+  // Mobile drill-down navigation: selecting a folder advances to the notes
+  // list; selecting a note advances to the note view. On desktop these are
+  // no-ops beyond the selection itself (all panels are already visible).
+  const openFolder = (path: string | null) => {
+    selectFolder(path);
+    if (isMobile) setMobileView('list');
+  };
+  const openNote = (id: string) => {
+    setSelectedId(id);
+    if (isMobile) setMobileView('note');
   };
 
   // --- scope dropdown options (Personal / All / each active project) ---
@@ -180,147 +200,182 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   const gridCols =
     `${showTree ? treeW : 0}px ${showTree ? 5 : 0}px ${showList ? listW : 0}px ${showList ? 5 : 0}px minmax(0, 1fr)`;
 
-  return (
-    <div className="notes-view">
-      <div className="notes-view-head">
-        <div>
-          <h1>Notes</h1>
-          <p className="page-subtle">
-            {scopeNoteCount} notes · organized by Folders (nested <code>#a/b/c</code> tags).
-            <span className="notes-kbd-hint"> ⌘1/2/3 toggle columns</span>
-          </p>
+  // ---- panel contents (shared by the desktop grid and the mobile drill-down) ----
+  const treePanel = (
+    <>
+      <button
+        className={cls('notes-tree-row', selectedPath === null && 'active')}
+        onClick={() => openFolder(null)}
+      >
+        <span className="notes-tree-chev-spacer" aria-hidden="true" />
+        <Icons.Layers size={13} />
+        <span className="lbl">All notes</span>
+        <span className="ct">{scopeNoteCount}</span>
+      </button>
+      {roots.length === 0 ? (
+        <div className="page-subtle notes-tree-empty">
+          No folders yet. Add a folder to a note (bottom of the reader) to start a tree.
         </div>
-        <SortDropdown<ScopeMode>
-          id="notes-scope"
-          mode={scope}
-          modes={scopeModes}
-          labels={scopeLabels}
-          onChange={(s) => { setScope(s); setSelectedPath(null); }}
-          label="Scope"
-        />
-      </div>
+      ) : (
+        roots.map((n) => (
+          <FolderTreeNode
+            key={n.path}
+            node={n}
+            depth={0}
+            selectedPath={selectedPath}
+            expanded={expanded}
+            onToggle={toggle}
+            onSelect={openFolder}
+          />
+        ))
+      )}
+    </>
+  );
 
-      <div className="notes-cols" style={{ gridTemplateColumns: gridCols }} data-tree={showTree} data-list={showList}>
-        {/* ---- LEFT: folder tree ---- */}
-        <nav className="notes-tree" aria-label="Folders" aria-hidden={!showTree}>
-          <button
-            className={cls('notes-tree-row', selectedPath === null && 'active')}
-            onClick={() => selectFolder(null)}
-          >
-            <span className="notes-tree-chev-spacer" aria-hidden="true" />
-            <Icons.Layers size={13} />
-            <span className="lbl">All notes</span>
-            <span className="ct">{scopeNoteCount}</span>
-          </button>
-          {roots.length === 0 ? (
-            <div className="page-subtle notes-tree-empty">
-              No folders yet. Add a folder to a note (bottom of the reader) to start a tree.
-            </div>
+  const listPanel = (
+    <>
+      <div className="notes-list-search">
+        <div className="search-box">
+          <Icons.Search size={13} />
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            onSubmit={() => { /* live */ }}
+            tags={tagSuggestions}
+            mentions={NO_MENTIONS}
+            sigils={NOTE_SIGILS}
+            placeholder="Search notes… try #tag"
+          />
+        </div>
+        <button
+          className="btn btn-ghost btn-icon notes-new-note"
+          title={selectedPath ? `New note in ${selectedPath}` : 'New note'}
+          aria-label="New note"
+          onClick={() => onAction({ kind: 'note-edit', payload: null, folder: selectedPath })}
+        >
+          <Icons.Plus size={16} />
+        </button>
+      </div>
+      <div className="notes-list-rows">
+        {notesQ.isLoading ? (
+          <div className="page-subtle">Loading…</div>
+        ) : searchActive ? (
+          searchNotes.length === 0 ? (
+            <div className="page-subtle">No notes match.</div>
           ) : (
-            roots.map((n) => (
-              <FolderTreeNode
-                key={n.path}
-                node={n}
-                depth={0}
-                selectedPath={selectedPath}
-                expanded={expanded}
-                onToggle={toggle}
-                onSelect={selectFolder}
+            searchNotes.map((h) => (
+              <NoteRow
+                key={h.entity_id}
+                note={{ title: h.title }}
+                sub={h.excerpt}
+                tags={h.tags}
+                onClick={() => openNote(h.entity_id)}
               />
             ))
-          )}
-        </nav>
-
-        <ColResizer onResize={(d) => setTreeW((w) => clamp(w + d, TREE_MIN, TREE_MAX))} active={showTree} />
-
-        {/* ---- MIDDLE: search + notes list ---- */}
-        <div className="notes-list" aria-hidden={!showList}>
-          <div className="notes-list-search">
-            <div className="search-box">
-              <Icons.Search size={13} />
-              <SearchInput
-                value={query}
-                onChange={setQuery}
-                onSubmit={() => { /* live */ }}
-                tags={tagSuggestions}
-                mentions={NO_MENTIONS}
-                sigils={NOTE_SIGILS}
-                placeholder="Search notes… try #tag"
-              />
-            </div>
-            <button
-              className="btn btn-ghost btn-icon notes-new-note"
-              title={selectedPath ? `New note in ${selectedPath}` : 'New note'}
-              aria-label="New note"
-              onClick={() => onAction({ kind: 'note-edit', payload: null, folder: selectedPath })}
-            >
-              <Icons.Plus size={16} />
-            </button>
+          )
+        ) : browseNotes.length === 0 ? (
+          <div className="page-subtle">
+            {selectedPath ? 'No notes in this folder.' : 'No notes yet.'}
           </div>
-          <div className="notes-list-rows">
-            {notesQ.isLoading ? (
-              <div className="page-subtle">Loading…</div>
-            ) : searchActive ? (
-              searchNotes.length === 0 ? (
-                <div className="page-subtle">No notes match.</div>
-              ) : (
-                searchNotes.map((h) => (
-                  <NoteRow
-                    key={h.entity_id}
-                    note={{ title: h.title }}
-                    sub={h.excerpt}
-                    tags={h.tags}
-                    onClick={() => setSelectedId(h.entity_id)}
-                  />
-                ))
-              )
-            ) : browseNotes.length === 0 ? (
-              <div className="page-subtle">
-                {selectedPath ? 'No notes in this folder.' : 'No notes yet.'}
-              </div>
-            ) : (
-              browseNotes.map((n) => (
-                <NoteRow
-                  key={n.id}
-                  note={n}
-                  tags={n.tags}
-                  onClick={() => setSelectedId(n.id)}
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        <ColResizer onResize={(d) => setListW((w) => clamp(w + d, LIST_MIN, LIST_MAX))} active={showList} />
-
-        {/* ---- RIGHT: note content + single folder chip ---- */}
-        <div className="notes-detail">
-          {selectedNote ? (
-            <>
-              <div className="notes-detail-body">
-                <NoteReaderBody
-                  key={selectedNote.id}
-                  note={selectedNote}
-                  onClose={() => setSelectedId(null)}
-                  onRoute={onRoute}
-                />
-              </div>
-              <div className="notes-folder-bar">
-                <FolderPathField
-                  value={selectedNote.folder}
-                  onChange={(path) => setNoteFolder(selectedNote, path)}
-                  pending={saveFolder.isPending}
-                  resetKey={selectedNote.id}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="notes-detail-empty page-subtle">
-              {browseNotes.length || searchNotes.length ? 'Select a note to read it.' : 'Nothing here yet.'}
-            </div>
-          )}
-        </div>
+        ) : (
+          browseNotes.map((n) => (
+            <NoteRow
+              key={n.id}
+              note={n}
+              tags={n.tags}
+              onClick={() => openNote(n.id)}
+            />
+          ))
+        )}
       </div>
+    </>
+  );
+
+  const detailPanel = selectedNote ? (
+    <>
+      <div className="notes-detail-body">
+        <NoteReaderBody
+          key={selectedNote.id}
+          note={selectedNote}
+          onClose={() => setSelectedId(null)}
+          onRoute={onRoute}
+        />
+      </div>
+      <div className="notes-folder-bar">
+        <FolderPathField
+          value={selectedNote.folder}
+          onChange={(path) => setNoteFolder(selectedNote, path)}
+          pending={saveFolder.isPending}
+          resetKey={selectedNote.id}
+        />
+      </div>
+    </>
+  ) : (
+    <div className="notes-detail-empty page-subtle">
+      {browseNotes.length || searchNotes.length ? 'Select a note to read it.' : 'Nothing here yet.'}
+    </div>
+  );
+
+  return (
+    <div className="notes-view">
+      {(!isMobile || mobileView === 'folders') && (
+        <div className="notes-view-head">
+          <div>
+            <h1>Notes</h1>
+            <p className="page-subtle">
+              {scopeNoteCount} notes · organized by Folders (nested <code>#a/b/c</code> tags).
+              {!isMobile && <span className="notes-kbd-hint"> ⌘1/2/3 toggle columns</span>}
+            </p>
+          </div>
+          <SortDropdown<ScopeMode>
+            id="notes-scope"
+            mode={scope}
+            modes={scopeModes}
+            labels={scopeLabels}
+            onChange={(s) => { setScope(s); setSelectedPath(null); }}
+            label="Scope"
+          />
+        </div>
+      )}
+
+      {isMobile ? (
+        /* ---- Mobile: Bear-style one-panel-at-a-time drill-down ---- */
+        <div className="notes-mobile" data-view={mobileView}>
+          {mobileView === 'folders' && (
+            <nav className="notes-tree" aria-label="Folders">{treePanel}</nav>
+          )}
+          {mobileView === 'list' && (
+            <>
+              <div className="notes-mobile-bar">
+                <button className="btn btn-ghost btn-sm notes-mobile-back" onClick={() => setMobileView('folders')}>
+                  <Icons.ChevronLeft size={14} /> Folders
+                </button>
+                <span className="notes-mobile-title">{selectedPath ?? 'All notes'}</span>
+              </div>
+              <div className="notes-list">{listPanel}</div>
+            </>
+          )}
+          {mobileView === 'note' && (
+            <>
+              <div className="notes-mobile-bar">
+                <button className="btn btn-ghost btn-sm notes-mobile-back" onClick={() => setMobileView('list')}>
+                  <Icons.ChevronLeft size={14} /> Notes
+                </button>
+              </div>
+              <div className="notes-detail">{detailPanel}</div>
+            </>
+          )}
+        </div>
+      ) : (
+        /* ---- Desktop: resizable / collapsible three-column grid ---- */
+        <div className="notes-cols" style={{ gridTemplateColumns: gridCols }} data-tree={showTree} data-list={showList}>
+          <nav className="notes-tree" aria-label="Folders" aria-hidden={!showTree}>{treePanel}</nav>
+          <ColResizer onResize={(d) => setTreeW((w) => clamp(w + d, TREE_MIN, TREE_MAX))} active={showTree} />
+          <div className="notes-list" aria-hidden={!showList}>{listPanel}</div>
+          <ColResizer onResize={(d) => setListW((w) => clamp(w + d, LIST_MIN, LIST_MAX))} active={showList} />
+          <div className="notes-detail">{detailPanel}</div>
+        </div>
+      )}
     </div>
   );
 }
