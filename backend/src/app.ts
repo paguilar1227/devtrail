@@ -1148,7 +1148,10 @@ export function createApp(deps: ServiceDeps) {
         const todo = await todosSvc.updateTodo(deps, id, {
           content: body.content,
           projectId: body.project_id === null ? null : body.project_id,
-          section: body.section ?? undefined,
+          // Distinguish "clear to Ungrouped" (null) from "don't touch"
+          // (undefined) — `?? undefined` collapsed null and silently dropped
+          // section-clear requests (same footgun as due_date below).
+          section: body.section === undefined ? undefined : body.section,
           parentId: body.parent_id === null ? null : body.parent_id,
           status: body.status,
           priority: body.priority,

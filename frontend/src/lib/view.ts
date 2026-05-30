@@ -77,6 +77,7 @@ export function toUiTodo(t: ApiTodo): UiTodo {
     priority: (t.priority ? PRIORITY_MAP[t.priority] : 'p3') as UiPriority,
     parent_id: t.parent_id,
     project_id: t.project_id,
+    section: t.section,
     tags: t.tags,
     pinned: t.pinned_at !== null,
     due_at: t.due_date,

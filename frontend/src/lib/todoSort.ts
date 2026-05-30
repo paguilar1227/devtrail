@@ -37,9 +37,9 @@
 
 import type { Todo } from '../types';
 
-export type TodoSortMode = 'smart' | 'due' | 'priority' | 'manual' | 'recent';
+export type TodoSortMode = 'smart' | 'due' | 'priority' | 'manual' | 'recent' | 'alpha';
 
-export const TODO_SORT_MODES: TodoSortMode[] = ['smart', 'due', 'priority', 'manual', 'recent'];
+export const TODO_SORT_MODES: TodoSortMode[] = ['smart', 'due', 'priority', 'manual', 'recent', 'alpha'];
 
 export const TODO_SORT_LABELS: Record<TodoSortMode, string> = {
   smart: 'Smart',
@@ -47,6 +47,7 @@ export const TODO_SORT_LABELS: Record<TodoSortMode, string> = {
   priority: 'Priority',
   manual: 'Manual',
   recent: 'Recently created',
+  alpha: 'Alphabetical',
 };
 
 export interface SortedTodo {
@@ -121,6 +122,10 @@ function compareByCreated(a: Todo, b: Todo): number {
   return createdDescMs(a) - createdDescMs(b);
 }
 
+function compareByAlpha(a: Todo, b: Todo): number {
+  return a.title.localeCompare(b.title) || createdDescMs(a) - createdDescMs(b);
+}
+
 /** Comparator factory — exported so flat-render surfaces (project
  *  TodosTab) can apply the same ordering without going through the
  *  hierarchical emit path. */
@@ -131,6 +136,7 @@ export function compareForMode(mode: TodoSortMode): (a: Todo, b: Todo) => number
     case 'priority': return compareByPriority;
     case 'manual': return compareByManual;
     case 'recent': return compareByCreated;
+    case 'alpha': return compareByAlpha;
   }
 }
 

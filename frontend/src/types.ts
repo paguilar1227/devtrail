@@ -61,6 +61,7 @@ export interface Todo {
   priority: TodoPriority;
   parent_id: string | null;
   project_id: string | null;
+  section: string | null;
   tags: string[];
   pinned: boolean;
   due_at: string | null;
@@ -156,6 +157,9 @@ export type Route =
   // Notes browser organized by Folders (hierarchical slash-tags). `path`
   // deep-links a selected folder, `scope` the project scope.
   | { route: 'notes'; path?: string; scope?: 'personal' | 'all' | string }
+  // Todos browser — a sectioned list with a scope dropdown. `scope` mirrors
+  // Notes; sections are stored per todo (todo.section) and scoped naturally.
+  | { route: 'todos'; scope?: 'personal' | 'all' | string }
   | { route: 'activity' }
   | { route: 'trash' };
 

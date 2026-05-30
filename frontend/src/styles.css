@@ -3500,3 +3500,54 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ============================================================
+   Todos view — sectioned list with scope dropdown + filters
+   ============================================================ */
+.todos-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.todos-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px var(--pad-page) 10px;
+}
+.todos-toolbar .search-box { flex: 1; min-width: 0; }
+.todos-filters {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 0 var(--pad-page) 12px;
+}
+.todos-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 0 var(--pad-page) 56px;
+  scrollbar-width: thin;
+}
+.todos-search-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
+
+/* --- a section --- */
+.todos-section { margin-bottom: 18px; }
+.todos-section-head {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 6px 4px; margin-bottom: 2px;
+  color: var(--fg-muted); font-size: var(--type-meta); font-weight: 600;
+  letter-spacing: 0.02em; text-transform: uppercase;
+  background: transparent; border: 0; text-align: left;
+  border-bottom: 0.5px solid var(--hairline);
+}
+.todos-section-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todos-section-head .ct { color: var(--fg-subtle); font-weight: 500; }
+.todos-section-body { display: flex; flex-direction: column; padding-top: 2px; }
+.todos-section-body .prow + .prow { border-top: 0.5px solid var(--hairline); }
+.todos-section-empty {
+  padding: 12px 10px; font-size: var(--type-meta); font-style: italic;
+  border: 1px dashed var(--hairline); border-radius: 8px; margin: 4px 0;
+  text-align: center;
+}
+/* Highlight a section when a dragged row hovers over its body. */
+.todos-section[data-over] .todos-section-body {
+  background: var(--glass-bg-soft); border-radius: 8px;
+  outline: 1px dashed var(--accent, var(--fg-subtle)); outline-offset: 2px;
+}
+
+/* --- Done group (collapsible, at the very bottom) --- */
+.todos-done { margin-top: 8px; }
+.todos-done-head { cursor: pointer; }
+.todos-done-chev { margin-left: auto; transition: transform 120ms; color: var(--fg-subtle); }
+.todos-done-chev.open { transform: rotate(90deg); }
+

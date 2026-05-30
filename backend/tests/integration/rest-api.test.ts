@@ -2056,6 +2056,35 @@ describe('Todos API', () => {
     expect(queries[0].params[1]).toBeNull();
   });
 
+  it('PUT /todos/:id with section=null clears the section (move to Ungrouped)', async () => {
+    // Regression: the handler used `body.section ?? undefined`, collapsing a
+    // null section-clear into "don't touch" — so a todo could never leave a
+    // section. The Todos view's drag-to-Ungrouped depends on this working.
+    const id = '66666666-6666-4666-8666-666666666666';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/^UPDATE\s+todos\b/i.test(sql)) {
+        return { rows: [{
+          id, content: 'x', project_id: null, section: null, parent_id: null,
+          priority: null, status: 'not_started', due_date: null, tags: [],
+          archived: false, manual_order: null, pinned_at: null,
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+    const res = await app.fetch(new Request(`http://localhost/api/v1/todos/${id}`, {
+      method: 'PUT',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section: null }),
+    }));
+    expect(res.status).toBe(200);
+    const upd = queries.find((q) => /^UPDATE\s+todos\b/i.test(q.sql) && /section\s*=/.test(q.sql));
+    expect(upd).toBeDefined();
+    expect(upd!.params).toContain(null);
+  });
+
   it('PUT /todos/:id with status=done cascades to non-done descendants', async () => {
     const parent = '22222222-2222-4222-8222-222222222222';
     const child1 = '33333333-3333-4333-8333-333333333333';
