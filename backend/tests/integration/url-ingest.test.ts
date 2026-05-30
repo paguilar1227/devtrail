@@ -208,9 +208,9 @@ describe('POST /api/v1/content/from-url', () => {
     );
     expect(insertCall).toBeDefined();
     const params = insertCall![1] as any[];
-    // source_url is param $12 (1-indexed) → index 11 (0-indexed). published_at
-    // is $13 after the migration-003 column addition.
-    expect(params[11]).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    // source_url is param $13 (1-indexed) → index 12 (0-indexed) after the
+    // migration-009 `folder` column ($10) shifted the trailing params by one.
+    expect(params[12]).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   });
 
   it('ingests X thread — uses xAI Agent Tools (x_search)', async () => {

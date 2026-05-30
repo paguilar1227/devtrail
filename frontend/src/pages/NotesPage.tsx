@@ -25,7 +25,7 @@ import { toUiNote, toUiProjects } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
 import { useTagSuggestions } from '../lib/useTagSuggestions';
 import {
-  buildFolderTree, noteInFolder, withFolders, isFolderTag, normalizeFolderPath, ancestorsOf,
+  buildFolderTree, noteInFolder, normalizeFolderPath, ancestorsOf,
   type FolderNode,
 } from '../lib/folders';
 import { cls } from '../lib/util';
@@ -104,7 +104,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   });
   const notes: ContentItem[] = notesQ.data ?? [];
 
-  const roots = useMemo(() => buildFolderTree(notes.map((n) => ({ tags: n.tags }))), [notes]);
+  const roots = useMemo(() => buildFolderTree(notes.map((n) => ({ folder: n.folder }))), [notes]);
 
   // --- middle column: hybrid search (when typing) OR folder-filtered browse ---
   const { query, setQuery, searchActive, hits } = useEntitySearch({ projectId, entityTypes: ['note'] });
@@ -115,7 +115,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   );
 
   const browseNotes = useMemo(() => {
-    const list = selectedPath ? notes.filter((n) => noteInFolder(n.tags, selectedPath)) : notes;
+    const list = selectedPath ? notes.filter((n) => noteInFolder(n.folder, selectedPath)) : notes;
     return [...list]
       .sort((a, b) => (b.updated_at ?? b.created_at).localeCompare(a.updated_at ?? a.created_at))
       .map(toUiNote);
@@ -140,19 +140,19 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
 
   // When a note is opened, reveal its folder in the tree so the left panel
   // reflects where the note lives (the nesting the user expects to see).
-  const selectedFolder = selectedNote?.tags.find(isFolderTag) ?? null;
+  const selectedFolder = selectedNote?.folder ?? null;
   useEffect(() => { if (selectedFolder) expand(selectedFolder); }, [selectedFolder]);
 
   // --- folder editing: a note has ONE folder; editing re-files + navigates ---
   const saveFolder = useMutation({
-    mutationFn: ({ id, tags }: { id: string; tags: string[] }) => updateContent(id, { tags }),
+    mutationFn: ({ id, folder }: { id: string; folder: string | null }) => updateContent(id, { folder }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['content', 'note', 'notes-view'] });
       qc.invalidateQueries({ queryKey: ['tags'] });
     },
   });
   const setNoteFolder = (note: Note, path: string | null) => {
-    saveFolder.mutate({ id: note.id, tags: withFolders(note.tags, path ? [path] : []) });
+    saveFolder.mutate({ id: note.id, folder: path });
     // Re-navigate so the moved note's new group shows in the middle and the
     // new path is revealed/highlighted in the tree. Note stays open.
     setSelectedPath(path);
@@ -294,7 +294,6 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                   note={selectedNote}
                   onClose={() => setSelectedId(null)}
                   onRoute={onRoute}
-                  hideFolderTags
                 />
               </div>
               <FolderPathEditor
@@ -405,7 +404,7 @@ function FolderPathEditor({
   pending: boolean;
   onChange: (path: string | null) => void;
 }) {
-  const folder = note.tags.find(isFolderTag) ?? null;
+  const folder = note.folder;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 

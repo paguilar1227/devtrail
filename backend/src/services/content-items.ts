@@ -46,6 +46,7 @@ export interface CreateContentInput {
   };
   projectIds?: string[];
   tags?: string[];
+  folder?: string | null;      // optional — folder path the note is filed under
   sourceUrl?: string;          // optional — set for URL-ingested content
   trace?: IngestTrace;         // optional — passed in by url-ingest. Otherwise a fresh one is made here.
   /** Skip the file-hash and source-url dedup gate. Used by the replace
@@ -194,6 +195,7 @@ async function createContentItemImpl(
     fileHash,
     projectIds: input.projectIds ?? [],
     tags: input.tags ?? [],
+    folder: input.folder ?? null,
     embedding: null,
     metadata: input.replacesId
       ? { ingest_trace: trace, replaces: input.replacesId }
@@ -657,6 +659,7 @@ async function rerunIngestTail(
     file,
     projectIds: row.project_ids,
     tags: row.tags,
+    folder: row.folder,
     sourceUrl: row.source_url ?? undefined,
     trace,
   };
@@ -696,12 +699,14 @@ export async function updateContentItem(
     title?: string;
     projectIds?: string[];
     tags?: string[];
+    folder?: string | null;
   },
 ): Promise<ContentItemRow | null> {
   return dbUpdate(deps.db, id, {
     title: patch.title,
     projectIds: patch.projectIds,
     tags: patch.tags,
+    folder: patch.folder,
   });
 }
 
@@ -971,6 +976,7 @@ export async function replaceContent(
     title: input.title ?? oldRow.title,
     projectIds: oldRow.project_ids,
     tags: oldRow.tags,
+    folder: oldRow.folder,
     skipDedup: true,
     replacesId: oldId,
   });

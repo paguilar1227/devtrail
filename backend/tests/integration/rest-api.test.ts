@@ -521,6 +521,78 @@ describe('Content items API', () => {
     expect(body.error).toMatch(/edit-body/);
   });
 
+  it('PUT /content/:id re-files the note into a folder (folder round-trip)', async () => {
+    // Regression for the Notes-view bug: editing the folder chip down to a
+    // single segment (travel/japan → travel) must persist as a first-class
+    // `folder` field, not vanish. The whole point of migration 009.
+    const fakeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const row = (folder: string | null) => ({
+      id: fakeId, type: 'note', title: 'Tokyo bucket list', content: 'body',
+      blob_url: null, mime_type: null, file_hash: null,
+      project_ids: [], tags: [], folder, embedding: null, metadata: {},
+      source_url: null, published_at: null, archived: false,
+      processing_status: 'ready', processing_error: null,
+      ingest_completed_at: new Date(), pinned_at: null,
+      created_at: new Date(), updated_at: new Date(),
+    });
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/UPDATE\s+content_items\s+SET/i.test(sql)) {
+        // Echo back the folder param the handler sent so the response reflects it.
+        const folderParam = (params ?? []).includes('travel') ? 'travel' : null;
+        return { rows: [row(folderParam)] } as any;
+      }
+      return { rows: [row('travel')] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${fakeId}`,
+      { method: 'PUT', headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: 'travel' }) },
+    ));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.item.folder).toBe('travel');
+
+    const upd = queries.find((q) => /UPDATE\s+content_items\s+SET/i.test(q.sql));
+    expect(upd!.sql).toMatch(/folder\s*=\s*\$/);
+    expect(upd!.params).toContain('travel');
+  });
+
+  it('PUT /content/:id with folder:null unfiles the note', async () => {
+    const fakeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params: params ?? [] });
+      if (/UPDATE\s+content_items\s+SET/i.test(sql)) {
+        return { rows: [{
+          id: fakeId, type: 'note', title: 'Tokyo', content: 'body',
+          blob_url: null, mime_type: null, file_hash: null,
+          project_ids: [], tags: [], folder: null, embedding: null, metadata: {},
+          source_url: null, published_at: null, archived: false,
+          processing_status: 'ready', processing_error: null,
+          ingest_completed_at: new Date(), pinned_at: null,
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const res = await app.fetch(new Request(
+      `http://localhost/api/v1/content/${fakeId}`,
+      { method: 'PUT', headers: { ...AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: null }) },
+    ));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.item.folder).toBeNull();
+
+    const upd = queries.find((q) => /UPDATE\s+content_items\s+SET/i.test(q.sql));
+    expect(upd!.sql).toMatch(/folder\s*=\s*\$/);
+    expect(upd!.params).toContain(null);
+  });
+
   it('POST /content/:id/edit-body returns 202 + pending on a text-only note', async () => {
     const fakeId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
     const queries: Array<{ sql: string; params: unknown[] }> = [];

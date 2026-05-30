@@ -144,6 +144,7 @@ export function toUiNote(c: ApiContent): UiNote {
     title: c.title,
     body: c.content ?? '',
     tags: c.tags,
+    folder: c.folder,
     processing_status: c.processing_status,
     project_ids: c.project_ids,
     pinned: c.pinned_at !== null,

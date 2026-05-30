@@ -304,6 +304,8 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         .describe('DOCUMENT/NOTE/QUICK_NOTE ONLY. Array of project UUIDs. Item can belong to multiple projects, or none (personal/global).'),
       tags: z.array(z.string()).optional()
         .describe('User-supplied tags only. Ask the user before saving — do not invent tags yourself. Lowercase kebab-case (e.g., "reference", "meeting-notes").'),
+      folder: z.string().optional()
+        .describe('DOCUMENT/NOTE/QUICK_NOTE ONLY. Optional hierarchical folder path the item is filed under (e.g., "cooking/italian"). A single segment like "travel" is a valid top-level folder. Separate from tags.'),
       priority: z.enum(['P1', 'P2', 'P3']).optional()
         .describe('TODO ONLY. P1 = urgent, P2 = normal, P3 = low. Omit for unprioritized.'),
       due_date: z.string().optional()
@@ -344,6 +346,7 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         title: input.title,
         projectIds: input.project_ids,
         tags: input.tags,
+        folder: input.folder,
       });
       // MCP contract is sync: await the pipeline so callers get the final
       // chunk count and real title, not the placeholder.
@@ -418,6 +421,8 @@ Returns the updated record.`,
         .describe('CONTENT ONLY. Rename the document/note. (Use `name` for projects.)'),
       project_ids: z.array(z.string()).optional()
         .describe('CONTENT ONLY (array of UUIDs). Replaces the existing project membership.'),
+      folder: z.string().nullable().optional()
+        .describe('CONTENT ONLY. Re-file under a hierarchical folder path (e.g., "cooking/italian"); a single segment like "travel" is a valid top-level folder. null unfiles it.'),
 
       // project fields
       name: z.string().optional()
@@ -486,12 +491,14 @@ Returns the updated record.`,
         // separate read.
         let row: Awaited<ReturnType<typeof contentSvc.updateContentItem>> | null = null;
         const hasMetadataChange =
-          input.title !== undefined || input.project_ids !== undefined || input.tags !== undefined;
+          input.title !== undefined || input.project_ids !== undefined
+          || input.tags !== undefined || input.folder !== undefined;
         if (hasMetadataChange) {
           row = await contentSvc.updateContentItem(deps, input.id, {
             title: input.title,
             projectIds: input.project_ids,
             tags: input.tags,
+            folder: input.folder,
           });
           if (!row) {
             return { content: [{ type: 'text', text: `No content item found with id ${input.id}` }], isError: true };

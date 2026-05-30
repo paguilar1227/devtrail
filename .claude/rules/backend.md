@@ -76,8 +76,8 @@ Read:
 
 Write:
 10. `create_project`
-11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`)
-12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags), project (name/description/status)
+11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`; document/note/quick_note accept an optional `folder` path)
+12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags/**folder** — single hierarchical path, null to unfile), project (name/description/status)
 13. `replace` — archive an existing content item and create a v2 in its place; old row stamped `metadata.replaced_by`. Refuses pending rows. Text-only (REST handles binary replacement).
 14. `archive` — soft delete on content / todo / project
 15. `restore` — undo `archive`

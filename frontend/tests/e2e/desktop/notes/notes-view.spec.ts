@@ -71,4 +71,36 @@ test.describe('Notes view: Folders browser', () => {
     await page.keyboard.press('ControlOrMeta+1');
     await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();
   });
+
+  // Regression: removing a folder segment down to a SINGLE top-level segment
+  // (travel/japan → travel) used to drop the note out of the tree entirely,
+  // because folders were slash-tags and a slash-less path read as a flat tag.
+  // With a first-class `folder` field, a single segment is a real folder, so
+  // the note must remain — filed directly under the parent. Mutates + restores
+  // the seed so the shared DB is left untouched for other specs.
+  test('removing a folder segment files the note under the parent folder', async ({ page }) => {
+    await openNotes(page);
+    await treeRow(page, 'travel').click();
+    await treeRow(page, 'japan').click();
+    await listRows(page).first().click();
+    await expect(page.locator('.notes-folder-chip')).toHaveText('travel/japan');
+
+    // Move up a level: travel/japan → travel (a single-segment top-level folder).
+    await page.locator('.notes-folder-chip').click();
+    await page.locator('.notes-folder-input').fill('travel');
+    await page.locator('.notes-folder-input').press('Enter');
+
+    // The note keeps a (single-segment) folder and shows under "travel" —
+    // it does NOT vanish, and the chip is NOT replaced by "+ Folder".
+    await expect(page.locator('.notes-folder-chip')).toHaveText('travel');
+    await expect(page.locator('.notes-folder-add')).toHaveCount(0);
+    await treeRow(page, 'travel').click();
+    await expect(page.locator('.notes-list-rows')).toContainText('Travel — Tokyo bucket list');
+
+    // Restore the seed: move it back to travel/japan.
+    await page.locator('.notes-folder-chip').click();
+    await page.locator('.notes-folder-input').fill('travel/japan');
+    await page.locator('.notes-folder-input').press('Enter');
+    await expect(page.locator('.notes-folder-chip')).toHaveText('travel/japan');
+  });
 });

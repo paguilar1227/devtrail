@@ -521,6 +521,7 @@ export function createApp(deps: ServiceDeps) {
       let title: string | undefined;
       let projectIds: string[] | undefined;
       let tags: string[] | undefined;
+      let folder: string | null | undefined;
       let file: { data: Buffer; mimeType: string; filename: string } | undefined;
 
       if (contentType.includes('multipart/form-data')) {
@@ -532,6 +533,7 @@ export function createApp(deps: ServiceDeps) {
         projectIds = pids ? pids.split(',').filter(Boolean) : undefined;
         const tgs = typeof body.tags === 'string' ? body.tags : undefined;
         tags = tgs ? tgs.split(',').filter(Boolean) : undefined;
+        folder = typeof body.folder === 'string' && body.folder.trim() ? body.folder : undefined;
         const uploaded = body.file as File | undefined;
         if (uploaded && uploaded.size > 0) {
           file = {
@@ -547,12 +549,14 @@ export function createApp(deps: ServiceDeps) {
           title?: string;
           project_ids?: string[];
           tags?: string[];
+          folder?: string | null;
         }>();
         type = body.type;
         content = body.content;
         title = body.title;
         projectIds = body.project_ids;
         tags = body.tags;
+        folder = body.folder ?? undefined;
       }
 
       if (!type || (type !== 'document' && type !== 'note')) {
@@ -563,7 +567,7 @@ export function createApp(deps: ServiceDeps) {
       }
 
       const started = await contentSvc.createContentItem(deps, {
-        type, content, title, projectIds, tags, file,
+        type, content, title, projectIds, tags, folder, file,
       });
       return c.json(
         { id: started.id, status: started.status },
@@ -745,6 +749,7 @@ export function createApp(deps: ServiceDeps) {
         content?: string;
         project_ids?: string[];
         tags?: string[];
+        folder?: string | null;
       }>();
       if (body.content !== undefined) {
         return c.json({
@@ -755,6 +760,7 @@ export function createApp(deps: ServiceDeps) {
         title: body.title,
         projectIds: body.project_ids,
         tags: body.tags,
+        folder: body.folder,
       });
       if (!item) return c.json({ error: 'Not found' }, 404);
       return c.json({ item: serializeContentItem(item as never, deps.blobStorage) }, 200);

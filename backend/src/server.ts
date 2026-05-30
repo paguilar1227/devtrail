@@ -202,6 +202,20 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 008 complete.');
     }
 
+    // Migration 009: first-class folder column on content_items (+ backfill
+    // from legacy slash-tags). The backfill runs inside the same SQL file, so
+    // it's gated by the column-existence probe — runs exactly once.
+    const m009Check = await deps.db.pool.query(
+      `SELECT count(*) as count FROM information_schema.columns
+       WHERE table_name = 'content_items' AND column_name = 'folder'`,
+    );
+    if (parseInt(m009Check.rows[0].count) === 0) {
+      console.log('Running migration 009...');
+      const sql = readFileSync(migration('009_content_folder.sql'), 'utf-8');
+      await deps.db.pool.query(sql);
+      console.log('Migration 009 complete.');
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

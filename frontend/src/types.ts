@@ -43,6 +43,7 @@ export interface Note {
   title: string;
   body: string;
   tags: string[];
+  folder: string | null;
   processing_status: ProcessingStatus;
   project_ids: string[];
   pinned: boolean;

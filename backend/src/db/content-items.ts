@@ -14,6 +14,7 @@ export interface ContentItemInsert {
   fileHash: string | null;
   projectIds: string[];
   tags: string[];
+  folder?: string | null;             // single hierarchical folder path, or null when unfiled
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   sourceUrl: string | null;
@@ -32,6 +33,7 @@ export interface ContentItemRow {
   file_hash: string | null;
   project_ids: string[];
   tags: string[];
+  folder: string | null;
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   source_url: string | null;
@@ -88,13 +90,14 @@ export async function insertContentItem(
   const result = await db.query(
     `INSERT INTO content_items
        (type, title, title_source, content, blob_url, mime_type, file_hash,
-        project_ids, tags, embedding, metadata, source_url, published_at,
+        project_ids, tags, folder, embedding, metadata, source_url, published_at,
         processing_status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING id`,
     [
       item.type, item.title, item.titleSource, item.content, item.blobUrl,
       item.mimeType, item.fileHash, item.projectIds, item.tags,
+      item.folder ?? null,
       item.embedding ? JSON.stringify(item.embedding) : null,
       JSON.stringify(item.metadata),
       item.sourceUrl,
@@ -257,7 +260,7 @@ export async function updateContentItem(
   const map: Record<string, string> = {
     title: 'title', titleSource: 'title_source', content: 'content',
     blobUrl: 'blob_url', mimeType: 'mime_type', fileHash: 'file_hash',
-    projectIds: 'project_ids', tags: 'tags', sourceUrl: 'source_url',
+    projectIds: 'project_ids', tags: 'tags', folder: 'folder', sourceUrl: 'source_url',
     publishedAt: 'published_at',
   };
 
@@ -438,7 +441,7 @@ export async function findSimilarContentItems(
   // Explicit column list — must NOT include the embedding vector.
   const result = await db.query(
     `SELECT id, type, title, title_source, content, blob_url, mime_type,
-            file_hash, project_ids, tags, metadata, source_url, archived,
+            file_hash, project_ids, tags, folder, metadata, source_url, archived,
             processing_status, processing_error, ingest_completed_at,
             created_at, updated_at,
             1 - (embedding <=> $1::vector) AS similarity

@@ -1,14 +1,13 @@
-// "Folders" — a hierarchical organization layer over notes, built entirely
-// from tags that contain a separator ('/'). A tag like
-// "cooking/italian/dessert" files a note at that path in the folder tree;
-// FLAT tags (no '/') are NOT folders — they stay regular tags. The tree is
-// derived client-side from whatever notes are in scope (single-user corpus,
-// so no backend aggregation needed).
+// "Folders" — a hierarchical organization layer over notes. A note belongs to
+// exactly ONE folder, stored in its own first-class `folder` field (a path like
+// "cooking/italian/dessert", or null for an unfiled note). Folders are a
+// SEPARATE concept from tags: flat tags stay flat and never appear in the tree.
 //
-// We deliberately overload the existing `tags` field rather than add a new
-// column: a slash-containing tag IS a folder path. This keeps the whole
-// feature frontend-only (no migration / server restart) and mirrors how Bear
-// implements nested tags.
+// Because the path is its own field (not an overloaded slash-tag), a
+// single-segment path like "travel" is a perfectly valid top-level folder — a
+// note can live directly in "travel" while "travel/japan" exists as a subfolder.
+// The tree is derived client-side from whatever notes are in scope (single-user
+// corpus, so no backend aggregation needed).
 
 export const FOLDER_SEP = '/';
 
@@ -22,19 +21,6 @@ export interface FolderNode {
   noteCount: number;
 }
 
-/** A folder path is a tag containing the separator. */
-export function isFolderTag(tag: string): boolean {
-  return tag.includes(FOLDER_SEP);
-}
-
-/** Split flat tags from folder paths on a note. */
-export function splitTags(tags: string[]): { flat: string[]; folders: string[] } {
-  const flat: string[] = [];
-  const folders: string[] = [];
-  for (const t of tags) (isFolderTag(t) ? folders : flat).push(t);
-  return { flat, folders };
-}
-
 /** Normalize a path: trim, collapse repeated/edge separators, drop blanks. */
 export function normalizeFolderPath(raw: string): string {
   return raw
@@ -44,10 +30,17 @@ export function normalizeFolderPath(raw: string): string {
     .join(FOLDER_SEP);
 }
 
-/** Build the folder tree from a set of notes. Each slash-tag contributes all
- *  of its ancestor paths as nodes; a node's count includes notes filed at it
- *  or below. */
-export function buildFolderTree(notes: { tags: string[] }[]): FolderNode[] {
+/** All ancestor paths of a folder path, inclusive:
+ *  "a/b/c" → ["a", "a/b", "a/b/c"]. */
+export function ancestorsOf(path: string): string[] {
+  const segs = path.split(FOLDER_SEP).filter(Boolean);
+  return segs.map((_, i) => segs.slice(0, i + 1).join(FOLDER_SEP));
+}
+
+/** Build the folder tree from a set of notes. Each note's `folder` contributes
+ *  all of its ancestor paths as nodes; a node's count includes notes filed at
+ *  it or below. Notes with no folder are skipped. */
+export function buildFolderTree(notes: { folder: string | null }[]): FolderNode[] {
   const nodes = new Map<string, FolderNode>();
   const counted = new Map<string, Set<number>>();
 
@@ -65,15 +58,13 @@ export function buildFolderTree(notes: { tags: string[] }[]): FolderNode[] {
   };
 
   notes.forEach((note, i) => {
-    for (const fp of note.tags.filter(isFolderTag)) {
-      const segs = fp.split(FOLDER_SEP).filter(Boolean);
-      for (let k = 1; k <= segs.length; k++) {
-        const ancestor = segs.slice(0, k).join(FOLDER_SEP);
-        ensure(ancestor);
-        let set = counted.get(ancestor);
-        if (!set) { set = new Set(); counted.set(ancestor, set); }
-        set.add(i);
-      }
+    const path = note.folder ? normalizeFolderPath(note.folder) : '';
+    if (!path) return;
+    for (const ancestor of ancestorsOf(path)) {
+      ensure(ancestor);
+      let set = counted.get(ancestor);
+      if (!set) { set = new Set(); counted.set(ancestor, set); }
+      set.add(i);
     }
   });
 
@@ -91,23 +82,9 @@ export function buildFolderTree(notes: { tags: string[] }[]): FolderNode[] {
   return roots;
 }
 
-/** All ancestor paths of a folder path, inclusive:
- *  "a/b/c" → ["a", "a/b", "a/b/c"]. */
-export function ancestorsOf(path: string): string[] {
-  const segs = path.split(FOLDER_SEP).filter(Boolean);
-  return segs.map((_, i) => segs.slice(0, i + 1).join(FOLDER_SEP));
-}
-
-/** Does a note belong under `path` (exact match or any descendant)? */
-export function noteInFolder(tags: string[], path: string): boolean {
-  return tags.filter(isFolderTag).some((fp) => fp === path || fp.startsWith(path + FOLDER_SEP));
-}
-
-/** Replace a note's folder paths, preserving its flat tags. Returns the new
- *  combined tags array for updateContent. */
-export function withFolders(tags: string[], folders: string[]): string[] {
-  const flat = tags.filter((t) => !isFolderTag(t));
-  const cleaned = folders.map(normalizeFolderPath).filter(Boolean);
-  // de-dup while keeping order: flat tags first, then unique folder paths
-  return [...flat, ...Array.from(new Set(cleaned))];
+/** Does a note (with folder `folder`) belong under `path` — exact match or any
+ *  descendant? A null folder belongs to no folder. */
+export function noteInFolder(folder: string | null, path: string): boolean {
+  if (!folder) return false;
+  return folder === path || folder.startsWith(path + FOLDER_SEP);
 }

@@ -330,10 +330,10 @@ async function main() {
     { title: 'Quotes to remember', content: '"Strong opinions, weakly held." — Saffo\n"The first draft of anything is shit." — Hemingway\n"Compare yourself to who you were yesterday, not to who someone else is today." — Peterson' },
   ];
 
-  // Folder paths (Folders feature) — a slash-tag files a note into the
-  // hierarchical tree shown in the Notes view. Mapped by title so the seed
-  // ships a realistic multi-level tree (cooking, travel, health, journal,
-  // work, home, media, reading) out of the box.
+  // Folder paths (Folders feature) — the `folder` field files a note into the
+  // hierarchical tree shown in the Notes view (a first-class field, separate
+  // from tags). Mapped by title so the seed ships a realistic multi-level tree
+  // (cooking, travel, health, journal, work, home, media, reading) out of box.
   const FOLDER_MAP: Record<string, string> = {
     'Recipe — Sunday sourdough': 'cooking/recipes',
     'Recipe — weeknight ramen': 'cooking/recipes',
@@ -364,13 +364,14 @@ async function main() {
   };
 
   for (const n of personalNoteSpecs) {
-    const folder = FOLDER_MAP[n.title];
+    const folder = FOLDER_MAP[n.title] ?? null;
     const created = await api<{ id: string; status: string }>('POST', '/api/v1/content', {
       type: 'note',
       title: n.title,
       content: n.content,
       project_ids: [],
-      tags: [...(n.tags ?? []), ...(folder ? [folder] : [])],
+      tags: n.tags ?? [],
+      folder,
     });
     console.log(`  + personal note "${n.title}"`);
     // No-op the returned id — we don't reference these by handle.

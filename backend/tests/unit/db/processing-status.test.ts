@@ -70,8 +70,9 @@ describe('migration 004 — processing_status retrieval invariants', () => {
     });
 
     const params = query.mock.calls[0][1] as unknown[];
-    // INSERT param order: ..., source_url ($12), published_at ($13), processing_status ($14)
-    expect(params[13]).toBe('ready');
+    // INSERT param order after migration-009 `folder` ($10): ..., source_url
+    // ($13), published_at ($14), processing_status ($15) → index 14.
+    expect(params[14]).toBe('ready');
   });
 
   it('insertContentItem accepts processing_status=pending for the new async path', async () => {
@@ -94,7 +95,7 @@ describe('migration 004 — processing_status retrieval invariants', () => {
     });
 
     const params = query.mock.calls[0][1] as unknown[];
-    expect(params[13]).toBe('pending');
+    expect(params[14]).toBe('pending');
   });
 
   it('updateProcessingStatus emits an UPDATE that sets status + error + updated_at', async () => {

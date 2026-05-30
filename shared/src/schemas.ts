@@ -125,6 +125,10 @@ export const ContentItemSchema = z.object({
   file_hash: z.string().nullable(),
   project_ids: z.array(UuidSchema),
   tags: z.array(z.string()),
+  // Single hierarchical folder path (e.g. "cooking/italian"), or null when
+  // unfiled. First-class field — distinct from flat tags — so a single-segment
+  // path is a valid top-level folder. Drives the Notes view folder tree.
+  folder: z.string().nullable(),
   metadata: z.record(z.unknown()).nullable(),
   processing_status: ProcessingStatusSchema,
   processing_error: z.string().nullable(),
@@ -163,6 +167,9 @@ export const NoteCreateRequestSchema = z.object({
   content: z.string().min(1),
   project_ids: z.array(UuidSchema).default([]),
   tags: z.array(z.string()).default([]),
+  // Optional folder path the note is filed under at creation. null/omitted =
+  // unfiled. Normalized server-side is unnecessary — callers pass a clean path.
+  folder: z.string().nullable().optional(),
 });
 export type NoteCreateRequest = z.infer<typeof NoteCreateRequestSchema>;
 
@@ -171,6 +178,9 @@ export const ContentUpdateRequestSchema = z.object({
   content: z.string().optional(),
   project_ids: z.array(UuidSchema).optional(),
   tags: z.array(z.string()).optional(),
+  // Re-file the note into a folder, or pass null to unfile it (move to root /
+  // All Notes). Omit to leave the folder unchanged.
+  folder: z.string().nullable().optional(),
 });
 export type ContentUpdateRequest = z.infer<typeof ContentUpdateRequestSchema>;
 
