@@ -161,6 +161,7 @@ export function TagDetailPage({ name, onAction, onRoute }: Props) {
                   <NoteRow
                     key={n.id}
                     note={n}
+                    folder={n.folder}
                     onClick={() => onAction({ kind: 'note-edit', payload: n })}
                   />
                 ))}

@@ -864,6 +864,8 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               <NoteRow
                 key={n.id}
                 note={toUiNote(n)}
+                folder={n.folder}
+                tags={n.tags}
                 onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
               />
             ))

@@ -2532,6 +2532,17 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   display: flex; flex-wrap: wrap; gap: 4px;
   margin-top: 5px;
 }
+/* Folder chip — deliberately distinct from the neutral filled tag chips:
+   accent-tinted, monospace, folder-icon prefix. Reads as "folder", not tag. */
+.prow-folder {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: var(--type-meta); font-weight: 500;
+  color: var(--accent-1);
+  background: color-mix(in oklab, var(--accent-1) 12%, transparent);
+  border: 0.5px solid color-mix(in oklab, var(--accent-1) 35%, transparent);
+}
+.prow-folder svg { flex-shrink: 0; }
 .prow .ats {
   font-size: var(--type-meta); color: var(--fg-subtle);
 }

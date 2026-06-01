@@ -196,6 +196,7 @@ export function NoteListDrawer({ onClose, onAction, onRoute, initialTagFilter }:
                 <NoteRow
                   key={ui.id}
                   note={ui}
+                  folder={ui.folder}
                   tags={ui.tags}
                   onClick={() => setSelected(ui)}
                 />

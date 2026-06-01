@@ -2,6 +2,7 @@
 // personal-notes column and the personal notes drawer.
 
 import { fmtRel } from '../lib/util';
+import { Icons } from './Icons';
 import { Tag } from './primitives';
 
 interface Props {
@@ -12,12 +13,15 @@ interface Props {
   /** Override the sub-line (e.g. a search-match snippet). When set, the
    *  right-side timestamp is omitted since hits carry no edited time. */
   sub?: string;
+  /** The note's folder path. Rendered as a chip distinct from tags (folder
+   *  icon + mono path) so the two concepts read apart at a glance. */
+  folder?: string | null;
   /** Tags to render as chips under the sub-line. Lets the drawer show
    *  provenance so a #tag filter's completeness is obvious. */
   tags?: string[];
 }
 
-export function NoteRow({ note, onClick, sub, tags }: Props) {
+export function NoteRow({ note, onClick, sub, folder, tags }: Props) {
   const at = note.updated_at ?? note.created_at;
   return (
     <div
@@ -35,9 +39,15 @@ export function NoteRow({ note, onClick, sub, tags }: Props) {
       <div>
         <div className="ti" title={note.title}>{note.title}</div>
         <div className="ti-sub">{sub ?? (at ? `edited ${fmtRel(at)}` : '')}</div>
-        {tags && tags.length > 0 ? (
+        {folder || (tags && tags.length > 0) ? (
           <div className="prow-tags">
-            {tags.map((t) => <Tag key={t}>{t}</Tag>)}
+            {folder ? (
+              <span className="prow-folder" title={`Folder: ${folder}`}>
+                <Icons.Layers size={10} />
+                {folder}
+              </span>
+            ) : null}
+            {tags?.map((t) => <Tag key={t}>{t}</Tag>)}
           </div>
         ) : null}
       </div>

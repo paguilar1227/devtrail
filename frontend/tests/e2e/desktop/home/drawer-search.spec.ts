@@ -93,6 +93,18 @@ test.describe('drawer + tab search: unified SearchInput + hybrid search', () => 
     await expect(firstRow.locator('.prow-tags .tag').filter({ hasText: 'chore' })).toHaveCount(1);
   });
 
+  test('notes drawer: browse rows show a distinct folder chip (not a tag)', async ({ page }) => {
+    const drawer = await openDrawer(page, 'Notes');
+    // Browse mode (no query): seeded personal notes carry folder paths.
+    await expect(drawer.locator('.todo-list-drawer-rows .prow-note').first()).toBeVisible({ timeout: 5000 });
+    // The folder renders as its own chip (.prow-folder), separate from the
+    // tag chips, and shows a hierarchical path.
+    const folderChip = drawer.locator('.prow-folder', { hasText: '/' }).first();
+    await expect(folderChip).toBeVisible();
+    // It is NOT a tag chip — distinct element.
+    await expect(folderChip).not.toHaveClass(/\btag\b/);
+  });
+
   test('notes drawer: free-text runs hybrid search → rows, no schema crash', async ({ page }) => {
     const drawer = await openDrawer(page, 'Notes');
     await searchAndSettle(page, drawer, 'travel');
