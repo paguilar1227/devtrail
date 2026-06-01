@@ -64,9 +64,18 @@ export function ColumnWidget({
       <div className="pcol-rows" ref={rowsRef}>
         {isEmpty ? empty : renderRows(fitCount)}
       </div>
-      {totalRows > fitCount ? (
+      {totalRows > 0 ? (
+        // Always offer the drawer entry when the column has content — the
+        // drawer is the only way to reach search + the full paginated list.
+        // Gating it on `totalRows > fitCount` made the footer a load-phase
+        // transient: in this layout the grid grows to content height, so
+        // fitCount climbs to cover every row and the footer unmounts once
+        // settled. That left it clickable only during the load flicker —
+        // a race that taller rows (e.g. note folder chips) reliably lose,
+        // and the reason the footer-driven drawer e2es were flaky. A
+        // permanent footer can't detach mid-click, so the entry is stable.
         <button className="pcol-more" onClick={onMore}>
-          View {totalRows - fitCount} more
+          {totalRows > fitCount ? `View ${totalRows - fitCount} more` : 'View all'}
           <Icons.ChevronRight size={11} />
         </button>
       ) : null}
