@@ -59,9 +59,14 @@ test('home personal todos: overdue leads + subtasks default collapsed', async ({
   const rows = todosCol(page).locator('.prow-todo');
   await expect(rows.first()).toBeVisible();
 
-  // Overdue 'Reply to Sebastian' must lead.
-  await expect(rows.nth(0)).toContainText('Reply to Sebastian');
+  // Band ordering: an overdue, top-level todo leads (bands: overdue >
+  // pinned > active > done — bandRank wins before any within-band key).
+  // Assert the invariant, NOT a specific title: within the overdue band the
+  // order is manual_order-first (see compareSmart), so which overdue todo is
+  // row 0 depends on drag state — and sibling reorder tests mutate that in
+  // the shared dev DB. A row is overdue iff it renders the .due-overdue chip.
   await expect(rows.nth(0)).toHaveAttribute('data-depth', '0');
+  await expect(rows.nth(0).locator('.due-overdue')).toBeVisible();
 
   // Pinned parent shows but its subtasks are hidden by default.
   // Subtask count badge "(3)" appears next to the title.
