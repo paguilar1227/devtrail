@@ -413,6 +413,11 @@ export const SearchRequestSchema = z.object({
   project_id: z.union([UuidSchema, z.literal('null')]).optional(),
   entity_types: z.array(EntityKindSchema).optional(),
   tags: z.array(z.string()).optional(),
+  /** How to combine multiple `tags`: 'all' = the item must carry every tag
+   *  (AND — the default, and back-compat), 'any' = the item carries at least
+   *  one (OR). Mirrors the Home tag-filter AND/OR toggle. No effect with
+   *  fewer than 2 tags. */
+  tag_match: z.enum(['all', 'any']).optional(),
   /** Restrict results to chunks/todos belonging to these specific content
    *  items. Drives the `@<name>` mention predicate in the universal
    *  search bar — the frontend resolves @-titles to content_item UUIDs

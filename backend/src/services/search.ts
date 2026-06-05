@@ -15,6 +15,8 @@ export interface SearchOptions {
   projectId?: string | null;
   entityTypes?: Array<'document' | 'note' | 'todo'>;
   tags?: string[];
+  /** Combine multiple `tags`: 'all' = AND (default), 'any' = OR. */
+  tagMatch?: 'all' | 'any';
   /**
    * Restrict hits to chunks/todos whose parent content_item IS one of
    * these UUIDs. Drives the `@<name>` mention predicate — the frontend
@@ -111,7 +113,7 @@ async function searchWithTimingsImpl(
   const stubMode = deps.config.llmProvider === 'stub';
   const defaultThreshold = stubMode ? 0.05 : 0.65;
   const {
-    projectId, entityTypes, tags, limit = 10, threshold = defaultThreshold,
+    projectId, entityTypes, tags, tagMatch, limit = 10, threshold = defaultThreshold,
     queryEntities = [], graph = true,
     contentItemIds, excludedTags, excludedEntityTypes, excludedContentItemIds,
   } = opts;
@@ -163,6 +165,7 @@ async function searchWithTimingsImpl(
       ? (entityTypes[0] === 'document' || entityTypes[0] === 'note' ? entityTypes[0] : undefined)
       : undefined,
     tags,
+    tagMatch,
     contentItemIds,
     excludedTags,
     excludedContentItemIds,
@@ -174,6 +177,7 @@ async function searchWithTimingsImpl(
   // proceed with a filter-only listing instead of short-circuiting.
   const todoFilterOpts = {
     tags,
+    tagMatch,
     excludedTags,
     allowEmptyQuery: !hasQueryText && hasAnySignal,
   };

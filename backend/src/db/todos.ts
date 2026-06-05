@@ -455,6 +455,8 @@ export async function findTodosByLexical(
   limit: number = 10,
   opts: {
     tags?: string[];
+    /** Combine multiple tags: 'all' = AND (@>, default), 'any' = OR (&&). */
+    tagMatch?: 'all' | 'any';
     excludedTags?: string[];
     /** When true, an empty query is treated as "list everything matching the
      *  other filters" rather than triggering the noise-floor short-circuit.
@@ -486,7 +488,10 @@ export async function findTodosByLexical(
   }
   if (opts.tags && opts.tags.length > 0) {
     params.push(opts.tags);
-    conditions.push(`tags @> $${params.length}::text[]`);
+    // @> = AND (contains all); && = OR (overlaps any).
+    conditions.push(
+      `tags ${opts.tagMatch === 'any' ? '&&' : '@>'} $${params.length}::text[]`,
+    );
   }
   if (opts.excludedTags && opts.excludedTags.length > 0) {
     params.push(opts.excludedTags);
@@ -517,6 +522,8 @@ export async function findSimilarTodos(
   limit: number = 10,
   opts: {
     tags?: string[];
+    /** Combine multiple tags: 'all' = AND (@>, default), 'any' = OR (&&). */
+    tagMatch?: 'all' | 'any';
     excludedTags?: string[];
   } = {},
 ): Promise<TodoSearchResult[]> {
@@ -529,7 +536,8 @@ export async function findSimilarTodos(
   const params: unknown[] = [JSON.stringify(embedding), threshold, limit];
   let i = 4;
   if (opts.tags && opts.tags.length > 0) {
-    conditions.push(`tags @> $${i++}::text[]`);
+    // @> = AND (contains all); && = OR (overlaps any).
+    conditions.push(`tags ${opts.tagMatch === 'any' ? '&&' : '@>'} $${i++}::text[]`);
     params.push(opts.tags);
   }
   if (opts.excludedTags && opts.excludedTags.length > 0) {

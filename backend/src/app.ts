@@ -1485,6 +1485,7 @@ export function createApp(deps: ServiceDeps) {
         projectId: body.project_id === 'null' ? null : body.project_id,
         entityTypes: body.entity_types,
         tags: body.tags,
+        tagMatch: body.tag_match,
         contentItemIds: body.content_item_ids,
         excludedTags: body.excluded_tags,
         excludedEntityTypes: body.excluded_entity_types,

@@ -493,6 +493,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
       debouncedQuery,
       effectiveProjectId ?? 'all',
       parsedQuery.tags.join(','),
+      tagFilter.mode, // AND/OR toggle — refetch when the mode flips
       parsedQuery.types.join(','),
       contentItemIds.join(','),
       parsedQuery.excludedTags.join(','),
@@ -507,6 +508,10 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
         query: parsedQuery.text,
         project_id: effectiveProjectId as 'null' | string | undefined,
         tags: parsedQuery.tags.length > 0 ? parsedQuery.tags : undefined,
+        // AND/OR toggle from the Home chip row. 'all' = intersection (every
+        // tag), 'any' = union (at least one). Only meaningful with 2+ tags;
+        // harmless for 0-1 (any-of-one === all-of-one).
+        tag_match: parsedQuery.tags.length > 0 ? (tagFilter.mode === 'and' ? 'all' : 'any') : undefined,
         entity_types: parsedQuery.types.length > 0 ? parsedQuery.types : undefined,
         content_item_ids: contentItemIds.length > 0 ? contentItemIds : undefined,
         excluded_tags: parsedQuery.excludedTags.length > 0 ? parsedQuery.excludedTags : undefined,

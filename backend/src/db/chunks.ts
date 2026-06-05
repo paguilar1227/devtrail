@@ -111,6 +111,8 @@ export async function findChunksByLexical(
     projectId?: string | null;
     parentType?: 'document' | 'note';
     tags?: string[];
+    /** Combine multiple tags: 'all' = AND (@>, default), 'any' = OR (&&). */
+    tagMatch?: 'all' | 'any';
     contentItemIds?: string[];
     excludedTags?: string[];
     excludedContentItemIds?: string[];
@@ -155,7 +157,10 @@ export async function findChunksByLexical(
     params.push(opts.parentType);
   }
   if (opts.tags && opts.tags.length > 0) {
-    conditions.push(`ci.tags @> $${i++}`);
+    // @> = "contains all" (AND); && = "overlaps" (any tag → OR).
+    conditions.push(
+      opts.tagMatch === 'any' ? `ci.tags && $${i++}::text[]` : `ci.tags @> $${i++}`,
+    );
     params.push(opts.tags);
   }
   if (opts.contentItemIds && opts.contentItemIds.length > 0) {
@@ -215,6 +220,8 @@ export async function findSimilarChunks(
     projectId?: string | null;
     parentType?: 'document' | 'note';
     tags?: string[];
+    /** Combine multiple tags: 'all' = AND (@>, default), 'any' = OR (&&). */
+    tagMatch?: 'all' | 'any';
     contentItemIds?: string[];
     excludedTags?: string[];
     excludedContentItemIds?: string[];
@@ -240,7 +247,10 @@ export async function findSimilarChunks(
     params.push(opts.parentType);
   }
   if (opts.tags && opts.tags.length > 0) {
-    conditions.push(`ci.tags @> $${i++}`);
+    // @> = "contains all" (AND); && = "overlaps" (any tag → OR).
+    conditions.push(
+      opts.tagMatch === 'any' ? `ci.tags && $${i++}::text[]` : `ci.tags @> $${i++}`,
+    );
     params.push(opts.tags);
   }
   if (opts.contentItemIds && opts.contentItemIds.length > 0) {
