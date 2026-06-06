@@ -64,6 +64,21 @@ test.describe('Notes view: Folders browser', () => {
     await expect(page.locator('.notes-folder-bar .tag .x')).toHaveCount(0);
   });
 
+  test('detail pane: Open is disabled for a text note (no Azure blob)', async ({ page }) => {
+    await openNotes(page);
+    await treeRow(page, 'cooking').click();
+    await listRows(page).first().click();
+    await expect(page.locator('.notes-detail-body')).toBeVisible();
+
+    // A text note has no uploaded file (blob_url is null), so "Open" — which
+    // launches the raw Azure blob — has nothing to open and renders disabled.
+    // Download (a synthesized .md export) stays available.
+    const open = page.locator('.notes-detail-body button', { hasText: 'Open' });
+    await expect(open).toBeVisible();
+    await expect(open).toBeDisabled();
+    await expect(page.locator('.notes-detail-body a', { hasText: 'Download' })).toBeVisible();
+  });
+
   test('Cmd/Ctrl+1 toggles the folder tree column', async ({ page }) => {
     await openNotes(page);
     await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();

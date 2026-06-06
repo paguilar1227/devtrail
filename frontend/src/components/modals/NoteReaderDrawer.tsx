@@ -94,11 +94,19 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
             <Icons.Download size={12} /> Download
           </a>
         ) : null}
-        {blobUrl ? (
-          <a className="btn btn-sm" href={blobUrl} target="_blank" rel="noopener noreferrer">
+        {/* "Open" launches the raw uploaded file (Azure blob) in a new tab —
+            distinct from Download's synthesized .md export. A text note has
+            no blob (item.blob_url is null), so there's nothing to open: keep
+            the affordance for layout consistency but disable it. */}
+        {item?.blob_url ? (
+          <a className="btn btn-sm" href={item.blob_url} target="_blank" rel="noopener noreferrer">
             <Icons.ExternalLink size={12} /> Open
           </a>
-        ) : null}
+        ) : (
+          <button className="btn btn-sm" disabled title="No file to open — this note has no uploaded file">
+            <Icons.ExternalLink size={12} /> Open
+          </button>
+        )}
         <button
           className="btn btn-sm"
           onClick={() => pinMut.mutate()}
