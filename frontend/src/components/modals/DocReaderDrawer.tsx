@@ -234,7 +234,9 @@ export function DocReaderBody({
       {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2 chip-row">
         <Status status={doc.processing_status} error={doc.processing_error} />
-        <Tag>{doc.type}</Tag>
+        {/* Entity-type chip (not a user tag) — `kind` drops the `#` and tints
+            it as a type chip so it reads distinctly from the tags below. */}
+        <Tag kind="doc">{doc.type}</Tag>
         {doc.mime ? <span className="subtle doc-mime">{doc.mime}</span> : null}
         <span className="subtle">{doc.size}</span>
         {doc.tags.map(t => (

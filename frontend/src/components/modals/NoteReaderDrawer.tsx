@@ -63,7 +63,9 @@ export function NoteReaderBody({ note, onClose, onBack, onRoute }: BodyProps) {
       {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2 chip-row">
         <Status status={note.processing_status} />
-        <Tag>note</Tag>
+        {/* Entity-type chip (not a user tag). `kind` drops the `#` prefix and
+            applies the type-chip colour so it doesn't masquerade as a tag. */}
+        <Tag kind="note">note</Tag>
         {note.tags.map((t) => (
           <Tag key={t}>{t}</Tag>
         ))}
