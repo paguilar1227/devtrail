@@ -1709,21 +1709,15 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-size: var(--type-meta); font-weight: 600;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--fg-subtle);
-  padding: 14px 0 6px;
-  position: sticky; top: 0;
-  /* The page (.main) is already a `--glass-bg` glass surface. Re-painting
-     `--glass-bg` here stacked a 2nd dark layer + a 2nd blur → a flat grey
-     band that killed the gradient. Instead stay transparent and re-frost
-     with the SAME blur+saturate the page uses, so at rest the header is
-     seamless with the surface and only frosts rows that scroll under it. */
-  background: transparent;
-  -webkit-backdrop-filter: blur(16px) saturate(1.3);
-  backdrop-filter: blur(16px) saturate(1.3);
-  /* Soft bottom edge so rows dissolve under the header rather than hard-cut. */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 68%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 68%, transparent 100%);
-  z-index: 1;
+  padding: 18px 0 6px;
+  /* Plain text label — like the Home section headers. NOT sticky and NO
+     background/backdrop-filter: a sticky header needs an occlusion layer to
+     hide rows scrolling under it, and ANY such layer (tint or backdrop blur)
+     renders as a distinct rectangular box over the uniform .main glass
+     surface. The box was the eyesore; dropping sticky removes the need for
+     it. The first label trims its top padding (no group above it). */
 }
+.activity-day:first-child { padding-top: 4px; }
 .activity-list { background: transparent; border: none; }
 .activity-row {
   display: grid;
