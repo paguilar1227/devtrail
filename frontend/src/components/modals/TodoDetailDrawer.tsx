@@ -243,7 +243,10 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
         <>
           <button className="btn" onClick={tryClose} disabled={updateMut.isPending}>Close</button>
           <button className="btn btn-primary" onClick={onSave} disabled={updateMut.isPending}>
-            {updateMut.isPending ? 'Saving…' : dirty ? 'Save' : 'Done'}
+            {/* Always "Save" — not "Done", which would collide with the Done
+                status chip above. (Fields auto-save; this also commits any
+                pending priority edit and closes.) */}
+            {updateMut.isPending ? 'Saving…' : 'Save'}
           </button>
         </>
       }
