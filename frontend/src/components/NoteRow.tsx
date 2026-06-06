@@ -19,9 +19,12 @@ interface Props {
   /** Tags to render as chips under the sub-line. Lets the drawer show
    *  provenance so a #tag filter's completeness is obvious. */
   tags?: string[];
+  /** When true, a pin glyph is shown in the row's meta cell so pinned
+   *  notes are recognizable at a glance in the list. */
+  pinned?: boolean;
 }
 
-export function NoteRow({ note, onClick, sub, folder, tags }: Props) {
+export function NoteRow({ note, onClick, sub, folder, tags, pinned }: Props) {
   const at = note.updated_at ?? note.created_at;
   return (
     <div
@@ -51,7 +54,16 @@ export function NoteRow({ note, onClick, sub, folder, tags }: Props) {
           </div>
         ) : null}
       </div>
-      {sub == null && at ? <span className="ats">{fmtRel(at)}</span> : null}
+      {sub == null && (at || pinned) ? (
+        <div className="prow-note-meta">
+          {pinned ? (
+            <span className="prow-pin" title="Pinned" aria-label="Pinned">
+              <Icons.Pin size={11} />
+            </span>
+          ) : null}
+          {at ? <span className="ats">{fmtRel(at)}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

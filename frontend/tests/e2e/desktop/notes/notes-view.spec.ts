@@ -79,6 +79,32 @@ test.describe('Notes view: Folders browser', () => {
     await expect(page.locator('.notes-detail-body a', { hasText: 'Download' })).toBeVisible();
   });
 
+  test('list shows a pin glyph on a pinned note', async ({ page }) => {
+    await openNotes(page);
+    await treeRow(page, 'cooking').click();
+    const row = listRows(page).filter({ hasText: 'Recipe — weeknight ramen' });
+    await row.click();
+    const detail = page.locator('.notes-detail-body');
+    await expect(detail).toBeVisible();
+
+    // The Pin/Unpin toggle is the only detail-pane action button containing
+    // "Pin". Normalize to pinned (a prior run may have left it pinned).
+    const pinToggle = detail.locator('button', { hasText: 'Pin' });
+    if ((await pinToggle.innerText()).trim() === 'Pin') await pinToggle.click();
+    await expect(pinToggle).toHaveText('Unpin');
+
+    // The list row now carries the pin glyph; an unpinned sibling does not.
+    await expect(row.locator('.prow-pin')).toBeVisible();
+    await expect(
+      listRows(page).filter({ hasText: 'Pour-over recipe — Hario V60' }).locator('.prow-pin'),
+    ).toHaveCount(0);
+
+    // Cleanup: unpin so the shared dev DB is left as we found it.
+    await pinToggle.click();
+    await expect(pinToggle).toHaveText('Pin');
+    await expect(row.locator('.prow-pin')).toHaveCount(0);
+  });
+
   test('Cmd/Ctrl+1 toggles the folder tree column', async ({ page }) => {
     await openNotes(page);
     await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();

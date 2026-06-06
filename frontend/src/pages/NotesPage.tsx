@@ -283,6 +283,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
               key={n.id}
               note={n}
               tags={n.tags}
+              pinned={n.pinned}
               onClick={() => openNote(n.id)}
             />
           ))
