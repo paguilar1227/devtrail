@@ -2545,6 +2545,23 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border: 0.5px solid color-mix(in oklab, var(--accent-1) 35%, transparent);
 }
 .prow-folder svg { flex-shrink: 0; }
+/* Active-status pill on a todo row — only in_progress / paused render one. */
+.prow-status {
+  display: inline-flex; align-items: center;
+  padding: 1px 6px; border-radius: 5px;
+  font-size: var(--type-meta); font-weight: 500;
+  border: 0.5px solid transparent;
+}
+.prow-status.status-in_progress {
+  color: oklch(0.82 0.12 195);
+  background: color-mix(in oklab, oklch(0.82 0.12 195) 14%, transparent);
+  border-color: color-mix(in oklab, oklch(0.82 0.12 195) 32%, transparent);
+}
+.prow-status.status-paused {
+  color: oklch(0.82 0.10 75);
+  background: color-mix(in oklab, oklch(0.82 0.10 75) 14%, transparent);
+  border-color: color-mix(in oklab, oklch(0.82 0.10 75) 32%, transparent);
+}
 .prow .ats {
   font-size: var(--type-meta); color: var(--fg-subtle);
 }

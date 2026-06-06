@@ -128,11 +128,18 @@ export function TodoRow({
             +{hiddenDescendants} deeper
           </div>
         ) : null}
-        {/* Tags are root-only — never render them on a subtask, even if legacy
-            data left some behind (the chip would be unremovable here). */}
-        {!t.parent_id && t.tags.length > 0 ? (
+        {/* Meta chips: an active-status pill (in_progress / paused) then the
+            tags. `done` is already conveyed by the checkbox + strikethrough,
+            and `not_started` is the implicit default, so only the two
+            in-between states get a pill. Tags stay root-only. */}
+        {t.status === 'in_progress' || t.status === 'paused' || (!t.parent_id && t.tags.length > 0) ? (
           <div className="prow-tags">
-            {t.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
+            {t.status === 'in_progress' || t.status === 'paused' ? (
+              <span className={cls('prow-status', `status-${t.status}`)}>
+                {t.status === 'in_progress' ? 'In progress' : 'Paused'}
+              </span>
+            ) : null}
+            {!t.parent_id ? t.tags.map((tag) => <Tag key={tag}>{tag}</Tag>) : null}
           </div>
         ) : null}
       </div>

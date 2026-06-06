@@ -72,6 +72,29 @@ test('home personal todos: status is editable from the detail drawer', async ({ 
   }
 });
 
+test('home personal todos: an in_progress / paused row shows a status pill', async ({ page }) => {
+  const content = stamp() + ' Status pill';
+  const created = await createTodo(content, null);
+  try {
+    await updateTodo(created.id, { status: 'in_progress' });
+    await page.reload();
+    await waitForAppReady(page);
+
+    const row = () => page.locator(`${TODOS_COL} .prow`, { hasText: content });
+    await expect(row()).toBeVisible();
+    await expect(row().locator('.prow-status')).toHaveText('In progress');
+
+    // not_started is the implicit default — no pill (the checkbox says it all).
+    await updateTodo(created.id, { status: 'not_started' });
+    await page.reload();
+    await waitForAppReady(page);
+    await expect(row()).toBeVisible();
+    await expect(row().locator('.prow-status')).toHaveCount(0);
+  } finally {
+    await deleteTodo(created.id).catch(() => {});
+  }
+});
+
 test('home personal todos: reopening a done parent cascades back to descendants', async ({ page }) => {
   // Symmetric to the cascade-done test. Build a parent + 2 children +
   // 1 grandchild, mark the whole subtree done via cascade, then untick
