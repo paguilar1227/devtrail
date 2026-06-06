@@ -2472,7 +2472,35 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .prow:hover { background: var(--glass-bg-soft); }
 .prow + .prow { border-top: 0.5px solid var(--hairline); }
-.prow-todo { grid-template-columns: 14px 14px 18px 1fr auto auto auto; }
+.prow-todo {
+  grid-template-columns: 14px 14px 18px 1fr auto auto auto;
+  /* Named areas (same single-row layout as before) so mobile can reflow the
+     meta below the title without touching the markup. */
+  grid-template-areas: "grip chev check main comments prio time";
+}
+.prow-todo > .prow-grip, .prow-todo > .prow-grip-spacer { grid-area: grip; }
+.prow-todo > .prow-chev, .prow-todo > .prow-chev-spacer { grid-area: chev; }
+.prow-todo > .checkbox { grid-area: check; }
+.prow-todo > .prow-main { grid-area: main; min-width: 0; }
+.prow-todo > .prow-comments-slot { grid-area: comments; }
+.prow-todo > .priority { grid-area: prio; }
+.prow-todo > .ats { grid-area: time; }
+/* Mobile: the title-content takes the whole first row (no truncation, and the
+   status/tags chips stop wrapping onto extra lines); the comments / priority /
+   timestamp meta drops to a compact strip indented beneath it. Drag grip is
+   hidden — touch reorder isn't used. */
+.app[data-mobile="true"] .prow-todo > .prow-grip,
+.app[data-mobile="true"] .prow-todo > .prow-grip-spacer { display: none; }
+.app[data-mobile="true"] .prow-todo {
+  grid-template-columns: 18px 14px 1fr auto auto;
+  grid-template-areas:
+    "check chev main     main main"
+    ".     .    comments prio time";
+  align-items: start;
+  row-gap: 4px;
+  column-gap: 6px;
+}
+.app[data-mobile="true"] .prow-todo > .ats { justify-self: end; }
 .prow-grip {
   width: 14px; height: 18px;
   display: inline-grid; place-items: center;

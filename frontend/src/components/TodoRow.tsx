@@ -106,7 +106,7 @@ export function TodoRow({
           onToggleDone?.();
         }}
       />
-      <div>
+      <div className="prow-main">
         <div className="ti" title={t.title}>
           {t.title}
           {expandable && !expanded ? (
