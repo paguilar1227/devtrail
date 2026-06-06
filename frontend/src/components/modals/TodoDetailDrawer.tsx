@@ -23,6 +23,14 @@ type PriorityVal = 'p1' | 'p2' | 'p3';
 const toWirePriority = (p: PriorityVal): 'P1' | 'P2' | 'P3' =>
   p.toUpperCase() as 'P1' | 'P2' | 'P3';
 
+// Editable status chips, in lifecycle order.
+const STATUS_OPTIONS: { value: Todo['status']; label: string }[] = [
+  { value: 'not_started', label: 'Not started' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'done', label: 'Done' },
+];
+
 interface Props {
   todo: Todo;
   onClose: () => void;
@@ -47,6 +55,7 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   const [commentDraft, setCommentDraft] = useState('');
   const [subtaskDraft, setSubtaskDraft] = useState('');
   const [priority, setPriority] = useState<PriorityVal>(todo.priority);
+  const [status, setStatus] = useState<Todo['status']>(todo.status);
   // Local mirror so the trigger reflects the user's edit immediately
   // — the drawer receives `todo` as a prop snapshot (parent doesn't
   // refetch it on update) so we can't rely on todo.due_at after a
@@ -99,11 +108,12 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   });
 
   const updateMut = useMutation({
-    mutationFn: (patch: { priority?: PriorityVal; due_date?: string | null; tags?: string[] }) =>
+    mutationFn: (patch: { priority?: PriorityVal; due_date?: string | null; tags?: string[]; status?: Todo['status'] }) =>
       updateTodo(todo.id, {
         ...(patch.priority ? { priority: toWirePriority(patch.priority) } : {}),
         ...('due_date' in patch ? { due_date: patch.due_date } : {}),
         ...(patch.tags ? { tags: patch.tags } : {}),
+        ...(patch.status ? { status: patch.status } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['todos'] });
@@ -162,6 +172,12 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
     if (p === priority) return;
     setPriority(p);
     updateMut.mutate({ priority: p });
+  };
+
+  const setStatusNow = (s: Todo['status']) => {
+    if (s === status) return;
+    setStatus(s);
+    updateMut.mutate({ status: s });
   };
 
   // Tag editing — same auto-save pattern as priority / due. Lowercase
@@ -235,7 +251,7 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
       {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
         <Priority p={priority} />
-        <span className="todo-status-pill">{todo.status.replace('_', ' ')}</span>
+        <span className="todo-status-pill">{status.replace('_', ' ')}</span>
         {/* Tags are a root-only concept — subtasks never show them. */}
         {isRoot && tags.map(t => (
           <Tag key={t}>{t}</Tag>
@@ -252,6 +268,19 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
               disabled={updateMut.isPending}
             >
               {p.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <span className="subtle">status</span>
+        <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
+          {STATUS_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              className={cls('filter-chip', status === value && 'active')}
+              onClick={() => setStatusNow(value)}
+              disabled={updateMut.isPending}
+            >
+              {label}
             </button>
           ))}
         </div>

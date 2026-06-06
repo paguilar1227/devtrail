@@ -3,7 +3,7 @@
 // Home Personal column. Capture creates a todo via the quick-add input,
 // toggle flips status via the row checkbox.
 import { expect, test } from '@playwright/test';
-import { createTodo, listTodos, updateTodo } from '../../helpers/api';
+import { createTodo, deleteTodo, listTodos, updateTodo } from '../../helpers/api';
 import { stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
@@ -38,6 +38,38 @@ test('home personal todos: toggling the row checkbox marks the todo done in the 
     const todos = await listTodos({ project_id: 'null' });
     return todos.find((t) => t.content === content)?.status;
   }).toBe('done');
+});
+
+test('home personal todos: status is editable from the detail drawer', async ({ page }) => {
+  const content = stamp() + ' Status edit';
+  const created = await createTodo(content, null); // defaults to not_started
+  try {
+    await page.reload();
+    await waitForAppReady(page);
+
+    const row = page.locator(`${TODOS_COL} .prow`, { hasText: content });
+    await expect(row).toBeVisible();
+    await row.click();
+
+    const drawer = page.locator('.drawer');
+    await expect(drawer).toBeVisible({ timeout: 15000 });
+
+    // The status chip group lets you change state beyond the row checkbox.
+    const chip = (label: string) => drawer.locator('.filter-chip', { hasText: label });
+    await expect(chip('Not started')).toHaveClass(/\bactive\b/);
+
+    await chip('In progress').click();
+    await expect(chip('In progress')).toHaveClass(/\bactive\b/);
+    await expect(chip('Not started')).not.toHaveClass(/\bactive\b/);
+
+    // Change persists to the backend.
+    await expect.poll(async () => {
+      const todos = await listTodos({ project_id: 'null' });
+      return todos.find((t) => t.content === content)?.status;
+    }).toBe('in_progress');
+  } finally {
+    await deleteTodo(created.id).catch(() => {});
+  }
 });
 
 test('home personal todos: reopening a done parent cascades back to descendants', async ({ page }) => {
