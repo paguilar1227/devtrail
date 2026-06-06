@@ -201,15 +201,6 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   // Save closes the drawer after pending edits. Priority + due fire
   // optimistically on chip / picker-Done click; this button is the
   // user's "I'm done here" gesture.
-  const dirty = priority !== todo.priority;
-  const onSave = () => {
-    if (dirty && !updateMut.isPending) {
-      updateMut.mutate({ priority }, { onSuccess: () => onClose() });
-    } else {
-      onClose();
-    }
-  };
-
   // The drawer-level drafts (new comment, new subtask) are the only
   // pieces of unsaved input that closing would discard — priority and
   // due-date save on every chip / picker change, so they're never
@@ -238,18 +229,11 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
           }}
         />
       }
+      // No footer: every field auto-saves on change (priority/status/due/
+      // tags/title) and subtasks/comments commit on their own controls, so
+      // there's nothing to "save". The X (tryClose) handles dismissal and
+      // guards unsaved comment/subtask drafts — matching the Note/Doc readers.
       onClose={tryClose}
-      footer={
-        <>
-          <button className="btn" onClick={tryClose} disabled={updateMut.isPending}>Close</button>
-          <button className="btn btn-primary" onClick={onSave} disabled={updateMut.isPending}>
-            {/* Always "Save" — not "Done", which would collide with the Done
-                status chip above. (Fields auto-save; this also commits any
-                pending priority edit and closes.) */}
-            {updateMut.isPending ? 'Saving…' : 'Save'}
-          </button>
-        </>
-      }
     >
       {onBack ? <ReaderBackButton onClick={onBack} /> : null}
       <div className="row-flex gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
