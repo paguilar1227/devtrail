@@ -137,8 +137,16 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
 
   const browseNotes = useMemo(() => {
     const list = selectedPath ? notes.filter((n) => noteInFolder(n.folder, selectedPath)) : notes;
+    const at = (n: (typeof list)[number]) => n.updated_at ?? n.created_at;
     return [...list]
-      .sort((a, b) => (b.updated_at ?? b.created_at).localeCompare(a.updated_at ?? a.created_at))
+      .sort((a, b) => {
+        // Pinned notes float to the top; within each group, most-recent first.
+        // (Without this, unpinning the newer of two pinned notes left the
+        //  still-pinned one stranded below freshly-edited unpinned rows.)
+        const pinDelta = Number(!!b.pinned_at) - Number(!!a.pinned_at);
+        if (pinDelta !== 0) return pinDelta;
+        return at(b).localeCompare(at(a));
+      })
       .map(toUiNote);
   }, [notes, selectedPath]);
 

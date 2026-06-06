@@ -105,6 +105,40 @@ test.describe('Notes view: Folders browser', () => {
     await expect(row.locator('.prow-pin')).toHaveCount(0);
   });
 
+  test('pinned notes sort to the top — unpinning the recent one floats the other up', async ({ page }) => {
+    await openNotes(page);
+    await treeRow(page, 'cooking').click();
+    const detail = page.locator('.notes-detail-body');
+    const pinToggle = () => detail.locator('button', { hasText: 'Pin' });
+    // Drive the detail-pane Pin/Unpin toggle to a desired state for a note.
+    const set = async (title: string, want: 'pin' | 'unpin') => {
+      await listRows(page).filter({ hasText: title }).click();
+      await expect(detail).toBeVisible();
+      const pinned = (await pinToggle().innerText()).trim() === 'Unpin';
+      if ((want === 'pin') !== pinned) await pinToggle().click();
+      await expect(pinToggle()).toHaveText(want === 'pin' ? 'Unpin' : 'Pin');
+    };
+
+    const A = 'Pour-over recipe — Hario V60';
+    const B = 'Espresso recipe — Onyx Monarch';
+    // Pin A, then B (B is now the most-recently pinned), then unpin B.
+    await set(A, 'pin');
+    await set(B, 'pin');
+    await set(B, 'unpin');
+
+    // Regression: the still-pinned A must sort ABOVE the just-unpinned B.
+    // (Before the fix, B's fresh updated_at kept it on top.)
+    const titles = await listRows(page).locator('.ti').allInnerTexts();
+    const idxA = titles.findIndex((t) => t.includes(A));
+    const idxB = titles.findIndex((t) => t.includes(B));
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxA).toBeLessThan(idxB);
+    await expect(listRows(page).filter({ hasText: A }).locator('.prow-pin')).toBeVisible();
+
+    // Cleanup: leave the shared DB as we found it.
+    await set(A, 'unpin');
+  });
+
   test('Cmd/Ctrl+1 toggles the folder tree column', async ({ page }) => {
     await openNotes(page);
     await expect(page.locator('.notes-cols[data-tree="true"]')).toBeVisible();
