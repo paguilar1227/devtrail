@@ -3542,6 +3542,11 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   padding: 4px var(--pad-page) 10px;
 }
 .todos-toolbar .search-box { flex: 1; min-width: 0; }
+/* Mobile: search + sort + "Add section" can't share one row without the
+   search input spilling over the sort dropdown. Wrap, and give the search
+   its own full-width line so sort + add drop neatly to the row below. */
+.app[data-mobile="true"] .todos-toolbar { flex-wrap: wrap; }
+.app[data-mobile="true"] .todos-toolbar .search-box { flex: 1 1 100%; }
 .todos-filters {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   padding: 0 var(--pad-page) 12px;
