@@ -1,0 +1,54 @@
+# .github/workflows/react-doctor.yml
+#
+# Frontend code-health gate. Runs react-doctor (https://react.doctor) on the
+# files a PR changes and FAILS the check on error-level findings, so React
+# anti-patterns (bad effects/state, a11y errors, perf footguns) don't land in
+# the web client.
+#
+# Deliberately separate from the heavy `CI` workflow (full Playwright e2e,
+# ~26 min): react-doctor is Oxlint-fast, so it can run on every frontend PR
+# without burning the free-tier Actions-minute budget. Unlike `CI` (currently
+# workflow_dispatch-only for that reason), this one auto-runs on PRs.
+#
+# `--diff origin/<base>` reports only issues the PR introduces, not the
+# existing backlog. `--blocking error` gates on errors; warnings surface in the
+# logs but don't fail the build.
+
+name: React Doctor
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+jobs:
+  react-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions pinned to commit SHA (supply-chain hardening) with the
+      # human-readable version in the comment.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Full history so --diff can compare the PR head against the base.
+          fetch-depth: 0
+          # Read-only lint job — don't persist the token in git config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace deps
+        run: npm ci
+
+      - name: React Doctor (changed files vs base, fail on errors)
+        working-directory: frontend
+        # base_ref passed via env, not inline ${{ }}, to avoid the
+        # template-injection class of issues in run scripts.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: npm run doctor -- --diff "origin/${BASE_REF}" --blocking error

@@ -23,10 +23,12 @@ import { SearchInput, type SigilKind } from '../components/SearchInput';
 import { NoteRow } from '../components/NoteRow';
 import { FolderPathField } from '../components/FolderPathField';
 import { NoteReaderBody } from '../components/modals/NoteReaderDrawer';
+import { HomeTagFilter } from '../components/HomeTagFilter';
 import { listContent, listProjects, updateContent } from '../lib/api';
 import { toUiNote, toUiProjects } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
 import { useTagSuggestions } from '../lib/useTagSuggestions';
+import { matchesTagFilter, EMPTY_FILTER, type TagFilter } from '../lib/tagFilter';
 import { useIsMobile } from '../lib/useIsMobile';
 import {
   buildFolderTree, noteInFolder, ancestorsOf,
@@ -58,6 +60,9 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   const [scope, setScope] = useState<ScopeMode>(initialScope ?? 'personal');
   const [selectedPath, setSelectedPath] = useState<string | null>(initialPath ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Tag filter (reuses the Home dashboard's HomeTagFilter — chip row with
+  // overflow popover + AND/OR + Clear). Narrows the folder-browse list.
+  const [tagFilter, setTagFilter] = useState<TagFilter>(EMPTY_FILTER);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPath ? ancestorsOf(initialPath) : []));
 
   // Column layout: visibility + widths (resizable). Desktop only.
@@ -136,7 +141,8 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
   );
 
   const browseNotes = useMemo(() => {
-    const list = selectedPath ? notes.filter((n) => noteInFolder(n.folder, selectedPath)) : notes;
+    const inFolder = selectedPath ? notes.filter((n) => noteInFolder(n.folder, selectedPath)) : notes;
+    const list = inFolder.filter((n) => matchesTagFilter(n, tagFilter));
     const at = (n: (typeof list)[number]) => n.updated_at ?? n.created_at;
     return [...list]
       .sort((a, b) => {
@@ -148,7 +154,7 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
         return at(b).localeCompare(at(a));
       })
       .map(toUiNote);
-  }, [notes, selectedPath]);
+  }, [notes, selectedPath, tagFilter]);
 
   const searchNotes = useMemo(() => {
     const seen = new Set<string>();
@@ -240,65 +246,78 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
     </>
   );
 
-  const listPanel = (
+  // Search + new-note controls. On desktop these live in a full-width
+  // toolbar ABOVE the columns (mirrors the Home / Tasks views); on mobile
+  // they sit atop the list panel of the drill-down (there are no side-by-
+  // side columns to sit above).
+  const searchControls = (
     <>
-      <div className="notes-list-search">
-        <div className="search-box">
-          <Icons.Search size={13} />
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            onSubmit={() => { /* live */ }}
-            tags={tagSuggestions}
-            mentions={NO_MENTIONS}
-            sigils={NOTE_SIGILS}
-            placeholder="Search notes… try #tag"
-          />
-        </div>
-        <button
-          className="btn btn-ghost btn-icon notes-new-note"
-          title={selectedPath ? `New note in ${selectedPath}` : 'New note'}
-          aria-label="New note"
-          onClick={() => onAction({ kind: 'note-edit', payload: null, folder: selectedPath })}
-        >
-          <Icons.Plus size={16} />
-        </button>
+      <div className="search-box">
+        <Icons.Search size={13} />
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          onSubmit={() => { /* live */ }}
+          tags={tagSuggestions}
+          mentions={NO_MENTIONS}
+          sigils={NOTE_SIGILS}
+          placeholder="Search notes… try #tag"
+        />
       </div>
-      <div className="notes-list-rows">
-        {notesQ.isLoading ? (
-          <div className="page-subtle">Loading…</div>
-        ) : searchActive ? (
-          searchNotes.length === 0 ? (
-            <div className="page-subtle">No notes match.</div>
-          ) : (
-            searchNotes.map((h) => (
-              <NoteRow
-                key={h.entity_id}
-                note={{ title: h.title }}
-                sub={h.excerpt}
-                tags={h.tags}
-                onClick={() => openNote(h.entity_id)}
-              />
-            ))
-          )
-        ) : browseNotes.length === 0 ? (
-          <div className="page-subtle">
-            {selectedPath ? 'No notes in this folder.' : 'No notes yet.'}
-          </div>
-        ) : (
-          browseNotes.map((n) => (
-            <NoteRow
-              key={n.id}
-              note={n}
-              tags={n.tags}
-              pinned={n.pinned}
-              onClick={() => openNote(n.id)}
-            />
-          ))
-        )}
-      </div>
+      <button
+        type="button"
+        className="btn btn-ghost btn-icon notes-new-note"
+        title={selectedPath ? `New note in ${selectedPath}` : 'New note'}
+        aria-label="New note"
+        onClick={() => onAction({ kind: 'note-edit', payload: null, folder: selectedPath })}
+      >
+        <Icons.Plus size={16} />
+      </button>
     </>
   );
+
+  const listRows = (
+    <div className="notes-list-rows">
+      {notesQ.isLoading ? (
+        <div className="page-subtle">Loading…</div>
+      ) : searchActive ? (
+        searchNotes.length === 0 ? (
+          <div className="page-subtle">No notes match.</div>
+        ) : (
+          searchNotes.map((h) => (
+            <NoteRow
+              key={h.entity_id}
+              note={{ title: h.title }}
+              sub={h.excerpt}
+              tags={h.tags}
+              onClick={() => openNote(h.entity_id)}
+            />
+          ))
+        )
+      ) : browseNotes.length === 0 ? (
+        <div className="page-subtle">
+          {selectedPath ? 'No notes in this folder.' : 'No notes yet.'}
+        </div>
+      ) : (
+        browseNotes.map((n) => (
+          <NoteRow
+            key={n.id}
+            note={n}
+            tags={n.tags}
+            pinned={n.pinned}
+            onClick={() => openNote(n.id)}
+          />
+        ))
+      )}
+    </div>
+  );
+
+  // Tag filter bar (shown when the scope has any tags, or a filter is
+  // active so the user can clear it). Same component as the Home dashboard.
+  const tagBar =
+    tagSuggestions.length > 0 || tagFilter.tags.length > 0 ? (
+      <HomeTagFilter options={tagSuggestions} filter={tagFilter} onChange={setTagFilter} />
+    ) : null;
 
   const detailPanel = selectedNote ? (
     <>
@@ -361,7 +380,11 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
                 </button>
                 <span className="notes-mobile-title">{selectedPath ?? 'All notes'}</span>
               </div>
-              <div className="notes-list">{listPanel}</div>
+              <div className="notes-list">
+                <div className="notes-list-search">{searchControls}</div>
+                {tagBar && <div className="view-tagbar view-tagbar-compact">{tagBar}</div>}
+                {listRows}
+              </div>
             </>
           )}
           {mobileView === 'note' && (
@@ -376,14 +399,21 @@ export function NotesPage({ onAction, onRoute, initialPath, initialScope }: Prop
           )}
         </div>
       ) : (
-        /* ---- Desktop: resizable / collapsible three-column grid ---- */
-        <div className="notes-cols" style={{ gridTemplateColumns: gridCols }} data-tree={showTree} data-list={showList}>
-          <nav className="notes-tree" aria-label="Folders" aria-hidden={!showTree}>{treePanel}</nav>
-          <ColResizer onResize={(d) => setTreeW((w) => clamp(w + d, TREE_MIN, TREE_MAX))} active={showTree} />
-          <div className="notes-list" aria-hidden={!showList}>{listPanel}</div>
-          <ColResizer onResize={(d) => setListW((w) => clamp(w + d, LIST_MIN, LIST_MAX))} active={showList} />
-          <div className="notes-detail">{detailPanel}</div>
-        </div>
+        /* ---- Desktop: full-width search toolbar above a resizable /
+           collapsible three-column grid. The toolbar follows the list
+           column's visibility — hiding the list (⌘2/⌘3) hides the search
+           with it, since results render in that column. ---- */
+        <>
+          {showList && <div className="notes-toolbar">{searchControls}</div>}
+          {showList && tagBar && <div className="view-tagbar">{tagBar}</div>}
+          <div className="notes-cols" style={{ gridTemplateColumns: gridCols }} data-tree={showTree} data-list={showList}>
+            <nav className="notes-tree" aria-label="Folders" aria-hidden={!showTree}>{treePanel}</nav>
+            <ColResizer onResize={(d) => setTreeW((w) => clamp(w + d, TREE_MIN, TREE_MAX))} active={showTree} />
+            <div className="notes-list" aria-hidden={!showList}>{listRows}</div>
+            <ColResizer onResize={(d) => setListW((w) => clamp(w + d, LIST_MIN, LIST_MAX))} active={showList} />
+            <div className="notes-detail">{detailPanel}</div>
+          </div>
+        </>
       )}
     </div>
   );

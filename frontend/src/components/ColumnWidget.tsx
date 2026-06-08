@@ -2,6 +2,22 @@ import type { ReactNode } from 'react';
 import { Icons } from './Icons';
 import { PersonalColumnHeader } from './PersonalColumnHeader';
 import { useFitCount } from '../lib/useFitCount';
+import { useIsMobile } from '../lib/useIsMobile';
+
+// Hard ceiling on rows shown in a home dashboard column.
+//
+// Desktop: the grid stretches columns to a min-height viewport band, so
+// `.pcol-rows` has a real height independent of its content; useFitCount
+// measures that band and we cap the result at MAX_ROWS.
+//
+// Mobile: the band is removed (.home-personal-grid min-height: 0), so
+// `.pcol-rows` is sized by its own content. useFitCount then measures
+// itself in a feedback loop — tall rows climb until every item shows (an
+// unbounded, over-long widget), short rows collapse to the min floor.
+// Neither tracks real available space, so on mobile we skip the measure
+// entirely and just render up to MAX_ROWS. Either way the rest is one tap
+// away via the "View N more" footer / drawer.
+const MAX_ROWS = 6;
 
 // Single source of truth for the Home dashboard's column widgets.
 //
@@ -37,8 +53,8 @@ interface Props {
   /** Receives the fit count so the caller can slice its data source
    *  to render exactly that many rows. */
   renderRows: (fitCount: number) => ReactNode;
-  /** Total dataset length — drives the "View N more" math + footer
-   *  visibility (footer appears when totalRows > fitCount). */
+  /** Total dataset length — drives the "View N more" math (remainder
+   *  beyond the shown rows). The footer renders whenever totalRows > 0. */
   totalRows: number;
   onMore: () => void;
 }
@@ -56,13 +72,17 @@ export function ColumnWidget({
   totalRows,
   onMore,
 }: Props) {
+  const isMobile = useIsMobile();
   const [fitCount, rowsRef] = useFitCount(rowPx);
+  // Desktop fills the viewport band (capped); mobile has no band, so the
+  // fit count is unreliable — render a fixed MAX_ROWS preview instead.
+  const shown = isMobile ? MAX_ROWS : Math.min(fitCount, MAX_ROWS);
   return (
     <div className="pcol" data-pcol={id}>
       <PersonalColumnHeader title={title} count={count} sort={sort} />
       {quickAdd ? <div className="pcol-add">{quickAdd}</div> : null}
       <div className="pcol-rows" ref={rowsRef}>
-        {isEmpty ? empty : renderRows(fitCount)}
+        {isEmpty ? empty : renderRows(shown)}
       </div>
       {totalRows > 0 ? (
         // Always offer the drawer entry when the column has content — the
@@ -75,7 +95,7 @@ export function ColumnWidget({
         // and the reason the footer-driven drawer e2es were flaky. A
         // permanent footer can't detach mid-click, so the entry is stable.
         <button className="pcol-more" onClick={onMore}>
-          {totalRows > fitCount ? `View ${totalRows - fitCount} more` : 'View all'}
+          {totalRows > shown ? `View ${totalRows - shown} more` : 'View all'}
           <Icons.ChevronRight size={11} />
         </button>
       ) : null}

@@ -18,6 +18,7 @@ import { SortDropdown, TodoSortDropdown } from '../components/SortDropdown';
 import { SearchInput, type SigilKind } from '../components/SearchInput';
 import { TodoRow } from '../components/TodoRow';
 import { SectionedTodoList } from '../components/SectionedTodoList';
+import { HomeTagFilter } from '../components/HomeTagFilter';
 import { listProjects, listTodos, updateTodo } from '../lib/api';
 import { toUiProjects, toUiTodo } from '../lib/view';
 import { useEntitySearch } from '../lib/useEntitySearch';
@@ -25,7 +26,7 @@ import { useTagSuggestions } from '../lib/useTagSuggestions';
 import { useTodoExpansion } from '../lib/useTodoExpansion';
 import { groupTodosBySection } from '../lib/todoSections';
 import { type TodoSortMode } from '../lib/todoSort';
-import { matchesTagFilter } from '../lib/tagFilter';
+import { matchesTagFilter, EMPTY_FILTER, type TagFilter } from '../lib/tagFilter';
 import { cls } from '../lib/util';
 import type { ActionDispatch, Todo, TodoPriority } from '../types';
 
@@ -47,7 +48,9 @@ export function TodosPage({ onAction, initialScope }: Props) {
   const qc = useQueryClient();
   const [scope, setScope] = useState<ScopeMode>(initialScope ?? 'personal');
   const [sortMode, setSortMode] = useState<TodoSortMode>('manual');
-  const [tagSel, setTagSel] = useState<Set<string>>(() => new Set());
+  // Tag filter reuses the Home dashboard's HomeTagFilter (chip row + overflow
+  // popover + AND/OR + Clear). Priority stays as its own chip group below.
+  const [tagFilter, setTagFilter] = useState<TagFilter>(EMPTY_FILTER);
   const [prioSel, setPrioSel] = useState<Set<TodoPriority>>(() => new Set());
   const [extraSections, setExtraSections] = useState<string[]>([]);
   const [addingSection, setAddingSection] = useState(false);
@@ -106,26 +109,28 @@ export function TodosPage({ onAction, initialScope }: Props) {
     while (cur.parent_id && byId.get(cur.parent_id)) cur = byId.get(cur.parent_id)!;
     return cur;
   };
-  const tagFilter = useMemo(() => ({ tags: [...tagSel], mode: 'or' as const }), [tagSel]);
   const filtered = useMemo(() => {
-    if (tagSel.size === 0 && prioSel.size === 0) return allTodos;
+    if (tagFilter.tags.length === 0 && prioSel.size === 0) return allTodos;
     return allTodos.filter((t) => {
       const root = rootOf(t);
       return matchesTagFilter(root, tagFilter) && (prioSel.size === 0 || prioSel.has(root.priority));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allTodos, tagSel, prioSel, tagFilter]);
+  }, [allTodos, tagFilter, prioSel]);
 
   const grouped = useMemo(
     () => groupTodosBySection(filtered, { mode: sortMode, isExpanded, extraSections }),
     [filtered, sortMode, isExpanded, extraSections],
   );
 
-  // Tag chips available to filter by — distinct root tags in scope.
-  const availableTags = useMemo(() => {
+  // Tag options for HomeTagFilter — distinct ROOT tags in scope with usage
+  // counts (filters apply to a todo's root, so subtask-only tags are excluded).
+  const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const t of allTodos) if (!t.parent_id) for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name]) => name);
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, total]) => ({ name, total }));
   }, [allTodos]);
 
   const toggleDone = useMutation({
@@ -207,31 +212,29 @@ export function TodosPage({ onAction, initialScope }: Props) {
         )}
       </div>
 
-      {(availableTags.length > 0 || prioSel.size > 0) && (
+      {allTodos.length > 0 && (
         <div className="todos-filters">
           {PRIORITIES.map((p) => (
             <button
               key={p}
+              type="button"
               className={cls('filter-chip', prioSel.has(p) && 'active')}
               onClick={() => setPrioSel((s) => toggleSet(s, p))}
             >
               {p.toUpperCase()}
             </button>
           ))}
-          {availableTags.map((tag) => (
-            <button
-              key={tag}
-              className={cls('filter-chip', tagSel.has(tag) && 'active')}
-              onClick={() => setTagSel((s) => toggleSet(s, tag))}
-            >
-              #{tag}
-            </button>
-          ))}
-          {(tagSel.size > 0 || prioSel.size > 0) && (
-            <button className="btn btn-ghost btn-sm" onClick={() => { setTagSel(new Set()); setPrioSel(new Set()); }}>
-              Clear
+          {prioSel.size > 0 && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPrioSel(new Set())}>
+              Clear priority
             </button>
           )}
+        </div>
+      )}
+
+      {(tagOptions.length > 0 || tagFilter.tags.length > 0) && (
+        <div className="view-tagbar">
+          <HomeTagFilter options={tagOptions} filter={tagFilter} onChange={setTagFilter} />
         </div>
       )}
 

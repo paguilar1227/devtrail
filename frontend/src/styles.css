@@ -3423,6 +3423,21 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-family: var(--font-mono); font-size: 0.9em;
   background: var(--glass-bg-soft); padding: 1px 5px; border-radius: 4px;
 }
+/* Desktop search toolbar — full width above the three columns, mirroring
+   the Home / Tasks views (the search used to live inside the middle list
+   column). */
+.notes-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px var(--pad-page) 10px;
+}
+.notes-toolbar .search-box { flex: 1; min-width: 0; }
+/* Shared wrapper for the reused HomeTagFilter on the Notes / Tasks views —
+   gives the bordered filter card page-edge padding and drops its Home-only
+   vertical margin. The -compact variant fits inside the mobile notes list
+   panel (tighter, no page padding). */
+.view-tagbar { padding: 0 var(--pad-page) 10px; }
+.view-tagbar .home-tag-filter { margin: 0; }
+.view-tagbar-compact { padding: 8px 10px 4px; }
 .notes-cols {
   flex: 1; min-height: 0;
   display: grid;

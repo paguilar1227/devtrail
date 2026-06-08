@@ -4,6 +4,7 @@ import { MAX_TODO_DEPTH, type TodoComment } from '@open-brain/shared';
 import { DateTimePicker } from '../DateTimePicker';
 import { Icons } from '../Icons';
 import { Drawer, Checkbox, EntityLink, Priority, Tag } from '../primitives';
+import { TagInput } from '../TagInput';
 import { ReaderBackButton } from '../ReaderBackButton';
 import { useConfirm } from '../ConfirmDialog';
 import {
@@ -11,6 +12,7 @@ import {
   listTodoComments, listTodos, updateComment, updateTodo,
 } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
+import { useTagSuggestions } from '../../lib/useTagSuggestions';
 import { cls, fmtRel } from '../../lib/util';
 import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import { useTodoDepth } from '../../lib/useTodoDepth';
@@ -69,11 +71,14 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
   // the chip cluster current between the optimistic edit and the next
   // refetch from the parent.
   const [tags, setTags] = useState<string[]>(todo.tags);
-  const [tagDraft, setTagDraft] = useState('');
-  const [addingTag, setAddingTag] = useState(false);
   // Tags are a root-only concept (the user's decision): only top-level todos
   // carry them; subtasks inherit their grouping from the parent.
   const isRoot = !todo.parent_id;
+  // Autocomplete inventory for the tag editor — scoped to the todo's project
+  // (or personal). Shows existing tags so the user reuses rather than retypes.
+  const tagSuggestions = useTagSuggestions(
+    todo.project_id ? { project_id: todo.project_id } : { scope: 'personal' },
+  );
 
   const commentsQ = useQuery({
     queryKey: ['todo-comments', todo.id],
@@ -180,20 +185,10 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
     updateMut.mutate({ status: s });
   };
 
-  // Tag editing — same auto-save pattern as priority / due. Lowercase
-  // and dedup on add. Each change fires updateTodo with the new full
-  // list (no merge endpoint exists, the wire contract replaces).
-  const addTag = () => {
-    const t = tagDraft.trim().toLowerCase();
-    setTagDraft('');
-    setAddingTag(false);
-    if (!t || tags.includes(t)) return;
-    const next = [...tags, t];
-    setTags(next);
-    updateMut.mutate({ tags: next });
-  };
-  const removeTag = (t: string) => {
-    const next = tags.filter((x) => x !== t);
+  // Tag editing — same auto-save pattern as priority / due. TagInput emits
+  // the full next list on every add/remove; we persist it immediately (no
+  // merge endpoint exists — the wire contract replaces the whole list).
+  const onTagsChange = (next: string[]) => {
     setTags(next);
     updateMut.mutate({ tags: next });
   };
@@ -286,44 +281,7 @@ export function TodoDetailDrawer({ todo, onClose, onAction, onBack }: Props) {
           <>
             <span className="subtle">tags</span>
             <div className="row-flex gap-1" style={{ flexWrap: 'wrap' }}>
-              {tags.map((t) => (
-                <Tag key={t} removable onRemove={() => removeTag(t)}>
-                  {t}
-                </Tag>
-              ))}
-              {addingTag ? (
-                <span className="input-tag-wrap">
-                  <span className="hash">#</span>
-                  <input
-                    autoFocus
-                    className="input-tag"
-                    placeholder="add tag"
-                    value={tagDraft}
-                    onChange={(e) => setTagDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addTag();
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setTagDraft('');
-                        setAddingTag(false);
-                      }
-                    }}
-                    onBlur={addTag}
-                  />
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setAddingTag(true)}
-                  disabled={updateMut.isPending}
-                >
-                  <Icons.Plus size={11} /> Add
-                </button>
-              )}
+              <TagInput value={tags} onChange={onTagsChange} suggestions={tagSuggestions} />
             </div>
           </>
         ) : null}

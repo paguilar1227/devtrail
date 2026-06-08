@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
-    "test:smoke": "playwright test --grep @smoke"
+    "test:smoke": "playwright test --grep @smoke",
+    "doctor": "react-doctor --no-telemetry"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
@@ -40,6 +41,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "jsdom": "^25.0.1",
+    "react-doctor": "0.4.2",
     "typescript": "^5.5.3",
     "vite": "^5.3.4",
     "vitest": "^3.2.4"

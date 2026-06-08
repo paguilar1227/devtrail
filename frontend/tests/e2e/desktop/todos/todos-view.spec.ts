@@ -31,6 +31,44 @@ test.describe('Todos view', () => {
     await expect(page.locator('.todos-filters .filter-chip', { hasText: 'P1' })).toBeVisible();
   });
 
+  test('tag filter (reused HomeTagFilter) narrows the list to matching todos', async ({ page }) => {
+    await openTodos(page);
+    const tagBar = page.locator('.todos-view .home-tag-filter');
+    await expect(tagBar).toBeVisible();
+
+    // Filter by #reading → only the reading todo remains in the open sections.
+    // Scope to the visible chip row (the hidden measure layer also carries
+    // .home-filter-chip).
+    await tagBar.locator('.home-tag-filter-chips .home-filter-chip', { hasText: 'reading' }).click();
+    const openRows = page.locator('.todos-body .todos-section .prow-todo');
+    await expect(openRows.filter({ hasText: "Read 'On the Measure of Intelligence'" })).toHaveCount(1);
+    await expect(openRows.filter({ hasText: 'Buy new mechanical keyboard' })).toHaveCount(0);
+
+    // Clear restores the full list (the chore todo is back).
+    await tagBar.locator('.home-tag-filter-clear').click();
+    await expect(openRows.filter({ hasText: 'Buy new mechanical keyboard' })).toHaveCount(1);
+  });
+
+  test('tag editor offers an autocomplete of existing tags (shared TagInput)', async ({ page }) => {
+    const title = stamp() + ' tag-autocomplete';
+    await createTodo(title, null);
+    await openTodos(page);
+    await rowByTitle(page, title).click();
+    const drawer = page.locator('.drawer');
+    await expect(drawer).toBeVisible({ timeout: 10000 });
+
+    // Open the tag input and type a prefix — the dropdown should surface the
+    // existing #reading tag (the whole point: reuse, not retype/misspell).
+    await drawer.locator('button.btn-ghost.btn-sm', { hasText: 'Add' }).click();
+    await drawer.locator('.input-tag').fill('read');
+    const suggestion = drawer.locator('.typeahead-popover .typeahead-row', { hasText: 'reading' });
+    await expect(suggestion).toBeVisible();
+
+    // Selecting it commits the existing tag (no manual full-typing).
+    await suggestion.click();
+    await expect(drawer.locator('.tag', { hasText: 'reading' }).first()).toBeVisible();
+  });
+
   test('Add section reveals an inline input that creates an empty section', async ({ page }) => {
     await openTodos(page);
     await page.locator('.todos-toolbar button', { hasText: 'Add section' }).click();

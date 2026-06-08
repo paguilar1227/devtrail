@@ -28,6 +28,26 @@ test.describe('Notes view: Folders browser', () => {
     await expect(page.locator('.notes-tree-row', { hasText: 'All notes' })).toBeVisible();
   });
 
+  test('tag filter (reused HomeTagFilter) narrows the list to matching notes', async ({ page }) => {
+    await openNotes(page);
+    // The reused tag bar lives above the columns on desktop.
+    const tagBar = page.locator('.notes-view .home-tag-filter');
+    await expect(tagBar).toBeVisible();
+    const unfiltered = await listRows(page).count();
+    expect(unfiltered).toBeGreaterThan(2);
+
+    // Filter by #reading → only reading-tagged notes remain. Scope to the
+    // visible chip row (the hidden measure layer also carries .home-filter-chip).
+    await tagBar.locator('.home-tag-filter-chips .home-filter-chip', { hasText: 'reading' }).click();
+    await expect(listRows(page)).toHaveCount(2);
+    await expect(listRows(page).filter({ hasText: 'Reading list' }).first()).toBeVisible();
+    await expect(listRows(page).filter({ hasText: 'Recipe — weeknight ramen' })).toHaveCount(0);
+
+    // Clear restores the full list.
+    await tagBar.locator('.home-tag-filter-clear').click();
+    await expect(listRows(page)).toHaveCount(unfiltered);
+  });
+
   test('folder tree shows the seeded hierarchy with counts', async ({ page }) => {
     await openNotes(page);
     const cooking = treeRow(page, 'cooking');

@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icons } from '../Icons';
-import { Modal, Status, Tag } from '../primitives';
+import { useMemo, useRef, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Modal, Status } from '../primitives';
 import { MarkdownEditor } from '../MarkdownEditor';
 import { FolderPathField } from '../FolderPathField';
-import { TypeaheadPopover, type TypeaheadItem } from '../TypeaheadPopover';
-import { createNote, editContentBody, listTags, updateContent } from '../../lib/api';
+import { TagInput, type TagInputHandle } from '../TagInput';
+import { createNote, editContentBody, updateContent } from '../../lib/api';
+import { useTagSuggestions } from '../../lib/useTagSuggestions';
 import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import { fmtRel } from '../../lib/util';
 import type { Note } from '../../types';
@@ -41,20 +41,15 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
   // Folder the note is filed under. New notes default to the folder the caller
   // is browsing (initialFolder); edits start from the note's current folder.
   const [folder, setFolder] = useState<string | null>(note?.folder ?? initialFolder ?? null);
-  const [tagDraft, setTagDraft] = useState('');
-  const [editingTag, setEditingTag] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tagInputRef = useRef<TagInputHandle | null>(null);
   const qc = useQueryClient();
 
-  // Scope-aware tag suggestions for the typeahead. Same source-of-
-  // truth listTags endpoint the home page uses, scoped to wherever
-  // the note lives so the user sees relevant tags first.
+  // Scope-aware tag suggestions for the autocomplete. Same source-of-truth
+  // listTags inventory the home page uses, scoped to wherever the note lives
+  // so the user sees relevant tags first.
   const tagsScope = useMemo(() => tagsScopeFor(note, projectId), [note, projectId]);
-  const tagsQ = useQuery({
-    queryKey: ['tags', 'note-editor', JSON.stringify(tagsScope)],
-    queryFn: () => listTags(tagsScope),
-    staleTime: 60_000,
-  });
+  const tagSuggestions = useTagSuggestions(tagsScope);
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
@@ -114,105 +109,24 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
   // Dirty = user has actually edited something compared to the initial
   // state. For a new note that means stepping away from the placeholder
   // defaults; for an existing note it means any field differs from the
-  // server's copy. Pending tag draft also counts as dirty so Cancel
-  // doesn't quietly lose it.
+  // server's copy. An uncommitted tag draft is committed on blur (before
+  // any close click lands), so it surfaces here through the tags diff.
   const cleanTitle = title.trim() || NEW_NOTE_TITLE_PLACEHOLDER;
-  const draftIsNovel = tagDraft.trim().length > 0 && !tags.includes(tagDraft.trim().toLowerCase());
   const isDirty = isNew
     ? (
         body !== NEW_NOTE_BODY_PLACEHOLDER ||
         cleanTitle !== NEW_NOTE_TITLE_PLACEHOLDER ||
         tags.length > 0 ||
-        (folder ?? null) !== (initialFolder ?? null) ||
-        draftIsNovel
+        (folder ?? null) !== (initialFolder ?? null)
       )
     : (
         body !== note!.body ||
         cleanTitle !== note!.title ||
         JSON.stringify(tags) !== JSON.stringify(note!.tags ?? []) ||
-        (folder ?? null) !== (note!.folder ?? null) ||
-        draftIsNovel
+        (folder ?? null) !== (note!.folder ?? null)
       );
 
   const tryClose = useDirtyCloseGuard(isDirty, onClose, pending);
-
-  // Compute the final tag list including any uncommitted draft. Used
-  // by both save() and the typeahead's selection logic. Centralized
-  // so the "you can click Save without pressing Enter and it still
-  // saves your typed tag" promise is consistent.
-  const commitDraftInto = (current: string[]): string[] => {
-    const t = tagDraft.trim().toLowerCase();
-    if (!t || current.includes(t)) return current;
-    return [...current, t];
-  };
-
-  const addTag = (tagName: string) => {
-    const t = tagName.trim().toLowerCase();
-    if (!t || tags.includes(t)) return;
-    setTags([...tags, t]);
-    setTagDraft('');
-    setActiveIndex(0);
-    // Leave editingTag=true so the user can chain-add another tag
-    // without re-clicking Add. Escape / blur (with empty draft) closes.
-  };
-
-  // Typeahead state — popover open while the user is editing a tag
-  // and there's something to suggest. Caller selects with ↓↑ + Enter
-  // (parent-owned cursor pattern, same as SearchInput).
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  // Filtered suggestion items: scope-tagged tags that aren't already
-  // applied, matching the current draft as a prefix or substring.
-  // Top 8 by usage count.
-  const tagItems = useMemo<TypeaheadItem[]>(() => {
-    const prefix = tagDraft.trim().toLowerCase();
-    const applied = new Set(tags.map((t) => t.toLowerCase()));
-    return (tagsQ.data ?? [])
-      .filter((t) => !applied.has(t.name.toLowerCase()))
-      .filter((t) => !prefix || t.name.toLowerCase().includes(prefix))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 8)
-      .map((t) => ({ key: t.name, value: t.name, label: t.name, sublabel: String(t.total) }));
-  }, [tagDraft, tags, tagsQ.data]);
-
-  const popoverOpen = editingTag && tagItems.length > 0;
-
-  const onTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (popoverOpen) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setActiveIndex((i) => Math.min(tagItems.length - 1, i + 1));
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setActiveIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        addTag(tagItems[activeIndex].value);
-        return;
-      }
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (popoverOpen && tagItems[activeIndex]) {
-        addTag(tagItems[activeIndex].value);
-      } else if (tagDraft.trim()) {
-        addTag(tagDraft);
-      } else {
-        setEditingTag(false);
-      }
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      setTagDraft('');
-      setEditingTag(false);
-    }
-  };
 
   const save = () => {
     setError(null);
@@ -222,9 +136,7 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
     }
     // Commit any pending draft into the tag list before mutating —
     // saves users from "I typed it but forgot to press Enter" data loss.
-    const finalTags = commitDraftInto(tags);
-    if (finalTags !== tags) setTags(finalTags);
-    setTagDraft('');
+    const finalTags = tagInputRef.current?.commitDraft() ?? tags;
     if (isNew) createMut.mutate(finalTags);
     else editMut.mutate(finalTags);
   };
@@ -252,58 +164,12 @@ export function NoteEditorModal({ note, projectId, initialFolder, onClose }: Pro
         onChange={e => setTitle(e.target.value)}
       />
       <div className="row-flex gap-1" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
-        {tags.map((t, i) => (
-          <Tag key={i} removable onRemove={() => setTags(tags.filter((_, j) => j !== i))}>
-            {t}
-          </Tag>
-        ))}
-        {editingTag ? (
-          <span className="input-tag-wrap" style={{ position: 'relative' }}>
-            <span className="hash">#</span>
-            <input
-              ref={inputRef}
-              autoFocus
-              className="input-tag"
-              placeholder="add tag"
-              value={tagDraft}
-              onChange={(e) => {
-                setTagDraft(e.target.value);
-                setActiveIndex(0);
-              }}
-              onKeyDown={onTagKeyDown}
-              // On blur: commit any typed-but-uncommitted draft AND
-              // close the input. Without the commit we'd silently drop
-              // what the user typed; without the close the input lingers
-              // visually even after focus moved elsewhere. The popover's
-              // onMouseDown preventDefault keeps focus on the input
-              // when selecting suggestions, so this only fires on a
-              // genuine click-away.
-              onBlur={() => {
-                if (tagDraft.trim()) addTag(tagDraft);
-                setEditingTag(false);
-              }}
-              autoComplete="off"
-              spellCheck={false}
-              role="combobox"
-              aria-expanded={popoverOpen}
-              aria-autocomplete="list"
-            />
-            {popoverOpen ? (
-              <TypeaheadPopover
-                items={tagItems}
-                activeIndex={activeIndex}
-                onSelect={(item) => addTag(item.value)}
-                onHover={setActiveIndex}
-                onDismiss={() => setEditingTag(false)}
-                ariaLabel="Tag suggestions"
-              />
-            ) : null}
-          </span>
-        ) : (
-          <button className="btn btn-ghost btn-sm" onClick={() => setEditingTag(true)}>
-            <Icons.Plus size={11} /> Add
-          </button>
-        )}
+        <TagInput
+          ref={tagInputRef}
+          value={tags}
+          onChange={setTags}
+          suggestions={tagSuggestions}
+        />
         <span style={{ marginLeft: 'auto' }}>
           <Status status={note?.processing_status || 'ready'} />
         </span>

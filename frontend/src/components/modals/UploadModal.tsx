@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../Icons';
-import { Modal, Tag } from '../primitives';
+import { Modal } from '../primitives';
+import { TagInput, type TagInputHandle } from '../TagInput';
 import { saveFromUrl, uploadFile } from '../../lib/api';
+import { useTagSuggestions } from '../../lib/useTagSuggestions';
 import { useDirtyCloseGuard } from '../../lib/useDirtyCloseGuard';
 import type { Project } from '../../types';
 
@@ -21,13 +23,15 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [queue, setQueue] = useState<Queued[]>([]);
   const [urlDraft, setUrlDraft] = useState('');
-  const [tagsDraft, setTagsDraft] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const tagInputRef = useRef<TagInputHandle | null>(null);
 
   const projectIds = project ? [project.id] : undefined;
-  const tags = tagsDraft
-    .split(',')
-    .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
+  // Autocomplete inventory — scoped to the upload target (a project or the
+  // personal Inbox) so existing tags are offered instead of re-typed.
+  const tagSuggestions = useTagSuggestions(
+    project ? { project_id: project.id } : { scope: 'personal' },
+  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
@@ -37,11 +41,11 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
   };
 
   const fileMut = useMutation({
-    mutationFn: (item: Extract<Queued, { kind: 'file' }>) =>
+    mutationFn: ({ item, tags }: { item: Extract<Queued, { kind: 'file' }>; tags: string[] }) =>
       uploadFile({ file: item.file, projectIds, tags: tags.length ? tags : undefined }),
   });
   const urlMut = useMutation({
-    mutationFn: (item: Extract<Queued, { kind: 'url' }>) =>
+    mutationFn: ({ item, tags }: { item: Extract<Queued, { kind: 'url' }>; tags: string[] }) =>
       saveFromUrl({ url: item.url, projectIds, tags: tags.length ? tags : undefined }),
   });
 
@@ -68,12 +72,14 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
   };
 
   const processAll = async () => {
+    // Flush any typed-but-uncommitted tag so it isn't silently dropped.
+    const finalTags = tagInputRef.current?.commitDraft() ?? tags;
     const pending = queue.filter((x) => x.status === 'queued');
     for (const item of pending) {
       setStatus(item.id, { status: 'uploading' });
       try {
-        if (item.kind === 'file') await fileMut.mutateAsync(item);
-        else await urlMut.mutateAsync(item);
+        if (item.kind === 'file') await fileMut.mutateAsync({ item, tags: finalTags });
+        else await urlMut.mutateAsync({ item, tags: finalTags });
         setStatus(item.id, { status: 'ready' });
       } catch (err) {
         setStatus(item.id, {
@@ -96,7 +102,7 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
   const isDirty =
     queuedCount > 0 ||
     urlDraft.trim().length > 0 ||
-    tagsDraft.trim().length > 0;
+    tags.length > 0;
   const tryClose = useDirtyCloseGuard(isDirty, onClose, busy, {
     body: 'You have queued items or unsaved input. Closing will lose them.',
   });
@@ -167,20 +173,17 @@ export function UploadModal({ project, onClose }: { project: Project | null; onC
         </button>
       </div>
       <div className="divider" />
-      <label className="field-label">Default tags (comma-separated)</label>
-      <input
-        className="input"
-        placeholder="research, auth"
-        value={tagsDraft}
-        onChange={(e) => setTagsDraft(e.target.value)}
-      />
-      {tags.length > 0 ? (
-        <div className="row-flex gap-1" style={{ flexWrap: 'wrap', marginTop: 6 }}>
-          {tags.map((t) => (
-            <Tag key={t}>{t}</Tag>
-          ))}
-        </div>
-      ) : null}
+      {/* Not a <label>: TagInput has no single associated control (chips +
+          an on-demand input), so this is a plain section heading. */}
+      <div className="field-label">Default tags</div>
+      <div className="row-flex gap-1" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+        <TagInput
+          ref={tagInputRef}
+          value={tags}
+          onChange={setTags}
+          suggestions={tagSuggestions}
+        />
+      </div>
       <div className="divider" />
       <label className="field-label">Queue ({queue.length})</label>
       {queue.length === 0 ? (

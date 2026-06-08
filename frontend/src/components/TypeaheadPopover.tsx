@@ -36,6 +36,9 @@ interface Props {
   emptyMessage?: string;
   /** ARIA label for the listbox role — describes what kind of items. */
   ariaLabel: string;
+  /** DOM id for the listbox, so the controlling input can reference it via
+   *  aria-controls (WAI-ARIA autocomplete pattern). */
+  id?: string;
 }
 
 export function TypeaheadPopover({
@@ -46,6 +49,7 @@ export function TypeaheadPopover({
   onDismiss,
   emptyMessage = 'No matches.',
   ariaLabel,
+  id,
 }: Props) {
   const popRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLButtonElement | null>(null);
@@ -68,7 +72,7 @@ export function TypeaheadPopover({
   }, [activeIndex]);
 
   return (
-    <div ref={popRef} className="typeahead-popover" role="listbox" aria-label={ariaLabel}>
+    <div ref={popRef} id={id} className="typeahead-popover" role="listbox" aria-label={ariaLabel}>
       {items.length === 0 ? (
         <div className="typeahead-empty">{emptyMessage}</div>
       ) : (
