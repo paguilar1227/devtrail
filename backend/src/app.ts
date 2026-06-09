@@ -70,6 +70,7 @@ import type { ServiceDeps } from './services/index.js';
 import type { BlobStorage } from './storage/blob.js';
 import { createMcpServer } from './mcp/server.js';
 import { resolveUploadMime } from './capture/mime-utils.js';
+import { downloadFilename } from './util/file-meta.js';
 import * as projectsSvc from './services/projects.js';
 import * as contentSvc from './services/content-items.js';
 import * as todosSvc from './services/todos.js';
@@ -1939,31 +1940,6 @@ function serializeContentItem(
   } as unknown as z.infer<typeof ContentItemSchema>;
 }
 
-const MIME_TO_EXT: Record<string, string> = {
-  'application/pdf': '.pdf',
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/svg+xml': '.svg',
-  'audio/mpeg': '.mp3',
-  'audio/wav': '.wav',
-  'audio/x-wav': '.wav',
-  'audio/ogg': '.ogg',
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'text/plain': '.txt',
-  'text/markdown': '.md',
-  'application/json': '.json',
-};
-
-function downloadFilename(rest: Record<string, unknown>): string {
-  const title = (rest.title as string | undefined)?.trim() || 'document';
-  const mime = (rest.mime_type as string | null | undefined) ?? '';
-  const ext = MIME_TO_EXT[mime] ?? '';
-  return /\.\w{2,5}$/.test(title) ? title : `${title}${ext}`;
-}
 
 function serializeComment(c: {
   id: string;

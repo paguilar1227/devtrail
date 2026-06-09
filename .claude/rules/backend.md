@@ -52,7 +52,7 @@ src/
 │   ├── stub.ts             # Deterministic in-memory LLM/embedding fakes for stub mode
 │   └── json-utils.ts       # extractJson() — strips markdown fences from LLM output
 ├── mcp/
-│   └── server.ts           # 21 MCP tools (see below)
+│   └── server.ts           # 22 MCP tools (see below)
 └── storage/
     └── blob.ts             # Azure Blob upload/download
 ```
@@ -61,32 +61,33 @@ src/
 
 Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `backend/src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
 
-## MCP tools (21 total — defined in `backend/src/mcp/server.ts`)
+## MCP tools (22 total — defined in `backend/src/mcp/server.ts`)
 
 Read:
 1. `list_projects` — list all (filter by status optional)
 2. `list` — entity_type-filtered browse (document / note / todo)
 3. `get` — fetch by UUID, auto-detects type (project / content / todo)
-4. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
-5. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
-6. `list_tags` — tag inventory with usage counts; optional `project_id` scope
-7. `list_comments` — comments on a todo
-8. `list_activity` — recent ingest / edit / comment events with since/until/kinds/project_id filters
-9. `ask` — RAG synthesis (auto / fast / thorough depth)
+4. `download` — time-limited SAS download URL + metadata (filename, MIME, size) for a file-backed item's **original uploaded file**. Returns the URL, not the bytes — the caller fetches it to use the file or hands it off. Text-only items return `file: null` (use `get`). Reuses `getDownloadSasUrl`/`getReadSasUrl` + `getSize` (HEAD-only).
+5. `search` — hybrid vector + graph semantic search, RRF-fused, with `retrieval_path` per hit
+6. `find_mentions` — exact entity lookup (canonical name or alias) → list of chunks
+7. `list_tags` — tag inventory with usage counts; optional `project_id` scope
+8. `list_comments` — comments on a todo
+9. `list_activity` — recent ingest / edit / comment events with since/until/kinds/project_id filters
+10. `ask` — RAG synthesis (auto / fast / thorough depth)
 
 Write:
-10. `create_project`
-11. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`; document/note/quick_note accept an optional `folder` path)
-12. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags/**folder** — single hierarchical path, null to unfile), project (name/description/status)
-13. `replace` — archive an existing content item and create a v2 in its place; old row stamped `metadata.replaced_by`. Refuses pending rows. Text-only (REST handles binary replacement).
-14. `archive` — soft delete on content / todo / project
-15. `restore` — undo `archive`
-16. `add_comment` — add a comment to a todo
-17. `update_comment` — edit a comment body
-18. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
-19. `retry` — re-run a failed ingest (state must be `failed`)
-20. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
-21. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
+11. `create_project`
+12. `create` — discriminated union over document / note / quick_note / todo (todo gets `parent_id` and `section`; document/note/quick_note accept an optional `folder` path)
+13. `update` — metadata edits across kinds: todo (status/priority/due/parent/tags/project), content (title/project_ids/tags/**folder** — single hierarchical path, null to unfile), project (name/description/status)
+14. `replace` — archive an existing content item and create a v2 in its place; old row stamped `metadata.replaced_by`. Refuses pending rows. Text-only (REST handles binary replacement).
+15. `archive` — soft delete on content / todo / project
+16. `restore` — undo `archive`
+17. `add_comment` — add a comment to a todo
+18. `update_comment` — edit a comment body
+19. `save_from_url` — ingest by URL (YouTube / X / PDF / HTML / direct media)
+20. `retry` — re-run a failed ingest (state must be `failed`)
+21. `reprocess` — regenerate chunks/embeddings/metadata on a healthy or failed row (NOT pending)
+22. `rename_tag` — corpus-wide tag rename (also handles delete via collapse-to-existing)
 
 Hard delete is REST-only by design. Bulk ops, pin/unpin, and stats are REST-only — those are UI affordances rather than AI workflows. The MCP server passes a long `INSTRUCTIONS` string to clients telling the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
 

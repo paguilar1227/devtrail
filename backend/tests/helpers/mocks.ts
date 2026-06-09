@@ -34,6 +34,12 @@ export function mockBlobStorage(): BlobStorage {
     exists: vi.fn().mockResolvedValue(false),
     getUrl: vi.fn().mockReturnValue('https://blob.storage/file'),
     download: vi.fn().mockResolvedValue(Buffer.from('mock-bytes')),
+    getSize: vi.fn().mockResolvedValue(2048),
     getReadSasUrl: vi.fn((url: string) => url),  // pass-through in tests
+    // Pass-through with a fake SAS marker so tests can assert the URL was
+    // signed. Query-safe: append with & when the URL already has a query (and
+    // tolerate bare blob names, which `new URL()` would reject).
+    getDownloadSasUrl: vi.fn((url: string) =>
+      url ? `${url}${url.includes('?') ? '&' : '?'}sig=test&rscd=attachment` : url),
   };
 }

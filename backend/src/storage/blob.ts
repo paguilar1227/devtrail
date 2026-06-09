@@ -20,6 +20,13 @@ export interface BlobStorage {
    */
   download(blobUrlOrName: string): Promise<Buffer>;
   /**
+   * Size of a same-account blob in bytes via a single properties (HEAD) call —
+   * no body transfer. Accepts a bare name or a full URL (with or without a SAS
+   * query), same resolution rules as `download`. Lets callers report file size
+   * without downloading the bytes.
+   */
+  getSize(blobUrlOrName: string): Promise<number>;
+  /**
    * Append a read-only SAS query string to a blob URL so it can be fetched
    * without account credentials. Default TTL: 60 minutes.
    *
@@ -83,6 +90,21 @@ export function createBlobStorage(connectionString: string, containerName: strin
     : `https://${accountName}.blob.core.windows.net`;
   const accountHostPrefix = `${baseEndpoint}/${containerName}/`;
 
+  // Resolve a bare blob name or a same-account blob URL (with/without a SAS
+  // query) down to the blob name. Refuses cross-account URLs so we can't be
+  // tricked into touching arbitrary same-host blobs.
+  const resolveBlobName = (blobUrlOrName: string, op: string): string => {
+    if (blobUrlOrName.startsWith('http://') || blobUrlOrName.startsWith('https://')) {
+      if (!blobUrlOrName.startsWith(accountHostPrefix)) {
+        throw new Error(`${op}: refusing to access blob URL outside of ${accountHostPrefix}`);
+      }
+      const queryIdx = blobUrlOrName.indexOf('?');
+      const noQuery = queryIdx === -1 ? blobUrlOrName : blobUrlOrName.slice(0, queryIdx);
+      return decodeURIComponent(noQuery.slice(accountHostPrefix.length));
+    }
+    return blobUrlOrName;
+  };
+
   return {
     async upload(blobName, data, contentType) {
       const blockBlobClient = containerClient.getBlockBlobClient(blobName);
@@ -108,22 +130,14 @@ export function createBlobStorage(connectionString: string, containerName: strin
     },
 
     async download(blobUrlOrName) {
-      // Accept either a full URL (https://acct.blob.core.windows.net/container/<name>?<sas>)
-      // or a bare blob name. For full URLs, strip the prefix + any query
-      // string and refuse cross-account paths so we can't be tricked into
-      // fetching arbitrary same-host blobs.
-      let blobName = blobUrlOrName;
-      if (blobUrlOrName.startsWith('http://') || blobUrlOrName.startsWith('https://')) {
-        if (!blobUrlOrName.startsWith(accountHostPrefix)) {
-          throw new Error(`download: refusing to fetch blob URL outside of ${accountHostPrefix}`);
-        }
-        const queryIdx = blobUrlOrName.indexOf('?');
-        const noQuery = queryIdx === -1 ? blobUrlOrName : blobUrlOrName.slice(0, queryIdx);
-        blobName = decodeURIComponent(noQuery.slice(accountHostPrefix.length));
-      }
-      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-      const buffer = await blockBlobClient.downloadToBuffer();
-      return buffer;
+      const blobName = resolveBlobName(blobUrlOrName, 'download');
+      return containerClient.getBlockBlobClient(blobName).downloadToBuffer();
+    },
+
+    async getSize(blobUrlOrName) {
+      const blobName = resolveBlobName(blobUrlOrName, 'getSize');
+      const props = await containerClient.getBlockBlobClient(blobName).getProperties();
+      return props.contentLength ?? 0;
     },
 
     getReadSasUrl(blobUrl, ttlMinutes = 60) {

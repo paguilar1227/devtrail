@@ -10,6 +10,7 @@ import * as ragSvc from '../services/rag.js';
 import * as tagsSvc from '../services/tags.js';
 import * as activitySvc from '../services/activity.js';
 import * as urlIngestSvc from '../services/url-ingest.js';
+import { downloadFilename, humanFileSize } from '../util/file-meta.js';
 import { withSpan } from '../observability.js';
 
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
@@ -271,6 +272,65 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
       const pr = await projectsSvc.getProject(deps, id);
       if (pr) return { content: [{ type: 'text', text: JSON.stringify(pr, null, 2) }] };
       return { content: [{ type: 'text', text: `No entity found with id ${id}` }] };
+    },
+  );
+
+  // ---------- 4b. download ----------
+  server.tool(
+    'download',
+    `Get a time-limited download URL for the original uploaded FILE behind a document (PDF, image, audio, video, or any binary upload). Returns metadata only — filename, file_type (MIME), and size — plus a signed download_url and an inline-preview blob_url, both valid ~60 minutes.
+
+This does NOT return the file's bytes. Use file_type + size to decide what you need:
+- To USE the file's contents yourself (read a PDF, view an image, transcribe audio, parse a spreadsheet), FETCH the download_url with your web/file-fetch capability and work from the bytes. Check size first — large files are expensive to pull into context.
+- To HAND the file to a user or another system, pass download_url along as-is.
+
+Only items with an uploaded file have a URL. Text-only items (notes, quick notes, URL-ingested articles) have no file — the response says so; use get(id) to read their text instead.`,
+    { id: z.string().describe('UUID of a document / file-backed content item from a prior list/search/get — do not invent IDs') },
+    async ({ id }) => {
+      if (!isValidUuid(id)) {
+        return {
+          content: [{ type: 'text', text: `Invalid UUID format: "${id}". Expected a UUID like "550e8400-e29b-41d4-a716-446655440000".` }],
+          isError: true,
+        };
+      }
+      const ci = await contentSvc.getContentItem(deps, id);
+      if (!ci) {
+        return { content: [{ type: 'text', text: `No content item found with id ${id}` }], isError: true };
+      }
+      // Text-only items (notes, quick notes, URL-ingested articles) have no
+      // uploaded file — nothing to download; point the caller at get().
+      if (!ci.blob_url) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            id: ci.id, type: ci.type, title: ci.title, file: null,
+            note: 'Text-only item — no uploaded file. Use get(id) to read the content.',
+          }, null, 2) }],
+        };
+      }
+      const filename = downloadFilename(ci);
+      const download_url = deps.blobStorage.getDownloadSasUrl(ci.blob_url, filename);
+      const blob_url = deps.blobStorage.getReadSasUrl(ci.blob_url);
+      // Size is best-effort (one HEAD call) — never fail the download URL over it.
+      let size_bytes: number | null = null;
+      try {
+        size_bytes = await deps.blobStorage.getSize(ci.blob_url);
+      } catch {
+        size_bytes = null;
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          id: ci.id,
+          type: ci.type,
+          title: ci.title,
+          filename,
+          file_type: ci.mime_type ?? null,
+          size_bytes,
+          size: size_bytes != null ? humanFileSize(size_bytes) : null,
+          download_url,
+          blob_url,
+          url_expires_in: '60 minutes',
+        }, null, 2) }],
+      };
     },
   );
 

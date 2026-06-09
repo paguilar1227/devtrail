@@ -122,7 +122,7 @@ describe('MCP server', () => {
     expect(result.body.result.capabilities.tools).toBeDefined();
   });
 
-  it('lists all 7 tools on tools/list', async () => {
+  it('lists all 22 tools on tools/list', async () => {
     const deps = mockDeps();
 
     // MCP requires initialize before other calls; use stateful session flow
@@ -166,6 +166,7 @@ describe('MCP server', () => {
       'create_project',
       'list',
       'get',
+      'download',
       'create',
       'update',
       'add_comment',
@@ -184,7 +185,7 @@ describe('MCP server', () => {
       'replace',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(21);
+    expect(toolNames).toHaveLength(22);
   });
 
   it('calls create_project and returns the created project', async () => {
@@ -880,5 +881,72 @@ describe('MCP server', () => {
     // hierarchies (regression of the original MCP gap).
     expect(insertSql!.params).toContain(parentId);
     expect(insertSql!.params).toContain('Backlog');
+  });
+
+  it('download returns file metadata + a signed download URL for a file-backed item', async () => {
+    const docId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const deps = mockDeps();
+    deps.blobStorage = {
+      ...deps.blobStorage,
+      getReadSasUrl: vi.fn((u: string) => `${u}?sig=read`),
+      getDownloadSasUrl: vi.fn((u: string) => `${u}?sig=dl&rscd=attachment`),
+      getSize: vi.fn().mockResolvedValue(4_283_910),
+    } as any;
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id/i.test(sql)) {
+        return { rows: [{
+          id: docId, type: 'document', title: 'Q3 Report',
+          blob_url: 'https://acct.blob.core.windows.net/c/q3.pdf',
+          mime_type: 'application/pdf', content: 'extracted text',
+          project_ids: [], tags: [], embedding: [0.1, 0.2],
+          archived: false, processing_status: 'ready',
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body } = await callTool(deps, { id: docId }, 'download');
+    expect(body.result?.isError).not.toBe(true);
+    const meta = JSON.parse(body.result.content[0].text);
+    expect(meta.file_type).toBe('application/pdf');
+    expect(meta.filename).toBe('Q3 Report.pdf');     // ext derived from mime
+    expect(meta.size_bytes).toBe(4_283_910);
+    expect(meta.size).toMatch(/MB/);                  // human-readable
+    expect(meta.download_url).toContain('sig=dl');    // signed, attachment
+    expect(meta.download_url).toContain('rscd=attachment');
+    expect(meta.blob_url).toContain('sig=read');      // signed, inline preview
+    // The model gets metadata + URL — NOT the bytes or the embedding.
+    expect(meta).not.toHaveProperty('embedding');
+    expect(meta).not.toHaveProperty('content');
+  });
+
+  it('download on a text-only item returns no file and points at get', async () => {
+    const noteId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const deps = mockDeps();
+    vi.mocked(deps.db.query).mockImplementation(async (sql: string) => {
+      if (/SELECT \* FROM content_items WHERE id/i.test(sql)) {
+        return { rows: [{
+          id: noteId, type: 'note', title: 'My note',
+          blob_url: null, mime_type: null, content: 'note body',
+          project_ids: [], tags: [], archived: false, processing_status: 'ready',
+          created_at: new Date(), updated_at: new Date(),
+        }] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    const { body } = await callTool(deps, { id: noteId }, 'download');
+    expect(body.result?.isError).not.toBe(true);
+    const meta = JSON.parse(body.result.content[0].text);
+    expect(meta.file).toBeNull();
+    expect(meta.note).toMatch(/get/i);
+    expect(meta).not.toHaveProperty('download_url');
+  });
+
+  it('download rejects an invalid UUID', async () => {
+    const deps = mockDeps();
+    const { body } = await callTool(deps, { id: 'not-a-uuid' }, 'download');
+    expect(body.result?.isError).toBe(true);
   });
 });
