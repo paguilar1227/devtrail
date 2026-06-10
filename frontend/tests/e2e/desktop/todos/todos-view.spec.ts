@@ -42,11 +42,16 @@ test.describe('Todos view', () => {
     await tagBar.locator('.home-tag-filter-chips .home-filter-chip', { hasText: 'reading' }).click();
     const openRows = page.locator('.todos-body .todos-section .prow-todo');
     await expect(openRows.filter({ hasText: "Read 'On the Measure of Intelligence'" })).toHaveCount(1);
-    await expect(openRows.filter({ hasText: 'Buy new mechanical keyboard' })).toHaveCount(0);
+    // "Reply to Sebastian…" is a non-reading OPEN todo (not_started in the
+    // seed) — it drops out under the #reading filter and returns on clear.
+    // Must be an OPEN todo: the Done section is collapsed by default, so a
+    // done todo reads as 0 rows regardless of the filter and can't prove
+    // anything was narrowed/restored.
+    await expect(openRows.filter({ hasText: 'Reply to Sebastian' })).toHaveCount(0);
 
-    // Clear restores the full list (the chore todo is back).
+    // Clear restores the full list (the non-reading todo is back).
     await tagBar.locator('.home-tag-filter-clear').click();
-    await expect(openRows.filter({ hasText: 'Buy new mechanical keyboard' })).toHaveCount(1);
+    await expect(openRows.filter({ hasText: 'Reply to Sebastian' })).toHaveCount(1);
   });
 
   test('tag editor offers an autocomplete of existing tags (shared TagInput)', async ({ page }) => {

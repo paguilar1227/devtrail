@@ -47,12 +47,18 @@ test:
 build:
 	cd frontend && npm run build
 
-# Full-stack workflow e2e. Playwright's globalSetup brings up Postgres +
-# Azurite (docker compose — idempotent: reuses a running stack and never wipes
-# it) and seeds (bails if data exists); webServer starts the backend + Vite,
-# or reuses the local dev servers. Stub-mode env files are copied in if absent.
+# Full-stack workflow e2e. Bring Postgres + Azurite up FIRST (idempotent:
+# reuses a running stack, --wait blocks until healthy, never wipes — no
+# `down -v`) so the backend the Playwright webServer launches can reach the DB
+# immediately. (Playwright's globalSetup also brings the stack up, but in CI it
+# raced the webServer — the backend hit Postgres on :5434 before it was up and
+# the webServer timed out. Doing it here, before Playwright starts, removes the
+# race; locally it's a no-op when the dev stack is already healthy.) webServer
+# starts the backend + Vite, or reuses the local dev servers. Stub-mode env
+# files are copied in if absent.
 e2e:
 	@[ -f backend/.env ] || cp backend/.env.example backend/.env
 	@[ -f frontend/.env.local ] || cp frontend/.env.example frontend/.env.local
+	docker compose up -d --wait
 	cd frontend && npm run test:e2e:install
 	cd frontend && npm run test:e2e
