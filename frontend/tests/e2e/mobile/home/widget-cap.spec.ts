@@ -1,13 +1,12 @@
 // Home dashboard columns are previews, not full lists — each caps at 6
 // rendered rows with a "View N more" footer to the drawer.
 //
-// On mobile this is the surface that broke: the grid's min-height band is
-// removed, so .pcol-rows is sized by its own content and the useFitCount
-// loop measures itself instead of real viewport space — tall rows (notes)
-// climbed until every item rendered (unbounded, over-long widget), short
-// rows (docs) collapsed to the min:3 floor. ColumnWidget now bypasses the
-// measure on mobile and renders a fixed MAX_ROWS=6 preview. The seed has
-// >6 personal notes and >6 personal docs, so both exercise the cap.
+// This used to be measurement-driven (useFitCount sized the preview to a
+// viewport band), which misbehaved — notably on mobile where the band is
+// absent: tall rows (notes) climbed until every item rendered, short rows
+// (docs) collapsed to a min floor. ColumnWidget now caps at a flat
+// MAX_ROWS=6 regardless of viewport. The seed has >6 personal notes and >6
+// personal docs, so both exercise the cap.
 import { expect, test } from '@playwright/test';
 import '../../helpers/setup';
 

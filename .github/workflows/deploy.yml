@@ -2,13 +2,19 @@
 name: Deploy to Azure
 
 on:
-  # Auto-trigger on push to main temporarily disabled to conserve free-tier
-  # Actions minutes. Deploys are happening manually via scripts/deploy.sh
-  # (see CLAUDE.md "Manual deploy" section). To re-enable: restore the
-  # push: block below.
-  #   push:
-  #     branches: [main]
+  # Auto-deploy on every merge to main. Manual dispatch stays available as a
+  # fallback (and for re-deploys without a new commit).
+  push:
+    branches: [main]
   workflow_dispatch:
+
+# Serialize ALL deploys against the single prod Container App — keying on a
+# constant (not github.ref) so a push-to-main deploy and a manual dispatch on
+# some other ref can't race and clobber the rollout. cancel-in-progress is
+# false so an in-flight rollout is never killed mid-update; the next one queues.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 env:
   ACR_NAME: ${{ vars.ACR_NAME }}

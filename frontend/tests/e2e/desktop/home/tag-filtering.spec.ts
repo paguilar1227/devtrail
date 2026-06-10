@@ -1,7 +1,6 @@
 // Tag filtering at the top of Home, applied to all 3 personal widgets
 // (todos / notes / documents). Verifies the chip-row UX, the AND/OR
-// toggle, URL persistence + reload hydration, and the negative guard
-// that the Overview block stays unfiltered by design.
+// toggle, and URL persistence + reload hydration.
 
 import { expect, test } from '@playwright/test';
 import {
@@ -130,23 +129,6 @@ test.describe('Home tag filtering', () => {
     const results = page.locator('.home-search-results .search-hit');
     await expect(results.filter({ hasText: `${s} todo-AB` })).toHaveCount(1);
     await expect(results.filter({ hasText: `${s} todo-B` })).toHaveCount(0);
-  });
-
-  test('overview counts stay UNFILTERED under active filter (D4 negative guard)', async ({ page }) => {
-    // Capture overview "open" count before any filter.
-    const openBtn = page.locator('.stat-overview-count').first();
-    await expect(openBtn).toBeVisible();
-    const openBefore = (await openBtn.locator('strong').innerText()).trim();
-
-    // Apply a filter; overview MUST not budge.
-    await page.locator(`[data-tag-filter] button:has-text("#${TAG_A}")`).click();
-    // Sanity: chip is pressed.
-    await expect(page.locator(`[data-tag-filter] button:has-text("#${TAG_A}")`).first()).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    const openAfter = (await openBtn.locator('strong').innerText()).trim();
-    expect(openAfter).toBe(openBefore);
   });
 
   test('keyboard nav: ArrowRight moves focus, Space toggles', async ({ page }) => {

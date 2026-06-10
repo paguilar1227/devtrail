@@ -1,30 +1,30 @@
 # .github/workflows/ci.yml
 #
-# CI on every PR + push to main. Runs:
-#   - Backend type check
-#   - Backend unit + integration tests (mocked DB, mocked providers)
-#   - Frontend build (TypeScript + Vite)
-#   - Full-stack workflow e2e (Playwright against real Postgres + Azurite +
-#     stub-mode backend + Vite dev server, seeded with seed-local.ts).
+# Cloud CI runs the SAME pipeline as local: `make ci-full` (type-check + unit +
+# build + full-stack Playwright e2e against real Postgres + Azurite + a
+# stub-mode backend). The Makefile is the single source of truth, so a green
+# `make ci-full` locally means a green run here — no drift between the two.
 #
-# The e2e suite mirrors `npm run dev:up` locally, so a green CI run is strong
-# evidence that a fresh clone + dev:up will work. Stub-mode LLM providers
-# keep the run fast and free — no upstream API keys needed.
+# CI MODEL (see CLAUDE.md "CI model"): iterate locally behind the lefthook
+# pre-push gate (`make ci`). Cloud CI runs ONLY at merge / post-merge:
+#   - push: main         post-merge safety net (runs once per merge, not push)
+#   - workflow_dispatch  run the full suite on a branch before merging
+# There is intentionally no per-PR-push trigger — that's what local CI is for,
+# and it's what keeps the free-tier Actions minutes from burning during a PR.
 
 name: CI
 
 on:
-  # Auto-triggers temporarily disabled to conserve free-tier Actions
-  # minutes. Deploys are happening manually via scripts/deploy.sh against
-  # Azure for now. To re-enable: restore the blocks below.
-  #   pull_request:
-  #     branches: [main]
-  #   push:
-  #     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,45 +38,13 @@ jobs:
       - name: Install workspace deps
         run: npm ci
 
-      # @open-brain/shared exports compiled JS (dist/) — backend's tsc and
-      # vitest both resolve through the workspace symlink, so dist must
-      # exist before any of them run.
-      - name: Build @open-brain/shared
-        run: npm run build --workspace=@open-brain/shared
-
-      - name: Type check backend
-        working-directory: backend
-        run: npx tsc --noEmit
-
-      - name: Backend unit + integration tests
-        working-directory: backend
-        run: npm test
-
-      - name: Type check + build frontend
-        working-directory: frontend
-        run: npm run build
-
-      # ---- Full-stack e2e ----
-      # Playwright's globalSetup expects docker compose; the runner has it
-      # pre-installed. Stub-mode .env files ship with the repo's .env.example
-      # files, so we just copy them into place.
-      - name: Prepare stub-mode env files
-        run: |
-          cp backend/.env.example backend/.env
-          cp frontend/.env.example frontend/.env.local
-
-      - name: Bring up Postgres + Azurite via docker compose
-        run: docker compose up -d --wait
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npm run test:e2e:install
-
-      - name: Run full-stack workflow e2e
-        working-directory: frontend
-        run: npm run test:e2e
-        env:
-          CI: 'true'
+      # Identical to `make ci-full` locally: build @open-brain/shared, backend
+      # type-check, backend + frontend unit tests, frontend build, then the
+      # full-stack e2e. The e2e target brings up docker compose (Postgres +
+      # Azurite), copies stub-mode .env files, installs Playwright browsers,
+      # starts the backend + Vite, and seeds — all self-contained.
+      - name: make ci-full
+        run: make ci-full
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -85,7 +53,3 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report
           retention-days: 7
-
-      - name: Tear down docker compose
-        if: always()
-        run: docker compose down -v

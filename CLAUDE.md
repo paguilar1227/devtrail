@@ -107,14 +107,35 @@ Async ingest contract: `POST /content` and `/from-url` return **202 + `{id, proc
 ### Local cycle
 
 ```bash
+make bootstrap                               # first time per clone: deps + shared build + git hooks
 docker compose up -d                         # local Postgres on port 5434
-npm run install:all                          # first time only
-cd backend && npx tsc --noEmit               # types
-npm test                                     # backend vitest run
 npm run dev                                  # backend dev server (tsx watch)
 cd frontend && npm run dev                   # frontend dev server (separate terminal)
+make ci                                      # fast local gate (typecheck + unit + build) — what pre-push runs
+make ci-full                                 # everything cloud CI runs, incl. Playwright e2e
 npm run build:all                            # full production build
 ```
+
+### CI model — local-first, cloud only at merge
+
+The `Makefile` is the single source of truth for the pipeline: both the local
+git hook and the cloud workflow call the same targets, so a green `make ci-full`
+locally means a green CI run.
+
+- **Local CI is the daily gate.** `lefthook` runs `make ci` (typecheck + unit +
+  build, ~15s) on **pre-push** — you can't push a broken tree. Run `make ci-full`
+  (adds the Playwright e2e) before merging. Skip in a pinch: `LEFTHOOK=0 git push`.
+- **Cloud CI (`ci.yml`) runs `make ci-full` only at merge / post-merge** — `push:
+  main` (the post-merge safety net) + `workflow_dispatch` (run the full suite on a
+  branch before merging). **There is no per-PR-push CI trigger** — that's what the
+  local gate is for, and it's what stops the free-tier minutes from burning during
+  a PR. (Merge queue / `merge_group` — the textbook "run only at merge attempt" —
+  needs GitHub Enterprise Cloud for private repos, so it's unavailable here.)
+- **Deploy (`deploy.yml`) runs on `push: main`** (auto-deploy on merge) +
+  `workflow_dispatch`. It does NOT wait on CI — the local gate is the pre-merge
+  guard; post-merge CI is the safety net (red → revert/redeploy).
+- Both workflows have a `concurrency` block. PR-time review is **CodeRabbit +
+  react-doctor** (`react-doctor.yml`, frontend PRs) — cheap, stays on PRs.
 
 ### Plan-first
 
@@ -131,9 +152,8 @@ One commit per logical unit. Group source + tests in the same commit. Convention
 The repo is private and on the GitHub Actions free tier (2000 min/month). Every push to `main` triggers **two** workflows — `CI` (~26 min, full Playwright e2e) and `Deploy to Azure` (~5 min) = ~31 min metered per push. Pushing N WIP commits directly to main during an iteration burns N×31 min of the monthly cap for changes the user hasn't even reviewed yet. Burned through 1200+ minutes in May 2026 doing exactly that.
 
 **Concrete rules:**
-- Default to a branch named `feat/<thing>` or `fix/<thing>`. Commit there freely; no Actions minutes spent until you push.
-- Push the branch when you want CI feedback. PR-style runs are cheap if the workflows are gated by concurrency (see below).
-- Only push to `main` when the user explicitly says to merge / ship / land. One CI run on merge instead of N during iteration.
+- Default to a branch named `feat/<thing>` or `fix/<thing>`. Commit + push there freely — **branch pushes spend zero Actions minutes** (CI has no PR/branch trigger; the lefthook `make ci` gate is your feedback loop, `make ci-full` before merging). PRs still get CodeRabbit + react-doctor.
+- Only push to `main` when the user explicitly says to merge / ship / land. That single `push: main` is the one time cloud CI (`make ci-full`) + Deploy run.
 - For trivial / docs-only changes, append `[skip ci]` to the commit message.
 - If GH Actions is unavailable (quota exhausted, runner outage) and the user needs prod NOW, use the manual deploy below.
 
@@ -171,17 +191,11 @@ done
 
 CI passing while Deploy fails (and vice versa) is possible. Report both. If both fail in seconds with empty step logs (`gh api .../runs/<id>/jobs --jq '.jobs[].steps'` returns `[]`), it's usually GitHub Actions quota — check `https://github.com/settings/billing/summary` rather than chasing a code bug.
 
-### CI concurrency (not yet wired)
+### CI concurrency (wired)
 
-`ci.yml` and `deploy.yml` don't currently have a `concurrency` block. Adding one cancels in-flight runs when a newer push lands on the same ref, saving ~50% of Actions minutes during rapid iteration:
-
-```yaml
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-```
-
-Worth adding when the workflows are next touched.
+Both workflows now have a `concurrency` block:
+- `ci.yml` → `group: ci-${{ github.ref }}`, `cancel-in-progress: true` (a newer push supersedes an in-flight CI run).
+- `deploy.yml` → `group: deploy-production`, `cancel-in-progress: false` (a **constant** group so every deploy — `push: main` or a manual dispatch on any ref — serializes against the single prod Container App; `false` so a rollout is never killed mid-update, the next one queues).
 
 ### Ask before destructive actions
 

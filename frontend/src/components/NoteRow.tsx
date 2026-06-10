@@ -3,7 +3,7 @@
 
 import { fmtRel } from '../lib/util';
 import { Icons } from './Icons';
-import { Tag } from './primitives';
+import { RowTags } from './RowTags';
 
 interface Props {
   // Structural minimum the row renders — a full Note satisfies it, and a
@@ -42,17 +42,17 @@ export function NoteRow({ note, onClick, sub, folder, tags, pinned }: Props) {
       <div>
         <div className="ti" title={note.title}>{note.title}</div>
         <div className="ti-sub">{sub ?? (at ? `edited ${fmtRel(at)}` : '')}</div>
-        {folder || (tags && tags.length > 0) ? (
-          <div className="prow-tags">
-            {folder ? (
+        <RowTags
+          leading={
+            folder ? (
               <span className="prow-folder" title={`Folder: ${folder}`}>
                 <Icons.Layers size={10} />
                 {folder}
               </span>
-            ) : null}
-            {tags?.map((t) => <Tag key={t}>{t}</Tag>)}
-          </div>
-        ) : null}
+            ) : null
+          }
+          tags={tags ?? []}
+        />
       </div>
       {sub == null && (at || pinned) ? (
         <div className="prow-note-meta">

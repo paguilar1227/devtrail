@@ -24,8 +24,11 @@ const TODO_HIT = 'Buy new mechanical keyboard';   // personal todo, lexical-stro
 const PROJECT = 'Homelab';
 const PROJECT_NOTE_HIT = 'Tailscale exit nodes — caveats';
 
+// Any column widget on Home by title — Todos/Notes live in the top grid,
+// Documents in the lower row beside Activity, so match `.pcol` page-wide
+// rather than scoping to one container.
 const col = (page: Page, title: string) =>
-  page.locator('.home-personal-grid .pcol').filter({ has: page.locator(`h3:text-is("${title}")`) });
+  page.locator('.pcol').filter({ has: page.locator(`h3:text-is("${title}")`) });
 
 async function openDrawer(page: Page, columnTitle: string): Promise<Locator> {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();

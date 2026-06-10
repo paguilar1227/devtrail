@@ -1,0 +1,12 @@
+# Local CI gate.
+#
+# `pre-push` runs the fast CI tier (type-check + unit + build) so problems are
+# caught locally, before spending cloud Actions minutes. The heavy Playwright
+# e2e is NOT in the hook (too slow per-push) — run `make ci-full` before you
+# merge, and cloud CI runs ci-full post-merge as the safety net.
+#
+# Skip in a pinch: `LEFTHOOK=0 git push` (or `git push --no-verify`).
+pre-push:
+  commands:
+    ci:
+      run: make ci

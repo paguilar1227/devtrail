@@ -1982,7 +1982,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 
 .home-top-row {
-  display: grid; grid-template-columns: 1fr 2fr; gap: 12px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   margin-bottom: 24px;
 }
 .app[data-mobile="true"] .home-top-row { grid-template-columns: 1fr; }
@@ -2311,14 +2311,12 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 
 .home-personal-grid {
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
   margin-bottom: 24px;
-  /* Stretch columns to fill a viewport-relative band so the rows
-     widget shows as many items as fit. Floor keeps small viewports
-     usable (~4-5 rows visible); clamp caps so the Overview/Activity
-     widgets below stay in view without a full page-scroll. */
+  /* Columns grow to content (each widget caps at 6 rows + footer);
+     stretch keeps the two cards equal height — the taller column wins
+     and the shorter pins its footer to the bottom. */
   align-items: stretch;
-  min-height: clamp(360px, 60vh, 720px);
 }
 .app[data-mobile="true"] .home-personal-grid { grid-template-columns: 1fr; min-height: 0; }
 .pcol {
@@ -2559,9 +2557,57 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 /* Tag chips on a row (e.g. notes drawer) — wrap below the sub-line so a
    #tag filter's completeness is visible at a glance. */
 .prow-tags {
+  position: relative; /* containing block for the hidden measure layer */
   display: flex; flex-wrap: wrap; gap: 4px;
   margin-top: 5px;
 }
+/* Hidden measure layer for RowTags' dynamic single-line fit. Renders every
+   candidate chip out of flow (nowrap) so the layout effect can read each
+   chip's intrinsic offsetWidth, then the visible layer packs only what fits.
+   visibility:hidden (not display:none) so widths are still measurable. */
+.prow-tags-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  top: -9999px;
+  left: 0;
+  /* max-content so the abs layer sizes to its content instead of being
+     capped by the (narrow) containing block — otherwise flex-shrink would
+     compress the chips and the measured widths would be too small. */
+  width: max-content;
+  display: flex; flex-wrap: nowrap; gap: 4px;
+}
+.prow-tags-measure > * { flex: 0 0 auto; }
+/* Sizing-only ghost chip — replicates the .tag / .prow-tags-more box model
+   (padding + border + font + internal #-gap) so the measured width matches a
+   real chip exactly, but is NOT a .tag element so queries for the visible
+   chips never match the hidden measure copies. */
+.prow-tags-measure-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px;
+  border: 0.5px solid transparent;
+  font-size: var(--type-meta); font-weight: 500;
+}
+/* Wrapper around the always-visible leading chip (status pill / folder),
+   ref'd so RowTags can measure its real width. inline-flex so it hugs the
+   chip and adds no box of its own. */
+.prow-tags-lead { display: inline-flex; align-items: center; }
+/* Overflow affordance for RowTags — sits inline with the .tag chips and
+   matches their sizing, but reads as an action via the dashed border +
+   subtle color (same language as the Home filter's "+N more"). */
+.prow-tags-more {
+  display: inline-flex; align-items: center;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: var(--type-meta); font-weight: 500;
+  color: var(--fg-subtle);
+  background: transparent;
+  border: 0.5px dashed var(--hairline);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.prow-tags-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
 /* Folder chip — deliberately distinct from the neutral filled tag chips:
    accent-tinted, monospace, folder-icon prefix. Reads as "folder", not tag. */
 .prow-folder {

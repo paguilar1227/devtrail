@@ -16,7 +16,8 @@
 // caller picks via whether they pass `onToggleExpand`.
 
 import { Icons } from './Icons';
-import { Checkbox, Priority, Tag } from './primitives';
+import { Checkbox, Priority } from './primitives';
+import { RowTags } from './RowTags';
 import { cls, fmtDue, fmtRel, isOverdue } from '../lib/util';
 import type { Todo } from '../types';
 
@@ -131,17 +132,18 @@ export function TodoRow({
         {/* Meta chips: an active-status pill (in_progress / paused) then the
             tags. `done` is already conveyed by the checkbox + strikethrough,
             and `not_started` is the implicit default, so only the two
-            in-between states get a pill. Tags stay root-only. */}
-        {t.status === 'in_progress' || t.status === 'paused' || (!t.parent_id && t.tags.length > 0) ? (
-          <div className="prow-tags">
-            {t.status === 'in_progress' || t.status === 'paused' ? (
+            in-between states get a pill. Tags stay root-only and cap inline
+            via RowTags so a heavily-tagged todo can't blow out the row. */}
+        <RowTags
+          leading={
+            t.status === 'in_progress' || t.status === 'paused' ? (
               <span className={cls('prow-status', `status-${t.status}`)}>
                 {t.status === 'in_progress' ? 'In progress' : 'Paused'}
               </span>
-            ) : null}
-            {!t.parent_id ? t.tags.map((tag) => <Tag key={tag}>{tag}</Tag>) : null}
-          </div>
-        ) : null}
+            ) : null
+          }
+          tags={!t.parent_id ? t.tags : []}
+        />
       </div>
       {/* Comments is always rendered as a fixed-width slot so the
           priority pill sits at a consistent X across rows; when there

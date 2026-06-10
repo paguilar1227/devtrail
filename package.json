@@ -2,7 +2,11 @@
   "name": "open-brain-v2",
   "version": "2.0.0",
   "private": true,
-  "workspaces": ["shared", "backend", "frontend"],
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
   "scripts": {
     "dev:up": "bash scripts/dev-up.sh",
     "dev:down": "bash scripts/dev-down.sh",
@@ -27,6 +31,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "lefthook": "^2.1.9",
     "wait-on": "^9.0.5"
   }
 }

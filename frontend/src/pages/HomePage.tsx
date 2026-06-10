@@ -6,19 +6,19 @@
 //   1. Hero      — greeting + New project button.
 //   2. Search    — input + scope toggle. Enter routes to /search?q=… so
 //                  the existing Search route owns rendering of results.
-//   3. Personal  — three columns: Todos | Notes | Documents. Functional
-//                  stuff up top so it's reachable without scrolling past
-//                  status cards. Each column has its own quick-add (todos
-//                  and notes only — documents go through upload/from-url).
-//   4. Top row   — Overview counts + Recent activity preview. Status
-//                  surfaces, less actionable than the columns above.
+//   3. Personal  — two columns: Todos | Notes. The high-traffic capture
+//                  surfaces get the full width so they're not cramped.
+//                  Each column has its own quick-add.
+//   4. Lower row  — Documents | Recent activity. Documents (no quick-add —
+//                  it goes through upload/from-url) sits beside the activity
+//                  feed a level down from the primary Todos/Notes columns.
 //   5. Pinned    — chip strip linking to pinned projects.
 //
 // "Personal" means project_ids = [] (content) / project_id = null (todo).
 // All three columns hit the backend with `project_id='null'`.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
 import { NoteRow } from '../components/NoteRow';
@@ -80,7 +80,7 @@ import {
 } from '../lib/api';
 import { toUiActivity, toUiDocument, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
 import { openEntity } from '../lib/openEntity';
-import { cls, fmtRel, isOverdue } from '../lib/util';
+import { cls } from '../lib/util';
 import type { ActionDispatch, Route, Todo } from '../types';
 
 interface Props {
@@ -189,20 +189,31 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
       // Column data: todos / notes / docs scoped by the dashboard's
       // scope toggle. Cache key includes `scope` so flipping the toggle
       // hits a different cache slot and refetches the right data.
-      { queryKey: ['todos', 'home', scope], queryFn: () => listTodos(scopeProjectId === undefined ? {} : { project_id: scopeProjectId }) },
-      { queryKey: ['content', 'notes', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'note' } : { type: 'note', project_id: scopeProjectId }) },
-      { queryKey: ['content', 'documents', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'document' } : { type: 'document', project_id: scopeProjectId }) },
+      //
+      // `placeholderData: keepPreviousData` on every query that re-keys on
+      // user interaction (scope toggle, activity filter) is load-bearing:
+      // the page-level `isLoading` gate below blanks the whole dashboard to
+      // "Loading…" whenever ANY query is pending. Without keepPreviousData a
+      // new key has no cached data → isLoading → the dashboard flashes its
+      // loading screen on every toggle (reads as a full page reload). Keeping
+      // the previous data means isLoading stays false and the widget swaps in
+      // place.
+      { queryKey: ['todos', 'home', scope], queryFn: () => listTodos(scopeProjectId === undefined ? {} : { project_id: scopeProjectId }), placeholderData: keepPreviousData },
+      { queryKey: ['content', 'notes', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'note' } : { type: 'note', project_id: scopeProjectId }), placeholderData: keepPreviousData },
+      { queryKey: ['content', 'documents', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'document' } : { type: 'document', project_id: scopeProjectId }), placeholderData: keepPreviousData },
       {
         queryKey: ['activity', 'recent', activityFilter],
         queryFn: () =>
           listActivity({
-            limit: 4,
+            // Match the column widgets' 6-row preview cap.
+            limit: 6,
             ...(activityFilter === 'all' ? {} : { kinds: activityFilter }),
           }),
+        placeholderData: keepPreviousData,
       },
       // Top tags strip reflects whichever scope the dashboard is on so
       // counts + which tags appear match the widgets below.
-      { queryKey: ['tags', 'home', scope], queryFn: () => listTags(scopeToTagsArg(scope)) },
+      { queryKey: ['tags', 'home', scope], queryFn: () => listTags(scopeToTagsArg(scope)), placeholderData: keepPreviousData },
     ],
   });
   const [statsQ, projectsQ, countsQ, todosQ, notesQ, docsQ, activityQ, tagsQ] = queries;
@@ -327,32 +338,22 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   const isLoading = queries.some((q) => q.isLoading);
   const error = queries.find((q) => q.error)?.error;
 
-  // Open count is what the dashboard surfaces — "5/36 with 14% complete"
-  // told you nothing actionable. Open = total - done across personal
-  // scope (matches what clicking the count opens, the personal todos
-  // drawer).
-  const openCount = allPersonalTodos.filter((t) => t.status !== 'done').length;
-  // Overdue / due-this-week counts walk the full unfiltered list so
-  // grandchildren beyond the widget cap still count.
-  const overdueCount = allPersonalTodos.filter(
-    (t) => t.status !== 'done' && t.due_at && isOverdue(t.due_at),
-  ).length;
-  const dueThisWeekCount = allPersonalTodos.filter((t) => {
-    if (t.status === 'done' || !t.due_at) return false;
-    const due = new Date(t.due_at).getTime();
-    const now = Date.now();
-    return due > now && due - now < 7 * 24 * 60 * 60 * 1000;
-  }).length;
-
-  // Top 5 tags by total usage. Skipping ones with zero total (the API
-  // shouldn't return those but be defensive).
-  const topTags = useMemo(() => {
-    const all = tagsQ.data ?? [];
-    return [...all]
-      .filter((t) => t.total > 0)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-  }, [tagsQ.data]);
+  // Show the full-page loader on the FIRST load only. Scope toggle and the
+  // activity filter re-key their queries, which briefly flips them back to
+  // isLoading; gating the whole page on isLoading there dropped the entire
+  // dashboard to "Loading…" mid-interaction (read as a full page reload).
+  // Once everything has resolved once, latch `ready` and never blank again —
+  // later refetches update widgets in place (keepPreviousData keeps their
+  // data visible during the swap).
+  //
+  // Adjusted during render (not in an effect): React re-renders immediately
+  // with the new value before committing, and the guard is monotonic so it
+  // can't loop. This is the canonical "derive/latch state during render"
+  // pattern — see react.dev "You Might Not Need an Effect".
+  const [ready, setReady] = useState(false);
+  if (!ready && stats && !isLoading) {
+    setReady(true);
+  }
 
   // Full personal-scope tag list (sorted by usage) for the filter chip
   // row — NOT pre-sliced. HomeTagFilter caps the visible chips via its
@@ -365,17 +366,6 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
       .filter((t) => t.total > 0)
       .sort((a, b) => b.total - a.total);
   }, [tagsQ.data]);
-
-  // Recently-active projects: top 3 by `updated_at` among active (not
-  // archived/completed). The sidebar shows project counts; here we
-  // answer "which projects are alive lately?" with timestamps.
-  const recentProjects = useMemo(() => {
-    return projects
-      .filter((p) => p.status === 'active')
-      .slice()
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-      .slice(0, 3);
-  }, [projects]);
 
   // ── Search ───────────────────────────────────────────────
   // Universal search bar: the input text IS the source of truth for both
@@ -612,7 +602,7 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
     );
   }
 
-  if (isLoading || !stats) {
+  if (!ready) {
     return (
       <div className="page">
         <div className="page-subtle">Loading…</div>
@@ -806,7 +796,6 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               disabled={todoCreate.isPending}
             />
           }
-          rowPx={72}
           isEmpty={filteredTodos.length === 0}
           empty={
             tagFilter.tags.length > 0 ? (
@@ -855,7 +844,6 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
               disabled={noteCreate.isPending}
             />
           }
-          rowPx={56}
           isEmpty={filteredNotes.length === 0}
           empty={
             tagFilter.tags.length > 0 ? (
@@ -878,13 +866,14 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
           totalRows={filteredNotes.length}
           onMore={() => onAction({ kind: 'personal-notes', tagFilter })}
         />
+      </div>
 
+      <div className="home-top-row">
         <ColumnWidget
           id="documents"
           title="Documents"
           count={filteredDocs.length}
           sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
-          rowPx={56}
           isEmpty={filteredDocs.length === 0}
           empty={
             tagFilter.tags.length > 0 ? (
@@ -905,95 +894,6 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
           totalRows={filteredDocs.length}
           onMore={() => onAction({ kind: 'personal-docs', tagFilter })}
         />
-      </div>
-
-      <div className="home-top-row">
-        <div className="stat-overview">
-          <div className="stat-overview-section">
-            <div className="lb">Overview</div>
-            <div className="stat-overview-counts">
-              <button
-                type="button"
-                className="stat-overview-count"
-                onClick={() => onAction({ kind: 'personal-todos', sort: 'smart' })}
-              >
-                <strong>{openCount}</strong> open
-              </button>
-              {overdueCount > 0 ? (
-                <button
-                  type="button"
-                  className="stat-overview-count stat-overview-count-warn"
-                  onClick={() => onAction({ kind: 'personal-todos', sort: 'due' })}
-                >
-                  <strong>{overdueCount}</strong> overdue
-                </button>
-              ) : null}
-              {dueThisWeekCount > 0 ? (
-                <button
-                  type="button"
-                  className="stat-overview-count"
-                  onClick={() => onAction({ kind: 'personal-todos', sort: 'due' })}
-                >
-                  <strong>{dueThisWeekCount}</strong> this week
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {topTags.length > 0 ? (
-            <div className="stat-overview-section">
-              <div className="stat-overview-h">
-                <div className="lb">Top tags</div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => onRoute({ route: 'tags' })}
-                >
-                  All →
-                </button>
-              </div>
-              <div className="stat-overview-tags">
-                {topTags.map((t) => (
-                  <button
-                    key={t.name}
-                    type="button"
-                    className="stat-overview-tag"
-                    onClick={() => onRoute({ route: 'tags', name: t.name })}
-                  >
-                    #{t.name}
-                    <span className="stat-overview-tag-count">{t.total}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {recentProjects.length > 0 ? (
-            <div className="stat-overview-section">
-              <div className="stat-overview-h">
-                <div className="lb">Active projects</div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => onRoute({ route: 'projects' })}
-                >
-                  All →
-                </button>
-              </div>
-              <div className="stat-overview-projects">
-                {recentProjects.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="stat-overview-project"
-                    onClick={() => onRoute({ route: 'project', project: p.id })}
-                  >
-                    <span className="nm">{p.name}</span>
-                    <span className="sub">{fmtRel(p.updated_at)}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
         <div className="stat-activity">
           <div className="ah">
             <div className="lb">Recent activity</div>
