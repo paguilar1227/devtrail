@@ -1,17 +1,17 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
-import { BulkCheckbox, Checkbox, FilterChip, Priority, Tag } from '../../components/primitives';
+import { FilterChip } from '../../components/primitives';
 import { TodoSortDropdown } from '../../components/SortDropdown';
 import { SearchInput, type SigilKind } from '../../components/SearchInput';
 import { TodoRow } from '../../components/TodoRow';
-import { archiveTodo, createTodo, listTodos, updateTodo } from '../../lib/api';
+import { createTodo, listTodos, updateTodo } from '../../lib/api';
 import { toUiTodo } from '../../lib/view';
 import { useEntitySearch } from '../../lib/useEntitySearch';
 import { useTagSuggestions } from '../../lib/useTagSuggestions';
 import { compareForMode } from '../../lib/todoSort';
 import { useTodoSortMode } from '../../lib/useTodoSortMode';
-import { cls, fmtRel, isOverdue } from '../../lib/util';
+import { isOverdue } from '../../lib/util';
 import type { ActionDispatch, Project, Todo } from '../../types';
 
 interface Props {
@@ -49,7 +49,6 @@ export function TodosTab({ project, onAction }: Props) {
   }, [rawHits]);
 
   const [hierMode, setHierMode] = useState<HierMode>('hierarchy');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState('');
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode(`project:${project.id}`);
@@ -69,10 +68,6 @@ export function TodosTab({ project, onAction }: Props) {
     mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) => updateTodo(id, { status }),
     onSuccess: invalidate,
   });
-  const archiveMut = useMutation({
-    mutationFn: (id: string) => archiveTodo(id),
-    onSuccess: invalidate,
-  });
 
   const groups = useMemo(() => {
     const cmp = compareForMode(sortMode);
@@ -83,13 +78,6 @@ export function TodosTab({ project, onAction }: Props) {
 
   const overdueCount = all.filter(t => t.status !== 'done' && t.due_at && isOverdue(t.due_at)).length;
 
-  const toggleSel = (id: string) =>
-    setSelected(s => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
   const toggleCollapse = (id: string) =>
     setCollapsed(s => {
       const n = new Set(s);
@@ -97,78 +85,46 @@ export function TodosTab({ project, onAction }: Props) {
       else n.add(id);
       return n;
     });
-  const selectMode = selected.size > 0;
 
-  const renderTodo = (t: Todo, depth = 0, hasChildren = false) => (
-    <div
+  // Same TodoRow the Todos view uses — keeps the project Todos visually
+  // consistent (one done checkbox, no card, no multi-select). The hierarchy
+  // walk passes childCount so the row renders its own expand chevron, and
+  // hiddenDescendants so a depth-capped row shows the "+N deeper" hint
+  // (matching SectionedTodoList on the Todos view).
+  const renderTodo = (t: Todo, depth = 0, childCount = 0, hiddenDescendants = 0) => (
+    <TodoRow
       key={t.id}
-      className={cls('todo', t.status === 'done' && 'done', selected.has(t.id) && 'selected', `depth-${depth}`)}
-      style={depth ? { marginLeft: depth * 24 } : undefined}
-    >
-      <span className="todo-rail" aria-hidden="true">
-        {hasChildren ? (
-          <button
-            className="todo-disclosure"
-            onClick={() => toggleCollapse(t.id)}
-            title={collapsed.has(t.id) ? 'Expand' : 'Collapse'}
-          >
-            <Icons.ChevronDown
-              size={11}
-              style={{ transform: collapsed.has(t.id) ? 'rotate(-90deg)' : 'none', transition: 'transform 120ms' }}
-            />
-          </button>
-        ) : null}
-      </span>
-      {selectMode ? (
-        <BulkCheckbox checked={selected.has(t.id)} onClick={() => toggleSel(t.id)} />
-      ) : (
-        <span className="todo-bulk-slot" onClick={() => toggleSel(t.id)} title="Select">
-          <BulkCheckbox checked={false} />
-        </span>
-      )}
-      <Checkbox
-        checked={t.status === 'done'}
-        onClick={(e: React.MouseEvent) => {
-          e.stopPropagation();
-          toggleMut.mutate({ id: t.id, status: t.status === 'done' ? 'not_started' : 'done' });
-        }}
-      />
-      <div onClick={() => onAction({ kind: 'todo-detail', payload: t })}>
-        <div className="nm">{t.title}</div>
-        <div className="nm-meta">
-          {t.due_at ? (
-            <span className={isOverdue(t.due_at) && t.status !== 'done' ? 'due-overdue' : 'due-soon'}>
-              due {fmtRel(t.due_at)}
-            </span>
-          ) : null}
-          {t.tags.map(tg => (
-            <Tag key={tg}>{tg}</Tag>
-          ))}
-          {t.comments > 0 ? (
-            <span>
-              <Icons.Chat size={10} /> {t.comments}
-            </span>
-          ) : null}
-        </div>
-      </div>
-      <Priority p={t.priority} />
-      <span className="todo-status-pill">{t.status.replace('_', ' ')}</span>
-      <button className="btn btn-ghost btn-icon" onClick={() => onAction({ kind: 'todo-detail', payload: t })}>
-        <Icons.More />
-      </button>
-    </div>
+      todo={t}
+      depth={depth}
+      childCount={childCount}
+      expanded={!collapsed.has(t.id)}
+      hiddenDescendants={hiddenDescendants}
+      onToggleExpand={childCount > 0 ? () => toggleCollapse(t.id) : undefined}
+      onClick={() => onAction({ kind: 'todo-detail', payload: t })}
+      onToggleDone={() =>
+        toggleMut.mutate({ id: t.id, status: t.status === 'done' ? 'not_started' : 'done' })
+      }
+    />
   );
 
   const renderHierGroup = (todos: Todo[]) => {
     const childrenOf = (pid: string) => todos.filter(c => c.parent_id === pid);
+    // Total descendants under an id (all levels) — used at the depth cap so the
+    // "+N deeper" hint counts everything hidden below the last rendered row.
+    const descendantCount = (id: string): number =>
+      childrenOf(id).reduce((sum, k) => sum + 1 + descendantCount(k.id), 0);
     const walk = (t: Todo, depth: number): JSX.Element => {
       const kids = childrenOf(t.id);
       const isCollapsed = collapsed.has(t.id);
       return (
         <Fragment key={t.id}>
-          {renderTodo(t, depth, kids.length > 0)}
+          {renderTodo(t, depth, kids.length)}
           {!isCollapsed && depth < 3 ? kids.map(c => walk(c, depth + 1)) : null}
-          {!isCollapsed && depth === 3 ? kids.map(c => renderTodo(c, 3, false)) : null}
+          {/* Cap at depth 3: render the last level flat (no chevron), but
+              surface any deeper descendants via the "+N deeper" hint. */}
+          {!isCollapsed && depth === 3
+            ? kids.map(c => renderTodo(c, 3, 0, descendantCount(c.id)))
+            : null}
         </Fragment>
       );
     };
@@ -310,42 +266,6 @@ export function TodosTab({ project, onAction }: Props) {
         </>
       )}
 
-      {!searchActive && selected.size > 0 ? (
-        <div className="bulk-bar">
-          <span className="ct">{selected.size} selected</span>
-          <span className="sep" />
-          <button className="btn btn-sm">Set priority</button>
-          <button className="btn btn-sm">Set due date</button>
-          <button className="btn btn-sm">Tag</button>
-          <button className="btn btn-sm">Move</button>
-          <button
-            className="btn btn-sm"
-            disabled={toggleMut.isPending}
-            onClick={() => {
-              const ids = Array.from(selected);
-              setSelected(new Set());
-              ids.forEach((id) => toggleMut.mutate({ id, status: 'done' }));
-            }}
-          >
-            Mark done
-          </button>
-          <span className="sep" />
-          <button
-            className="btn btn-sm btn-danger"
-            disabled={archiveMut.isPending}
-            onClick={() => {
-              const ids = Array.from(selected);
-              setSelected(new Set());
-              ids.forEach((id) => archiveMut.mutate(id));
-            }}
-          >
-            Archive
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>
-            Clear
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

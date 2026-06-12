@@ -735,6 +735,32 @@ input, textarea { font-size: inherit; color: inherit; }
 }
 
 /* ── Project hero ── */
+/* "More project actions" (⋯) dropdown, anchored under its trigger button. */
+.proj-menu-wrap { position: relative; display: inline-flex; }
+.proj-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 50;
+  min-width: 184px;
+  display: flex; flex-direction: column;
+  padding: 4px;
+  background: var(--glass-bg-strong);
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 11px;
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(28px) saturate(140%);
+}
+.proj-menu button {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border: 0; background: transparent;
+  color: var(--fg); font: inherit; font-size: var(--type-meta);
+  text-align: left; cursor: pointer; border-radius: 7px;
+  transition: background 0.12s ease;
+}
+.proj-menu button:hover:not(:disabled) { background: var(--glass-bg-soft); }
+.proj-menu button:disabled { opacity: 0.5; cursor: default; }
+.proj-menu button.danger { color: var(--danger, #ef4444); }
+.proj-menu-sep { height: 0.5px; background: var(--hairline); margin: 4px 6px; }
+
 .proj-hero {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 24px; margin-bottom: 14px;
@@ -1245,7 +1271,16 @@ input, textarea { font-size: inherit; color: inherit; }
   padding: 4px 0;
 }
 .composer textarea::placeholder { color: var(--fg-subtle); }
-.composer-tools { display: flex; align-items: center; gap: 4px; }
+/* Depth control on its own row above the input (was crammed into the input
+   row, choking the textarea — especially on mobile). */
+.composer-controls { display: flex; align-items: center; margin-bottom: 6px; }
+/* One-line explainer for the selected depth — updates as you tap the pill. */
+.composer-depth-desc {
+  margin: 0 0 8px;
+  font-size: var(--type-meta);
+  color: var(--fg-subtle);
+  line-height: 1.4;
+}
 
 .depth-pill {
   display: inline-flex;
@@ -1813,6 +1848,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 }
 .app[data-mobile="true"] .tabs-row { flex-direction: column; align-items: stretch; gap: 10px; }
 .app[data-mobile="true"] .tabs { overflow-x: auto; max-width: 100%; padding: 3px; flex-shrink: 0; }
+/* Tighter tabs on mobile so the full set (Chat/Documents/Notes/Todos) fits a
+   phone width by default; overflow-x keeps them reachable on smaller screens. */
+.app[data-mobile="true"] .tab { padding: 6px 7px; gap: 5px; }
 .app[data-mobile="true"] .bulk-bar {
   position: fixed;
   left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom));
@@ -3127,7 +3165,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .search-drawer-error { color: var(--danger); }
 .list-bulk-bar { margin-bottom: 8px; padding: 0 16px; }
 .chat-foot { margin-top: 6px; font-size: var(--type-meta); color: var(--fg-subtle); }
-.chat-foot-trail { margin-left: auto; }
+/* The ↵-to-send hint is desktop-only — irrelevant on a touch keyboard, and the
+   send button is right there. */
+.app[data-mobile="true"] .chat-foot { display: none; }
 .filter-chip-count { opacity: 0.6; }
 
 /* ── Tags page rows ── */

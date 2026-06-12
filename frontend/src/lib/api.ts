@@ -25,6 +25,7 @@ import {
   NoteCreateRequestSchema,
   ProjectCountsListResponseSchema,
   ProjectCreateRequestSchema,
+  ProjectUpdateRequestSchema,
   ProjectGetResponseSchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
@@ -56,6 +57,7 @@ import {
   type Project,
   type ProjectCounts,
   type ProjectCreateRequest,
+  type ProjectUpdateRequest,
   type ProjectListQuery,
   type RagRequest,
   type RagResponse,
@@ -246,6 +248,16 @@ export async function createProject(req: ProjectCreateRequest): Promise<Project>
   return data.project;
 }
 
+export async function updateProject(id: string, req: ProjectUpdateRequest): Promise<Project> {
+  const body = JSON.stringify(ProjectUpdateRequestSchema.parse(req));
+  const data = await request(`/projects/${id}`, ProjectGetResponseSchema, { method: 'PUT', body });
+  return data.project;
+}
+// Soft delete (archive) is `archiveProject` (DELETE with no flag). This is the
+// HARD delete — `?hard=true` permanently removes the project and its content.
+export async function deleteProject(id: string): Promise<void> {
+  await fetchOk(`/projects/${id}?hard=true`, { method: 'DELETE' });
+}
 export async function archiveProject(id: string): Promise<void> {
   await fetchOk(`/projects/${id}`, { method: 'DELETE' });
 }

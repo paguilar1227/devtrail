@@ -1,14 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { Tabs, Tag } from '../components/primitives';
+import { ProjectModal } from '../components/modals/ProjectModal';
+import { ConfirmModal } from '../components/modals/ConfirmModal';
 import {
+  archiveProject,
+  deleteProject,
   getProject,
   listContent,
   listProjectCounts,
   listProjects,
   listTags,
   pinProject,
+  restoreProject,
   unpinProject,
 } from '../lib/api';
 import { toUiProject } from '../lib/view';
@@ -97,6 +102,48 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
     },
   });
 
+  // Archive (soft, restorable) or restore, depending on current status.
+  const archiveMut = useMutation({
+    mutationFn: () =>
+      project?.status === 'archived' ? restoreProject(projectId) : archiveProject(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      qc.invalidateQueries({ queryKey: ['project-counts'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+    },
+  });
+  // Hard delete — permanent. On success the project is gone, so leave the page.
+  const deleteMut = useMutation({
+    mutationFn: () => deleteProject(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      qc.invalidateQueries({ queryKey: ['project-counts'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      onRoute({ route: 'projects' });
+    },
+  });
+
+  // The "more project actions" (⋯) dropdown + which dialog (if any) is open.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [dialog, setDialog] = useState<null | 'edit' | 'delete'>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
   if (projectQ.error || countsQ.error) {
     const err = projectQ.error || countsQ.error;
     return (
@@ -152,9 +199,39 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
           >
             <Icons.Pin /> {togglePin.isPending ? '…' : project.pinned ? 'Unpin' : 'Pin'}
           </button>
-          <button className="btn" title="More project actions">
-            <Icons.More />
-          </button>
+          <div className="proj-menu-wrap" ref={menuRef}>
+            <button
+              className="btn"
+              title="More project actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <Icons.More />
+            </button>
+            {menuOpen ? (
+              <div className="proj-menu" role="menu">
+                <button role="menuitem" onClick={() => { setMenuOpen(false); setDialog('edit'); }}>
+                  <Icons.Pencil size={13} /> Edit project
+                </button>
+                <button
+                  role="menuitem"
+                  disabled={archiveMut.isPending}
+                  onClick={() => { setMenuOpen(false); archiveMut.mutate(); }}
+                >
+                  <Icons.ArchiveBox size={13} /> {isArchived ? 'Restore' : 'Archive'}
+                </button>
+                <div className="proj-menu-sep" />
+                <button
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => { setMenuOpen(false); setDialog('delete'); }}
+                >
+                  <Icons.Trash size={13} /> Delete project…
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button className="btn btn-primary" onClick={() => onAction({ kind: 'upload', payload: project })}>
             <Icons.Upload /> Add
           </button>
@@ -201,6 +278,21 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
       {tab === 'documents' && <DocumentsTab project={project} onAction={onAction} />}
       {tab === 'notes' && <NotesTab project={project} onAction={onAction} />}
       {tab === 'todos' && <TodosTab project={project} onAction={onAction} />}
+
+      {dialog === 'edit' ? (
+        <ProjectModal project={project} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog === 'delete' ? (
+        <ConfirmModal
+          title={`Delete "${project.name}"?`}
+          message="This permanently deletes the project and all of its documents, notes, and todos. This can't be undone — to keep it recoverable, Archive instead."
+          confirmLabel="Delete forever"
+          requireType={project.name}
+          danger
+          onClose={() => setDialog(null)}
+          onConfirm={() => { setDialog(null); deleteMut.mutate(); }}
+        />
+      ) : null}
     </div>
   );
 }

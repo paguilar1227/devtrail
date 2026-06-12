@@ -17,6 +17,14 @@ const DEPTH_TO_RAG: Record<DepthChoice, 'fast' | 'auto' | 'thorough'> = {
   deep: 'thorough',
 };
 
+// One-line explainer for the selected depth — shown under the pill so the
+// Shallow/Balanced/Deep choice isn't opaque (no hover tooltips on mobile).
+const DEPTH_DESC: Record<DepthChoice, string> = {
+  shallow: 'Fastest — a quick pass over the closest matches.',
+  balanced: 'Default — auto-tunes effort to the question.',
+  deep: 'Most thorough — wider retrieval, deeper synthesis. Slower.',
+};
+
 export function ChatTab({ project }: Props) {
   const [messages, setMessages] = useState<ChatMessageT[]>([]);
   const [draft, setDraft] = useState('');
@@ -126,6 +134,14 @@ export function ChatTab({ project }: Props) {
       </div>
 
       <div className="composer-wrap">
+        <div className="composer-controls">
+          <div className="depth-pill">
+            <button className={depth === 'shallow' ? 'active' : ''} onClick={() => setDepth('shallow')}>Shallow</button>
+            <button className={depth === 'balanced' ? 'active' : ''} onClick={() => setDepth('balanced')}>Balanced</button>
+            <button className={depth === 'deep' ? 'active' : ''} onClick={() => setDepth('deep')}>Deep</button>
+          </div>
+        </div>
+        <p className="composer-depth-desc">{DEPTH_DESC[depth]}</p>
         <div className="composer">
           <textarea
             value={draft}
@@ -139,22 +155,12 @@ export function ChatTab({ project }: Props) {
               }
             }}
           />
-          <div className="composer-tools">
-            <div className="depth-pill">
-              <button className={depth === 'shallow' ? 'active' : ''} onClick={() => setDepth('shallow')}>Shallow</button>
-              <button className={depth === 'balanced' ? 'active' : ''} onClick={() => setDepth('balanced')}>Balanced</button>
-              <button className={depth === 'deep' ? 'active' : ''} onClick={() => setDepth('deep')}>Deep</button>
-            </div>
-            <button className="btn btn-primary btn-icon" onClick={send} disabled={!draft.trim() || askMut.isPending}>
-              <Icons.Send />
-            </button>
-          </div>
+          <button className="btn btn-primary btn-icon" onClick={send} disabled={!draft.trim() || askMut.isPending}>
+            <Icons.Send />
+          </button>
         </div>
-        <div className="row-flex gap-3 chat-foot">
-          <span>scope: {project.name}</span>
-          <span>retrieval: vector + graph</span>
-          <span>depth: {DEPTH_TO_RAG[depth]}</span>
-          <span className="chat-foot-trail">↵ to send · ⇧↵ for newline</span>
+        <div className="chat-foot">
+          <span>↵ to send · ⇧↵ for newline</span>
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Topbar, type Crumb } from './components/Topbar';
 import { ConfirmModal } from './components/modals/ConfirmModal';
 import { DocReaderDrawer } from './components/modals/DocReaderDrawer';
-import { NewProjectModal } from './components/modals/NewProjectModal';
+import { ProjectModal } from './components/modals/ProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
 import { NoteListDrawer } from './components/modals/NoteListDrawer';
 import { DocListDrawer } from './components/modals/DocListDrawer';
@@ -193,7 +193,7 @@ export default function App() {
       {modal?.kind === 'confirm-rename' && (
         <RenameTagModal tag={modal.payload} onClose={() => setModal(null)} />
       )}
-      {modal?.kind === 'new-project' && <NewProjectModal onClose={() => setModal(null)} />}
+      {modal?.kind === 'new-project' && <ProjectModal onClose={() => setModal(null)} />}
       {modal?.kind === 'settings' && (
         <SettingsModal theme={theme} onTheme={setTheme} onClose={() => setModal(null)} />
       )}
