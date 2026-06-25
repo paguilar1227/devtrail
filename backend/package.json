@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@azure/monitor-opentelemetry": "^1.16.0",
+    "@azure/monitor-opentelemetry": "^1.18.1",
     "@azure/storage-blob": "^12.26.0",
     "@google/generative-ai": "^0.24.0",
     "@hono/node-server": "^1.14.0",
@@ -23,7 +23,7 @@
     "@open-brain/shared": "*",
     "@opentelemetry/api": "^1.9.1",
     "dotenv": "^16.4.7",
-    "hono": "^4.7.0",
+    "hono": "^4.12.25",
     "pdf-parse": "^2.4.5",
     "pg": "^8.13.0",
     "pgvector": "^0.2.0",
@@ -33,8 +33,8 @@
     "@types/node": "^22.0.0",
     "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.11.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.6"
   }
 }

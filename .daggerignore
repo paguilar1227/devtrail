@@ -1,0 +1,32 @@
+# Keep the Dagger context mount small — these never need to enter a gate.
+.git
+# Local env files (gitignored runtime artifacts holding dev secrets) must never
+# enter a gate. Dagger does NOT honor .gitignore, so exclude them explicitly —
+# otherwise a locally-created backend/.env trips the gitleaks gate (and makes the
+# security result depend on local state). .env.example IS committed + scanned.
+.env
+.env.local
+**/.env
+**/.env.local
+node_modules
+**/node_modules
+# Stale nested workspace lockfiles. npm workspaces uses the ROOT lock — the
+# Dockerfile, Makefile, and CI all run root `npm ci`, so these are never
+# consulted by the build/deploy. They're frozen at old versions and only
+# produce trivy false-positives; the security gate must reflect the deployed
+# artifact (the root lock). (Cruft worth deleting from the repo too — see CI.md.)
+backend/package-lock.json
+frontend/package-lock.json
+dist
+**/dist
+build
+coverage
+playwright-report
+test-results
+.playwright-mcp
+ci/sdk
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.mp4
+**/*.webm

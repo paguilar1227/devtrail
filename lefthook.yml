@@ -1,12 +1,28 @@
-# Local CI gate.
+# Local CI gate — the owner's local-ci standard.
+# Install once:  lefthook install   (or: make bootstrap)
 #
-# `pre-push` runs the fast CI tier (type-check + unit + build) so problems are
-# caught locally, before spending cloud Actions minutes. The heavy Playwright
-# e2e is NOT in the hook (too slow per-push) — run `make ci-full` before you
-# merge, and cloud CI runs ci-full post-merge as the safety net.
-#
-# Skip in a pinch: `LEFTHOOK=0 git push` (or `git push --no-verify`).
+#   pre-commit (feature branches): fast native secrets scan on staged files.
+#   pre-push   (feature branches): the FULL `dagger call ci` — the SAME gate
+#                                  GitHub runs, so a green push ⇒ a green CI.
+# Both skip `main`. Bypass in a pinch: `LEFTHOOK=0 git push`.
+
+# ── ON COMMIT (feature branches): fast, staged-only, NOT Dagger (<2s). ──
+pre-commit:
+  parallel: true
+  skip:
+    - ref: main
+    - ref: master
+  commands:
+    secrets:
+      # Host gitleaks (8.30.x) — same engine the `security` gate runs in a
+      # container. Blocks a staged secret before it's ever committed.
+      run: gitleaks protect --staged --redact --no-banner
+
+# ── ON PUSH (feature branches): the full parity gate. ──
 pre-push:
+  skip:
+    - ref: main
+    - ref: master
   commands:
     ci:
-      run: make ci
+      run: dagger call ci

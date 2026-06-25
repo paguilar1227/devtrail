@@ -1,0 +1,31 @@
+# gitleaks config for the `security` gate. Extends the built-in ruleset and
+# allowlists the known non-secret local-dev values so the gate flags only real
+# leaks.
+title = "Open Brain v2 gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secret local-dev values + generated/lock files"
+regexTarget = "match"
+regexes = [
+  # The stub-mode local API key, intentionally fake + checked into .env.example
+  # and the e2e helpers. Matches backend/.env.example and CLAUDE.md.
+  '''local-dev-key-not-secret''',
+  # Azurite's well-known public dev storage key — a Microsoft-published constant,
+  # identical in every Azurite install worldwide. Hardcoded as the local-seed
+  # fallback in scripts/seed-local.ts and backend/.env.example. Not a secret.
+  '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==''',
+  # Anthropic / Gemini model identifiers (e.g. claude-haiku-4-5-20251001,
+  # gemini-3-flash-preview). The generic-api-key rule flags these when they sit
+  # next to a var named *ApiKey. They're model names, not keys (real Anthropic
+  # keys are sk-ant-…, Gemini keys AIza…), so suppressing them is safe + durable.
+  '''claude-[a-z0-9.-]+''',
+  '''gemini-[a-z0-9.-]+''',
+]
+paths = [
+  '''.*\.env\.example$''',
+  '''package-lock\.json$''',
+  '''(^|/)ci/(package\.json|yarn\.lock)$''',
+]

@@ -1,16 +1,21 @@
-# .github/workflows/ci.yml
+# .github/workflows/ci.yml — Alex local-ci standard (thin mirror of `dagger call ci`).
 #
-# Cloud CI runs the SAME pipeline as local: `make ci-full` (type-check + unit +
-# build + full-stack Playwright e2e against real Postgres + Azurite + a
-# stub-mode backend). The Makefile is the single source of truth, so a green
-# `make ci-full` locally means a green run here — no drift between the two.
+# THE ONE RULE: the `ci` job body is ONLY `dagger call ci`. No extra run: steps.
+# Every pass/fail gate is a Dagger function (see ci/src/index.ts), so this runs
+# the SAME computation as the local Lefthook pre-push gate — green local ⇒ green
+# here, by construction (same BuildKit engine, pinned version).
 #
-# CI MODEL (see CLAUDE.md "CI model"): iterate locally behind the lefthook
-# pre-push gate (`make ci`). Cloud CI runs ONLY at merge / post-merge:
+# TRIGGER (see CLAUDE.md "CI model"): iterate locally behind the lefthook
+# pre-push gate (`dagger call ci`). Cloud CI runs ONLY at merge / post-merge:
 #   - push: main         post-merge safety net (runs once per merge, not push)
-#   - workflow_dispatch  run the full suite on a branch before merging
-# There is intentionally no per-PR-push trigger — that's what local CI is for,
-# and it's what keeps the free-tier Actions minutes from burning during a PR.
+#   - workflow_dispatch  run the full gate on a branch before merging
+# There is intentionally NO per-PR-push trigger — the local gate covers that, and
+# it's what keeps the free-tier Actions minutes from burning during a PR.
+#
+# WHAT CHANGED vs the old workflow: the ~26-min Playwright e2e is no longer in
+# this gate. `dagger call ci` is typecheck + unit + build + security only. The
+# e2e becomes a Dagger `test-functional`/`test-integration` gate in a later pass
+# (compose-backed service bindings) once its flakiness is fixed.
 
 name: CI
 
@@ -23,33 +28,26 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # Budget ceiling. Old e2e CI was ~26-37 min; this gate (no e2e) should land
+    # well under. 20 leaves headroom for a cold runner (npm ci + trivy DB pull)
+    # without masking real bloat — fails loud if the pipeline balloons.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: dagger call ci
+        uses: dagger/dagger-for-github@v8.4.0
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      # Workspaces (shared, backend, frontend) all install from the root.
-      - name: Install workspace deps
-        run: npm ci
-
-      # Identical to `make ci-full` locally: build @open-brain/shared, backend
-      # type-check, backend + frontend unit tests, frontend build, then the
-      # full-stack e2e. The e2e target brings up docker compose (Postgres +
-      # Azurite), copies stub-mode .env files, installs Playwright browsers,
-      # starts the backend + Vite, and seeds — all self-contained.
-      - name: make ci-full
-        run: make ci-full
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: frontend/playwright-report
-          retention-days: 7
+          # Pin to the exact engine version run locally (matches dagger.json's
+          # engineVersion). Version skew laptop↔CI is the #1 cause of
+          # "green local, red GitHub".
+          version: "v0.21.6"
+          call: ci
+          # Optional Dagger Cloud OTel traces (free single-user tier). If the
+          # DAGGER_CLOUD_TOKEN secret is unset it resolves empty → no-op.
+          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
