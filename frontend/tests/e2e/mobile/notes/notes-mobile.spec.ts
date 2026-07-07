@@ -3,9 +3,8 @@
 // with a back arrow between them. Reached from the More sheet (Notes row).
 //
 // Pinned against the deterministic seed: travel(4); cooking → coffee(3).
-import { expect, test, type Page } from '@playwright/test';
-import { MORE_SHEET, openMoreSheet } from '../../helpers/setup';
-import '../../helpers/setup';
+import type { Page } from '@playwright/test';
+import { test, expect, MORE_SHEET, openMoreSheet } from '../../helpers/setup';
 
 async function openNotesMobile(page: Page) {
   await openMoreSheet(page);

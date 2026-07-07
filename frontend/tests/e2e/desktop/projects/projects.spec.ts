@@ -1,6 +1,5 @@
-import { expect, test } from '@playwright/test';
 import { findProjectByName } from '../../helpers/api';
-import { SIDEBAR, projectTo, stamp } from '../../helpers/setup';
+import { test, expect, SIDEBAR, projectTo, stamp } from '../../helpers/setup';
 
 test('project flow: create new project from modal, see it in sidebar', async ({ page }) => {
   const name = stamp() + ' Project';

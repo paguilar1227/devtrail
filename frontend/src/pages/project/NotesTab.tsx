@@ -22,8 +22,11 @@ interface Props {
 const NOTE_SIGILS: readonly SigilKind[] = ['tag'];
 const NO_MENTIONS: never[] = [];
 
+type NoteFilter = 'all' | 'pinned' | 'pending';
+
 export function NotesTab({ project, onAction }: Props) {
   const { mode: sortMode, setMode: setSortMode } = useNoteSortMode(`project:${project.id}`);
+  const [filter, setFilter] = useState<NoteFilter>('all');
 
   // Hybrid search scoped to this project's notes — same component + path as
   // Home / the drawers. Typing flips the tab from the card grid to a flat
@@ -54,6 +57,13 @@ export function NotesTab({ project, onAction }: Props) {
   }, [data, sortMode]);
   const pinnedCount = notes.filter(n => n.pinned).length;
   const pendingCount = notes.filter(n => n.processing_status === 'pending').length;
+  const visibleNotes = useMemo(
+    () =>
+      filter === 'pinned' ? notes.filter((n) => n.pinned)
+        : filter === 'pending' ? notes.filter((n) => n.processing_status === 'pending')
+          : notes,
+    [notes, filter],
+  );
 
   if (error) {
     return <div className="page-subtle" style={{ color: 'var(--danger)' }}>Failed to load notes: {String((error as Error).message)}</div>;
@@ -67,13 +77,13 @@ export function NotesTab({ project, onAction }: Props) {
       <div className="filter-bar">
         {searchActive ? null : (
           <>
-            <FilterChip active>
+            <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
               All <span style={{ marginLeft: 4 }}>{notes.length}</span>
             </FilterChip>
-            <FilterChip>
+            <FilterChip active={filter === 'pinned'} onClick={() => setFilter('pinned')}>
               Pinned <span style={{ marginLeft: 4 }}>{pinnedCount}</span>
             </FilterChip>
-            <FilterChip>
+            <FilterChip active={filter === 'pending'} onClick={() => setFilter('pending')}>
               Processing <span style={{ marginLeft: 4 }}>{pendingCount}</span>
             </FilterChip>
           </>
@@ -123,9 +133,13 @@ export function NotesTab({ project, onAction }: Props) {
         )
       ) : notes.length === 0 ? (
         <div className="page-subtle">No notes in this project yet.</div>
+      ) : visibleNotes.length === 0 ? (
+        <div className="page-subtle">
+          {filter === 'pinned' ? 'No pinned notes in this project.' : 'No notes are processing.'}
+        </div>
       ) : (
         <div className="note-grid">
-          {notes.map(n => (
+          {visibleNotes.map(n => (
             <div key={n.id} className="note-card" onClick={() => onAction({ kind: 'note-edit', payload: n })}>
               <div className="row-flex gap-2">
                 <span className="nm">{n.title}</span>

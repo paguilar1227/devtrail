@@ -2,7 +2,6 @@
 // (todos / notes / documents). Verifies the chip-row UX, the AND/OR
 // toggle, and URL persistence + reload hydration.
 
-import { expect, test } from '@playwright/test';
 import {
   createDoc,
   createNote,
@@ -12,7 +11,7 @@ import {
   listContent,
   listTodos,
 } from '../../helpers/api';
-import { stamp } from '../../helpers/setup';
+import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 // Per-run tag namespace so parallel/sequential specs can't bleed into

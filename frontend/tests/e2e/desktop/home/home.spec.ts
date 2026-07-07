@@ -2,8 +2,7 @@
 // hero greeting, search row, Personal top row (Todos + Notes), lower row
 // (Documents + Recent activity), and the Pinned chip strip.
 // Behavior tests for personal todo flows live in personal-todos.spec.ts.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 test('home: structure renders — hero, search, top row, personal columns, pinned strip', async ({ page }) => {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();

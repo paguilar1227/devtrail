@@ -1,4 +1,4 @@
-import type { Page, ConsoleMessage } from '@playwright/test';
+import { expect, type ConsoleMessage, type Locator, type Page } from '@playwright/test';
 
 /**
  * Attaches a console listener to the page and returns a getter for collected
@@ -72,6 +72,22 @@ export async function waitForAppReady(page: Page) {
       .first()
       .waitFor({ state: 'visible', timeout: 15_000 });
   }
+}
+
+/** Assert a dialog references an entity title. Todos/docs open read surfaces
+ *  (title in text content); notes open the editor, where the title lives in
+ *  an <input> value — accept either, so click-through assertions don't
+ *  depend on which entity kind tops the activity feed (the local dev DB
+ *  accumulates edit events across sessions, shifting the order). */
+export async function expectDialogTitled(dialog: Locator, title: string): Promise<void> {
+  await expect(async () => {
+    const text = await dialog.innerText();
+    if (text.includes(title)) return;
+    const inputValues = await dialog
+      .locator('input')
+      .evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
+    expect(inputValues.some((v) => v.includes(title))).toBe(true);
+  }).toPass({ timeout: 10000 });
 }
 
 /** True when the current viewport is below the mobile breakpoint used by the app (820). */

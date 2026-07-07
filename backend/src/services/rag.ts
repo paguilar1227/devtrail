@@ -18,12 +18,23 @@ export interface RagOptions {
   reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
+// Must stay a superset of the wire contract (RagCitationSchema in
+// @open-brain/shared): the frontend Zod-parses the REST response and
+// REQUIRES `id`, `content_item_id`, `title`, `excerpt`; `type` is an
+// optional schema field that survives the parse — the Chat tab's
+// "Open source" routing (note/document/todo) depends on it, so don't
+// treat it as discardable. The remaining extras (chunk_preview /
+// similarity / retrieval_path) are stripped by the web client's parse
+// but kept for the MCP `ask` tool, which returns this object verbatim.
+// Regression test: tests/unit/services/rag-citation-schema.test.ts
 export interface Citation {
-  content_item_id?: string;
+  id: string;                  // chunk id (todo id for todo hits)
+  content_item_id: string;     // parent content item (todo id for todo hits)
   title: string;
+  excerpt: string;             // what the UI shows when a citation is expanded
   type: string;
   chunk_preview: string;
-  similarity: number;
+  similarity: number | null;
   source_url?: string | null;  // set when the content item was ingested from a URL
   retrieval_path?: Array<{
     step: 'vector' | 'entity' | 'lexical';
@@ -31,6 +42,65 @@ export interface Citation {
     entity?: { canonical_name: string; type: string };
     confidence?: number;
   }>;
+}
+
+/** Map a search hit to a wire-conformant citation. Todos aren't content
+ *  items, so their own id doubles as content_item_id — both fields must be
+ *  UUIDs per the schema. Returns null for hit shapes that carry no payload.
+ *  Structurally typed (SearchHit-compatible) so the schema regression test
+ *  can feed minimal fixtures. */
+export function hitToCitation(hit: {
+  type: string;
+  retrieval_path?: Citation['retrieval_path'];
+  chunk?: {
+    id: string;
+    content_item_id: string;
+    parent_title: string;
+    parent_type: string;
+    content: string | null;
+    similarity: number | null;
+    parent_source_url?: string | null;
+  };
+  todo?: {
+    id: string;
+    content: string;
+    status: string;
+    due_date?: string | Date | null;
+    similarity: number | null;
+  };
+}): Citation | null {
+  if (hit.type === 'chunk' && hit.chunk) {
+    const c = hit.chunk;
+    return {
+      id: c.id,
+      content_item_id: c.content_item_id,
+      title: c.parent_title,
+      excerpt: (c.content ?? '').slice(0, 500),
+      type: c.parent_type,
+      chunk_preview: (c.content ?? '').slice(0, 150),
+      similarity: c.similarity,
+      source_url: c.parent_source_url ?? null,
+      retrieval_path: hit.retrieval_path,
+    };
+  }
+  if (hit.type === 'todo' && hit.todo) {
+    const t = hit.todo;
+    // due_date can arrive as a Date (pg row) or string — normalize so the
+    // excerpt never carries a verbose Date.prototype.toString().
+    const due = t.due_date instanceof Date ? t.due_date.toISOString() : t.due_date ?? 'none';
+    const preview = `Status: ${t.status}, Due: ${due}`;
+    return {
+      id: t.id,
+      content_item_id: t.id,
+      title: t.content.slice(0, 80),
+      excerpt: preview,
+      type: 'todo',
+      chunk_preview: preview,
+      similarity: t.similarity,
+      retrieval_path: hit.retrieval_path,
+    };
+  }
+  return null;
 }
 
 export interface RagResult {
@@ -158,26 +228,12 @@ async function ragQueryImpl(
       contextParts.push(
         `[${num}] (${c.parent_type}: "${c.parent_title}"${urlPart})\n${c.content ?? '[media content]'}`,
       );
-      citations.push({
-        content_item_id: c.content_item_id,
-        title: c.parent_title,
-        type: c.parent_type,
-        chunk_preview: (c.content ?? '').slice(0, 150),
-        similarity: c.similarity,
-        source_url: c.parent_source_url ?? null,
-        retrieval_path: hit.retrieval_path,
-      });
     } else if (hit.type === 'todo' && hit.todo) {
       const t = hit.todo;
       contextParts.push(`[${num}] (todo — status: ${t.status}, priority: ${t.priority ?? 'none'})\n${t.content}`);
-      citations.push({
-        title: t.content.slice(0, 80),
-        type: 'todo',
-        chunk_preview: `Status: ${t.status}, Due: ${t.due_date ?? 'none'}`,
-        similarity: t.similarity,
-        retrieval_path: hit.retrieval_path,
-      });
     }
+    const citation = hitToCitation(hit);
+    if (citation) citations.push(citation);
   }
 
   const context = contextParts.join('\n\n');

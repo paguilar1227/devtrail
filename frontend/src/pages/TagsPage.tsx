@@ -10,12 +10,13 @@
 //   - project_id=<uuid>    → that project (overrides scope)
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { SortDropdown } from '../components/SortDropdown';
-import { listProjects, listTags } from '../lib/api';
+import { ConfirmModal } from '../components/modals/ConfirmModal';
+import { deleteTag, listProjects, listTags } from '../lib/api';
 import { toUiProjects } from '../lib/view';
-import type { ActionDispatch, Route } from '../types';
+import type { ActionDispatch, Route, TagRow } from '../types';
 
 type ScopeMode = 'personal' | 'all' | string;
 
@@ -26,6 +27,20 @@ interface Props {
 
 export function TagsPage({ onAction, onRoute }: Props) {
   const [scope, setScope] = useState<ScopeMode>('personal');
+  const qc = useQueryClient();
+
+  // Corpus-wide tag delete — strips the tag from every carrier. Gated on
+  // typing the tag name (same contract as the archive's Delete forever).
+  const [confirmDelete, setConfirmDelete] = useState<TagRow | null>(null);
+  const deleteMut = useMutation({
+    mutationFn: (name: string) => deleteTag(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tags'] });
+      qc.invalidateQueries({ queryKey: ['tag-detail'] });
+      qc.invalidateQueries({ queryKey: ['content'] });
+      qc.invalidateQueries({ queryKey: ['todos'] });
+    },
+  });
 
   const projectsQ = useQuery({
     queryKey: ['projects', 'all'],
@@ -149,14 +164,34 @@ export function TagsPage({ onAction, onRoute }: Props) {
                 <button className="btn btn-ghost btn-sm" onClick={() => onAction({ kind: 'confirm-rename', payload: t })}>
                   Rename
                 </button>
-                <button className="btn btn-ghost btn-icon">
-                  <Icons.More />
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={deleteMut.isPending}
+                  onClick={() => setConfirmDelete(t)}
+                >
+                  Delete
                 </button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {confirmDelete ? (
+        <ConfirmModal
+          title={`Delete #${confirmDelete.name}?`}
+          message={`This strips the tag from all ${confirmDelete.total} ${confirmDelete.total === 1 ? 'entity' : 'entities'} that carry it — corpus-wide, not just this scope. It can't be undone. Type the tag name to confirm.`}
+          confirmLabel="Delete tag"
+          requireType={confirmDelete.name}
+          danger
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            const name = confirmDelete.name;
+            setConfirmDelete(null);
+            deleteMut.mutate(name);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

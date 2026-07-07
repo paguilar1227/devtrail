@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Icons } from '../../components/Icons';
-import { rag } from '../../lib/api';
+import { getContent, getTodo, rag } from '../../lib/api';
+import { toUiDocument, toUiNote, toUiTodo } from '../../lib/view';
 import { cls } from '../../lib/util';
-import type { ChatCitation, ChatMessageT, Project } from '../../types';
+import type { ActionDispatch, ChatCitation, ChatMessageT, Project } from '../../types';
 
 interface Props {
   project: Project;
+  onAction: ActionDispatch;
 }
 
 type DepthChoice = 'shallow' | 'balanced' | 'deep';
@@ -25,7 +27,7 @@ const DEPTH_DESC: Record<DepthChoice, string> = {
   deep: 'Most thorough — wider retrieval, deeper synthesis. Slower.',
 };
 
-export function ChatTab({ project }: Props) {
+export function ChatTab({ project, onAction }: Props) {
   const [messages, setMessages] = useState<ChatMessageT[]>([]);
   const [draft, setDraft] = useState('');
   const [depth, setDepth] = useState<DepthChoice>('balanced');
@@ -46,6 +48,8 @@ export function ChatTab({ project }: Props) {
         path: c.source_url ?? `chunk · ${c.id.slice(0, 8)}`,
         chunk: c.excerpt,
         score: 0,
+        content_item_id: c.content_item_id,
+        sourceType: c.type,
       }));
       setMessages((m) => [
         ...m,
@@ -114,7 +118,7 @@ export function ChatTab({ project }: Props) {
             </div>
           )}
           {messages.map(m => (
-            <ChatMessage key={m.id} m={m} />
+            <ChatMessage key={m.id} m={m} onAction={onAction} />
           ))}
           {askMut.isPending && (
             <div className="msg">
@@ -167,7 +171,7 @@ export function ChatTab({ project }: Props) {
   );
 }
 
-function ChatMessage({ m }: { m: ChatMessageT }) {
+function ChatMessage({ m, onAction }: { m: ChatMessageT; onAction: ActionDispatch }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set([0]));
   const togg = (i: number) =>
     setExpanded(s => {
@@ -176,6 +180,29 @@ function ChatMessage({ m }: { m: ChatMessageT }) {
       else n.add(i);
       return n;
     });
+
+  // "Open source" — fetch the cited entity and open the surface that owns
+  // it: doc reader for documents, note editor for notes, detail drawer for
+  // todos (whose citation id doubles as the todo id). The source may have
+  // been deleted since the answer was generated (the archive now has hard
+  // delete) — surface that inline instead of rejecting silently.
+  const [openError, setOpenError] = useState<number | null>(null);
+  const openSource = async (c: ChatCitation) => {
+    if (!c.content_item_id) return;
+    setOpenError(null);
+    try {
+      if (c.sourceType === 'todo') {
+        const todo = await getTodo(c.content_item_id);
+        onAction({ kind: 'todo-detail', payload: toUiTodo(todo) });
+        return;
+      }
+      const item = await getContent(c.content_item_id);
+      if (item.type === 'note') onAction({ kind: 'note-edit', payload: toUiNote(item) });
+      else onAction({ kind: 'doc-read', payload: toUiDocument(item) });
+    } catch {
+      setOpenError(c.num);
+    }
+  };
   return (
     <div className={cls('msg', m.role)}>
       <div className="msg-avatar">{m.role === 'user' ? 'P' : <Icons.Sparkle size={13} />}</div>
@@ -200,8 +227,19 @@ function ChatMessage({ m }: { m: ChatMessageT }) {
                 ) : null}
                 {expanded.has(i) ? (
                   <div className="cite-foot">
+                    {openError === c.num ? (
+                      <span className="page-subtle" style={{ color: 'var(--danger)' }}>
+                        Couldn't open — the source may have been deleted.
+                      </span>
+                    ) : null}
                     <span style={{ marginLeft: 'auto' }} className="row-flex gap-1">
-                      <button className="btn btn-ghost btn-sm">Open source</button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={!c.content_item_id}
+                        onClick={() => void openSource(c)}
+                      >
+                        Open source
+                      </button>
                     </span>
                   </div>
                 ) : null}

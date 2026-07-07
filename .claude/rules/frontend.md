@@ -69,6 +69,10 @@ Located in `frontend/tests/e2e/`. Two devices:
 
 Tests should walk real user click paths (sidebar → tab → row → drawer → action), not assert component shape. Bug fixes get a regression e2e at the surface where the bug appeared.
 
+**Import `test`/`expect` from `tests/e2e/helpers/setup.ts`, never from `@playwright/test`.** The setup module exports a `test` extended with a page fixture that does the goto/app-ready setup and the `e2e:`-prefix sweep. Do NOT register `beforeEach`/`afterEach` from a shared helper module as an import side effect: Playwright caches helper modules per worker, so those hooks only attach to the first spec file a worker loads — every later file runs its first test hook-less against `about:blank` and "flakes" (this was the parked ~26-flaky mystery, root-caused + fixed July 2026). Type-only imports (`type Page`, `type Locator`) still come from `@playwright/test`.
+
+**Parity pattern:** cross-device workflows live in `tests/e2e/shared/*.ts` as `define*Tests()` suites; thin wrappers in `desktop/**` and `mobile/**` invoke them. Navigation differences are absorbed by `helpers/nav.ts` (`gotoView`, `gotoProjectPage`, `openSettings`, `selectTagChip`). Coverage matrix: `docs/testing/e2e-coverage-plan.md`.
+
 Run a single spec:
 ```bash
 cd frontend && npx playwright test desktop/documents/doc-preview.spec.ts

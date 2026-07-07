@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test';
-import { navTo } from '../../helpers/setup';
+import { test, expect, navTo } from '../../helpers/setup';
 
 test('tags: list page shows tags with non-zero totals', async ({ page }) => {
   await navTo(page, 'Tags');

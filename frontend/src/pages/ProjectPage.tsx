@@ -274,7 +274,7 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
         </div>
       </div>
 
-      {tab === 'chat' && <ChatTab project={project} />}
+      {tab === 'chat' && <ChatTab project={project} onAction={onAction} />}
       {tab === 'documents' && <DocumentsTab project={project} onAction={onAction} />}
       {tab === 'notes' && <NotesTab project={project} onAction={onAction} />}
       {tab === 'todos' && <TodosTab project={project} onAction={onAction} />}

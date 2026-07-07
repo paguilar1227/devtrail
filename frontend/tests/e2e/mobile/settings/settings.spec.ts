@@ -2,8 +2,7 @@
 // preferences. Viewport is set by the chromium-mobile project (390x844
 // is below the 820 mobile breakpoint that swaps the sidebar for the
 // tabbar). Same modal, same backend, different reach.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 test('settings mobile: More → Account & preferences opens the modal and X dismisses it', async ({ page }) => {
   // The mobile tabbar swaps in below 820px (see useIsMobile). Wait for it

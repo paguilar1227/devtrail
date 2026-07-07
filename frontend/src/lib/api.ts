@@ -41,6 +41,8 @@ import {
   SearchResponseSchema,
   StatsSchema,
   TagListResponseSchema,
+  TagDeleteResponseSchema,
+  type TagDeleteResponse,
   TagRenameRequestSchema,
   TagRenameResponseSchema,
   type TagRenameResponse,
@@ -300,6 +302,10 @@ export async function updateTodo(id: string, patch: TodoUpdateRequest): Promise<
 export async function archiveTodo(id: string): Promise<void> {
   await fetchOk(`/todos/${id}`, { method: 'DELETE' });
 }
+// HARD delete — permanently removes the todo (Trash view).
+export async function deleteTodoForever(id: string): Promise<void> {
+  await fetchOk(`/todos/${id}?hard=true`, { method: 'DELETE' });
+}
 export async function restoreTodo(id: string): Promise<void> {
   await fetchOk(`/todos/${id}/restore`, { method: 'POST' });
 }
@@ -385,6 +391,10 @@ export async function editContentBody(id: string, content: string): Promise<Cont
 
 export async function archiveContent(id: string): Promise<void> {
   await fetchOk(`/content/${id}`, { method: 'DELETE' });
+}
+// HARD delete — permanently removes the item and its chunks (Trash view).
+export async function deleteContentForever(id: string): Promise<void> {
+  await fetchOk(`/content/${id}?hard=true`, { method: 'DELETE' });
 }
 export async function restoreContent(id: string): Promise<void> {
   await fetchOk(`/content/${id}/restore`, { method: 'POST' });
@@ -480,6 +490,13 @@ export async function renameTag(from: string, to: string): Promise<TagRenameResp
   return request(`/tags/${encodeURIComponent(from)}`, TagRenameResponseSchema, {
     method: 'PUT',
     body,
+  });
+}
+
+// Delete a tag corpus-wide — strips it from every entity that carries it.
+export async function deleteTag(name: string): Promise<TagDeleteResponse> {
+  return request(`/tags/${encodeURIComponent(name)}`, TagDeleteResponseSchema, {
+    method: 'DELETE',
   });
 }
 

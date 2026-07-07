@@ -10,9 +10,8 @@
 // Reorder uses the same reorderTodos / manual_order plumbing — once
 // top-level reorder works, subtask reorder works.
 
-import { expect, test } from '@playwright/test';
 import { createTodo, listTodos } from '../../helpers/api';
-import { stamp } from '../../helpers/setup';
+import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';
@@ -64,38 +63,65 @@ test('home personal todos drawer: drag-to-reorder persists across reload', async
   expect(idxA0).toBeGreaterThanOrEqual(0);
   expect(idxB0).toBeGreaterThanOrEqual(0);
 
-  // Drag A's grip to a point past B's center.
-  const gripBox = await rowA.locator('.prow-grip').boundingBox();
-  const targetBox = await rowB.boundingBox();
-  expect(gripBox).toBeTruthy();
-  expect(targetBox).toBeTruthy();
-  const startX = gripBox!.x + gripBox!.width / 2;
-  const startY = gripBox!.y + gripBox!.height / 2;
-  // Aim past B's bottom by a few pixels — dnd-kit's collision
-  // detector ranks closest-center, which lands on B if we cross its
-  // midpoint from the original side.
-  const direction = idxA0 < idxB0 ? 1 : -1; // moving A across B
-  const endY = (targetBox!.y + targetBox!.height / 2) + direction * (targetBox!.height / 2 + 6);
-
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  // Several intermediate moves so dnd-kit sees the threshold trip
-  // and the layout updates between frames.
-  const steps = 10;
-  for (let i = 1; i <= steps; i++) {
-    const y = startY + ((endY - startY) * i) / steps;
-    await page.mouse.move(startX, y, { steps: 4 });
-  }
-  await page.mouse.up();
-
-  // After drop, A and B's relative position swaps. Poll because the
-  // mutation + cache update have a small async window.
-  await expect.poll(async () => {
+  // Drag A's grip past B's center. dnd-kit's PointerSensor activation +
+  // collision ranking are frame-sensitive under load, so the drag (a) gates
+  // on the sensor actually activating (useSortable sets aria-pressed on the
+  // grip while dragging) and (b) re-attempts up to 3 times if the drop
+  // didn't produce the swap — a genuine drag regression still fails all
+  // three attempts deterministically.
+  const grip = rowA.locator('.prow-grip');
+  const swapped = async () => {
     const aIdx = await rowIndex(A);
     const bIdx = await rowIndex(B);
-    // Sign of (aIdx - bIdx) flipped from the original.
     return Math.sign(aIdx - bIdx) === -Math.sign(idxA0 - idxB0);
-  }, { timeout: 5000 }).toBe(true);
+  };
+  // A drag whose sensor never engaged degrades to a plain click, which the
+  // list drawer treats as "open this todo" — the list view swaps to the
+  // inline detail view and the rows vanish. Recover via Back to list.
+  const ensureListView = async () => {
+    if (await rowA.isVisible().catch(() => false)) return;
+    const back = drawer.locator('.reader-back');
+    if (await back.isVisible().catch(() => false)) await back.click();
+    await expect(rowA).toBeVisible();
+  };
+
+  for (let attempt = 0; attempt < 3 && !(await swapped()); attempt++) {
+    await ensureListView();
+    const gripBox = await grip.boundingBox();
+    const targetBox = await rowB.boundingBox();
+    // Transient layout miss → retry, consistent with the graceful handling
+    // of the activation check and the post-drop poll below.
+    if (!gripBox || !targetBox) continue;
+    const startX = gripBox!.x + gripBox!.width / 2;
+    const startY = gripBox!.y + gripBox!.height / 2;
+    const direction = idxA0 < idxB0 ? 1 : -1; // moving A across B
+    const endY = (targetBox!.y + targetBox!.height / 2) + direction * (targetBox!.height / 2 + 6);
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    // Trip the 6px activation threshold, then confirm the sensor engaged
+    // before the main travel — this is what the blind version raced.
+    await page.mouse.move(startX, startY + direction * 10, { steps: 3 });
+    try {
+      await expect(grip).toHaveAttribute('aria-pressed', 'true', { timeout: 2000 });
+    } catch {
+      await page.mouse.up(); // sensor never engaged — reset and re-attempt
+      continue;
+    }
+    const steps = 10;
+    for (let i = 1; i <= steps; i++) {
+      const y = startY + ((endY - startY) * i) / steps;
+      await page.mouse.move(startX, y, { steps: 4 });
+    }
+    await page.mouse.up();
+
+    // Give the drop's mutation + cache update a bounded window to land;
+    // a miss falls through to the next attempt.
+    await expect.poll(swapped, { timeout: 3000 }).toBe(true).catch(() => undefined);
+  }
+
+  await ensureListView();
+  expect(await swapped()).toBe(true);
 
   // Backend reflects the new manual order.
   await expect.poll(async () => {

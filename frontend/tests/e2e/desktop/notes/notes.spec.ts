@@ -1,9 +1,8 @@
 // Notes are the user-authored markdown surface inside a project. The
 // editor is CodeMirror 6 — a contenteditable, not a textarea — which
 // drives the unusual selectors here (.cm-content, theme wrapper class).
-import { expect, test } from '@playwright/test';
 import { findProjectByName, listContent } from '../../helpers/api';
-import { projectTo, stamp } from '../../helpers/setup';
+import { test, expect, projectTo, stamp } from '../../helpers/setup';
 
 test('note flow: create a new note in a project via the editor modal', async ({ page }) => {
   const project = await findProjectByName('ClaudePit');

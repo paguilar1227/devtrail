@@ -131,6 +131,10 @@ export interface ChatCitation {
   path: string;
   chunk: string;
   score: number;
+  /** Parent content item (or todo id for todo citations) — target of "Open source". */
+  content_item_id?: string;
+  /** 'note' | 'document' | 'todo' — which surface "Open source" opens. */
+  sourceType?: string;
 }
 
 export interface ChatMessageT {

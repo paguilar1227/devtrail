@@ -2,11 +2,9 @@
 // counter (`.m-sheet-section .ct`) that mirrors the count of pinned active
 // projects, and the section lists each one as a row. State changes via
 // REST + reload (React Query staleTime would otherwise mask them).
-import { expect, test } from '@playwright/test';
 import { createProject, pinProject, unpinProject } from '../../helpers/api';
-import { MORE_SHEET, openMoreSheet, stamp } from '../../helpers/setup';
+import { test, expect, MORE_SHEET, openMoreSheet, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
-import '../../helpers/setup';
 
 const PIN_COUNTER = `${MORE_SHEET} .m-sheet-section:has-text("Pinned") .ct`;
 

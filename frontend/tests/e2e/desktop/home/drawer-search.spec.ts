@@ -13,8 +13,8 @@
 //
 // Each test walks a real click-path against running services (stub LLM).
 
-import { expect, test, type Page, type Locator } from '@playwright/test';
-import '../../helpers/setup';
+import type { Page, Locator } from '@playwright/test';
+import { expect, test } from '../../helpers/setup';
 
 // Seed contract — personal items reachable from the home column drawers, and
 // a project that has notes. Update if the seed changes; don't fudge.

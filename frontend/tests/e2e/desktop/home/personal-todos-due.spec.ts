@@ -13,9 +13,8 @@
 // date falls within ~7 days so the formatter's time-aware branch
 // runs deterministically.
 
-import { expect, test } from '@playwright/test';
 import { createTodo, listTodos } from '../../helpers/api';
-import { stamp } from '../../helpers/setup';
+import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';

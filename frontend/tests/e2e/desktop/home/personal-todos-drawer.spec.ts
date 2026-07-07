@@ -13,8 +13,7 @@
 // The seed deliberately exercises every case so these assertions can
 // run against the same fixture used by humans clicking around.
 
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 const todosCol = (page: import('@playwright/test').Page) =>
   page.locator('.home-personal-grid .pcol').filter({ has: page.locator('h3:text-is("Todos")') });

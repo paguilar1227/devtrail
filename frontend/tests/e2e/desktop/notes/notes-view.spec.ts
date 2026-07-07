@@ -6,8 +6,8 @@
 // Pinned against the deterministic seed (scripts/seed-local.ts FOLDER_MAP):
 //   cooking → coffee(3) + recipes(2) = 5; travel(4); health(2); etc.
 
-import { expect, test, type Page } from '@playwright/test';
-import { stamp } from '../../helpers/setup';
+import type { Page } from '@playwright/test';
+import { test, expect, stamp } from '../../helpers/setup';
 
 async function openNotes(page: Page) {
   await page.locator('.sidebar .sb-item', { has: page.locator('.label:text-is("Notes")') }).click();

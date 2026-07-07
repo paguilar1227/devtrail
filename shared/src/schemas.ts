@@ -446,6 +446,10 @@ export const RagCitationSchema = z.object({
   title: z.string(),
   excerpt: z.string(),
   source_url: z.string().nullable().optional(),
+  // Entity kind of the cited source ('note' | 'document' | 'todo') — lets
+  // the client open the right surface from a citation. Optional so older
+  // servers stay parseable.
+  type: z.string().optional(),
 });
 export type RagCitation = z.infer<typeof RagCitationSchema>;
 

@@ -10,9 +10,8 @@
 // We seed the parent + an existing subtask via REST so the test only
 // needs to drive the UI for the actual flows (add / toggle / click).
 
-import { expect, test } from '@playwright/test';
 import { createTodo, listTodos } from '../../helpers/api';
-import { stamp } from '../../helpers/setup';
+import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';

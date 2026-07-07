@@ -2,8 +2,7 @@
 // name + email + cog all part of one click target). The modal overlays
 // the current page so dismissing it returns the user to where they were
 // rather than replacing the route.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 test('settings desktop: clicking sidebar footer opens the modal and X dismisses it', async ({ page }) => {
   await page.locator('aside.sidebar .sb-footer').click();

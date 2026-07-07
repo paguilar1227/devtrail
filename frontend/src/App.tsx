@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabbar } from './components/MobileTabbar';
 import { Sidebar } from './components/Sidebar';
@@ -57,7 +57,25 @@ export default function App() {
     localStorage.setItem('ob.sidebarMode', sidebarMode);
   }, [sidebarMode]);
 
+  // Keyboard sequences fire from a listener registered once — route through
+  // a ref so they always use the current navigate (assigned below, after
+  // navigate is defined).
+  const goRef = useRef<(r: Route) => void>(() => {});
+
   useEffect(() => {
+    // "G then <key>" navigation sequences (advertised in the palette):
+    // G-H → Home, G-A → Activity, G-T → Tags. Tracked with a short-lived
+    // timestamp; suppressed while typing in a field or when a modifier is
+    // held, so plain text entry can't trigger navigation.
+    let gArmedAt = 0;
+    const G_WINDOW_MS = 900;
+    const isTypingTarget = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -71,6 +89,19 @@ export default function App() {
         e.preventDefault();
         setTheme(t => (t === 'dark' ? 'light' : 'dark'));
       }
+
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) {
+        gArmedAt = 0;
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (gArmedAt && Date.now() - gArmedAt < G_WINDOW_MS) {
+        gArmedAt = 0;
+        if (key === 'h') { e.preventDefault(); goRef.current({ route: 'home' }); return; }
+        if (key === 'a') { e.preventDefault(); goRef.current({ route: 'activity' }); return; }
+        if (key === 't') { e.preventDefault(); goRef.current({ route: 'tags' }); return; }
+      }
+      if (key === 'g') gArmedAt = Date.now();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -98,6 +129,17 @@ export default function App() {
       setModal({ kind: 'new-project' });
     }
   }, []);
+
+  useEffect(() => { goRef.current = navigate; }, [navigate]);
+
+  // Palette "Search…" — the advertised intent is "go to home AND focus the
+  // search bar", not just routing. HomePage focuses its input whenever this
+  // nonce advances past 0.
+  const [searchFocusNonce, setSearchFocusNonce] = useState(0);
+  const openSearch = useCallback(() => {
+    navigate({ route: 'home' });
+    setSearchFocusNonce((n) => n + 1);
+  }, [navigate]);
 
   const { data: projects = [] } = useProjects();
   const project = route.route === 'project' ? projects.find((p) => p.id === route.project) ?? null : null;
@@ -156,6 +198,7 @@ export default function App() {
               // q + scope on the home route are the cross-page search
               // seed; HomePage reads them on mount.
               initialSearch={route.q || route.scope ? { query: route.q, scope: route.scope } : undefined}
+              searchFocusNonce={searchFocusNonce}
             />
           )}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
@@ -220,6 +263,10 @@ export default function App() {
             setCmdkOpen(false);
           }}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          onOpenSearch={() => {
+            openSearch();
+            setCmdkOpen(false);
+          }}
           theme={theme}
         />
       )}

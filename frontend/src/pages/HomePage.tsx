@@ -92,6 +92,9 @@ interface Props {
    *  mount as the initial query/scope; the URL itself is the
    *  persistent source of truth thereafter. */
   initialSearch?: { query?: string; scope?: 'personal' | 'all' | string };
+  /** Bumped by the command palette's "Search…" action — focus the search
+   *  input so the user can type immediately (>0 only after that action). */
+  searchFocusNonce?: number;
 }
 
 // Scope chip values: 'personal' = no project (Inbox), 'all' = global,
@@ -118,7 +121,7 @@ function scopeToTagsArg(scope: SearchScope): { scope: 'personal' | 'all' } | { p
   return { project_id: scope };
 }
 
-export function HomePage({ onRoute, onAction, initialSearch }: Props) {
+export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 0 }: Props) {
   const qc = useQueryClient();
   // Filter the Activity widget by kind. 'all' is the passthrough.
   // Keyed in the query cache so React Query refetches on flip.
@@ -354,6 +357,16 @@ export function HomePage({ onRoute, onAction, initialSearch }: Props) {
   if (!ready && stats && !isLoading) {
     setReady(true);
   }
+
+  // Palette "Search…" → land on home with the search bar focused. Depends on
+  // `ready`: on a cold-cache remount the effect can fire before the search
+  // input is mounted (the page still shows its loading gate) — re-running
+  // when `ready` flips true catches that first visit.
+  useEffect(() => {
+    if (searchFocusNonce > 0 && ready) {
+      document.querySelector<HTMLInputElement>('.home-search-box input')?.focus();
+    }
+  }, [searchFocusNonce, ready]);
 
   // Full personal-scope tag list (sorted by usage) for the filter chip
   // row — NOT pre-sliced. HomeTagFilter caps the visible chips via its

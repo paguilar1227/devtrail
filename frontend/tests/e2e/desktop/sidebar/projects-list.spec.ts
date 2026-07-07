@@ -2,9 +2,8 @@
 // New project entry. The pinned/unpinned split is driven by the
 // projects.pinned_at timestamp; these tests round-trip pin → unpin via
 // REST and assert DOM order in the .sb-projects parent.
-import { expect, test } from '@playwright/test';
 import { createProject, listProjects, pinProject, unpinProject } from '../../helpers/api';
-import { SIDEBAR, stamp } from '../../helpers/setup';
+import { test, expect, SIDEBAR, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 test('sidebar: pinning a project moves it into the Pinned section, unpinning removes it', async ({ page }) => {

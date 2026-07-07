@@ -6,8 +6,8 @@
 // Mutating tests create e2e:-prefixed todos so the shared afterEach sweep
 // (helpers/setup) hard-deletes them — the seed is never corrupted.
 
-import { expect, test, type Page } from '@playwright/test';
-import { stamp } from '../../helpers/setup';
+import type { Page } from '@playwright/test';
+import { test, expect, stamp } from '../../helpers/setup';
 import { createTodo } from '../../helpers/api';
 
 async function openTodos(page: Page) {

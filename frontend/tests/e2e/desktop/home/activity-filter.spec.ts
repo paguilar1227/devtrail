@@ -10,8 +10,7 @@
 //
 // This walks the real path (open Home → change the kind filter) and asserts
 // the full-page loader never appears and the dashboard never unmounts.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 test('home: changing the activity filter updates in place, no full-page reload', async ({ page }) => {
   // Dashboard fully loaded.

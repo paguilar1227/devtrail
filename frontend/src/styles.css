@@ -811,7 +811,9 @@ input, textarea { font-size: inherit; color: inherit; }
 .doc-list { display: flex; flex-direction: column; gap: 6px; }
 .doc-row {
   display: grid;
-  grid-template-columns: 22px 32px 1fr auto auto auto;
+  /* checkbox · icon · body · date · actions (the dead trailing ⋯ column
+     was removed with its button in the 2026-07 intent-fix pass) */
+  grid-template-columns: 22px 32px 1fr auto auto;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;

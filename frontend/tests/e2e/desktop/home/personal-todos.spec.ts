@@ -2,9 +2,8 @@
 // route; the route is gone now, so the same flows run against the
 // Home Personal column. Capture creates a todo via the quick-add input,
 // toggle flips status via the row checkbox.
-import { expect, test } from '@playwright/test';
 import { createTodo, deleteTodo, listTodos, updateTodo } from '../../helpers/api';
-import { stamp } from '../../helpers/setup';
+import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';

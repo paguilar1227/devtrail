@@ -3,9 +3,8 @@
 // caches. Each test creates an entity via REST, reloads to defeat the 30s
 // staleTime, and asserts the displayed delta — then deletes and confirms
 // the counter restores. Delta-based so we don't hard-code seed counts.
-import { expect, test } from '@playwright/test';
 import { createProject, createTodo, deleteProject, deleteTodo } from '../../helpers/api';
-import { SIDEBAR, stamp } from '../../helpers/setup';
+import { test, expect, SIDEBAR, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
 const SB_ITEM = (label: string) =>

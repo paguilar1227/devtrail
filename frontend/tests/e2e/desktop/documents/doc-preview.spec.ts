@@ -17,9 +17,7 @@
 //     name, not the truncated UUID; clicking it closes the drawer and
 //     navigates to the project view.
 //   - PDF preview → an Expand chip opens a fullscreen lightbox.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
-import { navTo } from '../../helpers/setup';
+import { test, expect, navTo } from '../../helpers/setup';
 
 async function openDocFromActivity(page: import('@playwright/test').Page, title: string) {
   await navTo(page, 'Activity');

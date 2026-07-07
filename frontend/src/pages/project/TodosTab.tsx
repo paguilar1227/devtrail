@@ -20,6 +20,28 @@ interface Props {
 }
 
 type HierMode = 'hierarchy' | 'flat';
+type RowFilter = 'all' | 'open' | 'overdue' | 'today' | 'p1';
+
+const isDueToday = (dueAt: string | null | undefined): boolean => {
+  if (!dueAt) return false;
+  const due = new Date(dueAt);
+  const now = new Date();
+  return (
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate()
+  );
+};
+
+const matchesRowFilter = (t: Todo, f: RowFilter): boolean => {
+  switch (f) {
+    case 'all': return true;
+    case 'open': return t.status !== 'done';
+    case 'overdue': return t.status !== 'done' && !!t.due_at && isOverdue(t.due_at);
+    case 'today': return t.status !== 'done' && isDueToday(t.due_at);
+    case 'p1': return t.priority === 'p1';
+  }
+};
 
 const TODO_SIGILS: readonly SigilKind[] = ['tag'];
 const NO_MENTIONS: never[] = [];
@@ -51,6 +73,7 @@ export function TodosTab({ project, onAction }: Props) {
   const [hierMode, setHierMode] = useState<HierMode>('hierarchy');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState('');
+  const [rowFilter, setRowFilter] = useState<RowFilter>('all');
   const { mode: sortMode, setMode: setSortMode } = useTodoSortMode(`project:${project.id}`);
 
   const invalidate = () => {
@@ -71,12 +94,20 @@ export function TodosTab({ project, onAction }: Props) {
 
   const groups = useMemo(() => {
     const cmp = compareForMode(sortMode);
-    const open = all.filter(t => t.status !== 'done').slice().sort(cmp);
-    const done = all.filter(t => t.status === 'done').slice().sort(cmp);
+    const visible = all.filter((t) => matchesRowFilter(t, rowFilter));
+    const open = visible.filter(t => t.status !== 'done').slice().sort(cmp);
+    const done = visible.filter(t => t.status === 'done').slice().sort(cmp);
     return { open, done };
-  }, [all, sortMode]);
+  }, [all, sortMode, rowFilter]);
 
-  const overdueCount = all.filter(t => t.status !== 'done' && t.due_at && isOverdue(t.due_at)).length;
+  const openCount = all.filter(t => t.status !== 'done').length;
+  const overdueCount = all.filter(t => matchesRowFilter(t, 'overdue')).length;
+  const todayCount = all.filter(t => matchesRowFilter(t, 'today')).length;
+  const p1Count = all.filter(t => matchesRowFilter(t, 'p1')).length;
+  // A non-'all' filter can strip a child's ancestors out of the group, so
+  // the hierarchy walk would drop it entirely — render filtered views flat
+  // (same mode-switch the search results use).
+  const effectiveHierMode: HierMode = rowFilter === 'all' ? hierMode : 'flat';
 
   const toggleCollapse = (id: string) =>
     setCollapsed(s => {
@@ -146,7 +177,7 @@ export function TodosTab({ project, onAction }: Props) {
             <div className="field">
               <Icons.Plus />
               <input
-                placeholder={`Add a todo to ${project.name} — Enter to save, Tab to nest`}
+                placeholder={`Add a todo to ${project.name} — Enter to save`}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -159,12 +190,29 @@ export function TodosTab({ project, onAction }: Props) {
                 }}
                 disabled={createMut.isPending}
               />
-              <span className="depth-pill">
-                <button className="active">Top</button>
-                <button>Sub</button>
-              </span>
             </div>
-            <button className="btn">Add details</button>
+            {/* Create from the draft, then pop the detail drawer so priority /
+                due / tags / subtasks can be attached in one motion (same
+                affordance the Home quick-add gives for free). */}
+            <button
+              className="btn"
+              disabled={!draft.trim() || createMut.isPending}
+              onClick={async () => {
+                const content = draft.trim();
+                if (!content) return;
+                setDraft('');
+                try {
+                  const created = await createMut.mutateAsync(content);
+                  onAction({ kind: 'todo-detail', payload: toUiTodo(created) });
+                } catch {
+                  // createMut.error renders below the input row; without this
+                  // catch the rejection would be unhandled and the drawer
+                  // could never open anyway.
+                }
+              }}
+            >
+              Add details
+            </button>
           </div>
           {createMut.error ? (
             <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 4 }}>
@@ -177,17 +225,21 @@ export function TodosTab({ project, onAction }: Props) {
       <div className="filter-bar">
         {searchActive ? null : (
           <>
-            <FilterChip active>
+            <FilterChip active={rowFilter === 'all'} onClick={() => setRowFilter('all')}>
               All <span style={{ marginLeft: 4 }}>{all.length}</span>
             </FilterChip>
-            <FilterChip>
-              Open <span style={{ marginLeft: 4 }}>{groups.open.length}</span>
+            <FilterChip active={rowFilter === 'open'} onClick={() => setRowFilter('open')}>
+              Open <span style={{ marginLeft: 4 }}>{openCount}</span>
             </FilterChip>
-            <FilterChip>
+            <FilterChip active={rowFilter === 'overdue'} onClick={() => setRowFilter('overdue')}>
               Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
             </FilterChip>
-            <FilterChip>Today</FilterChip>
-            <FilterChip>P1</FilterChip>
+            <FilterChip active={rowFilter === 'today'} onClick={() => setRowFilter('today')}>
+              Today <span style={{ marginLeft: 4 }}>{todayCount}</span>
+            </FilterChip>
+            <FilterChip active={rowFilter === 'p1'} onClick={() => setRowFilter('p1')}>
+              P1 <span style={{ marginLeft: 4 }}>{p1Count}</span>
+            </FilterChip>
           </>
         )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -207,10 +259,17 @@ export function TodosTab({ project, onAction }: Props) {
             <>
               <TodoSortDropdown id={`project-${project.id}-sort`} mode={sortMode} onChange={setSortMode} />
               <span className="seg-toggle">
-                <button className={hierMode === 'hierarchy' ? 'active' : ''} onClick={() => setHierMode('hierarchy')}>
+                {/* Key off effectiveHierMode: a row filter forces flat, and the
+                    control must reflect what's actually rendered. */}
+                <button
+                  className={effectiveHierMode === 'hierarchy' ? 'active' : ''}
+                  disabled={rowFilter !== 'all'}
+                  title={rowFilter !== 'all' ? 'Switch the filter to "All" to use hierarchy view' : undefined}
+                  onClick={() => setHierMode('hierarchy')}
+                >
                   Hierarchy
                 </button>
-                <button className={hierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
+                <button className={effectiveHierMode === 'flat' ? 'active' : ''} onClick={() => setHierMode('flat')}>
                   Flat
                 </button>
               </span>
@@ -252,7 +311,7 @@ export function TodosTab({ project, onAction }: Props) {
               <span>Open</span>
               <span className="ct">{groups.open.length}</span>
             </div>
-            {hierMode === 'hierarchy' ? renderHierGroup(groups.open) : groups.open.map(t => renderTodo(t, 0))}
+            {effectiveHierMode === 'hierarchy' ? renderHierGroup(groups.open) : groups.open.map(t => renderTodo(t, 0))}
           </div>
 
           <div className="todo-group">
@@ -261,7 +320,7 @@ export function TodosTab({ project, onAction }: Props) {
               <span>Done</span>
               <span className="ct">{groups.done.length}</span>
             </div>
-            {hierMode === 'hierarchy' ? renderHierGroup(groups.done) : groups.done.map(t => renderTodo(t, 0))}
+            {effectiveHierMode === 'hierarchy' ? renderHierGroup(groups.done) : groups.done.map(t => renderTodo(t, 0))}
           </div>
         </>
       )}

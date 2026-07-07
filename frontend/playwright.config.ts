@@ -25,7 +25,11 @@ export default defineConfig({
   // SPA enough time to mount and the downstream interactions still race
   // each other normally.
   timeout: 60_000,
-  expect: { timeout: 5_000 },
+  // 5s missed intermittently on mutation → invalidate → refetch churn
+  // (archive a doc, create a section: four query keys refetch behind one
+  // spinner) when the host is under load. 10s absorbs that without masking
+  // logic failures — a wrong assertion still fails, just a few seconds later.
+  expect: { timeout: 10_000 },
 
   use: {
     baseURL: BASE_URL,

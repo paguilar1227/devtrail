@@ -5,10 +5,12 @@ import { BulkCheckbox, FilterChip, Status, Tag } from '../../components/primitiv
 import {
   archiveContent,
   listContent,
+  listProjects,
   pinContent,
   reprocessContent,
   retryContent,
   unpinContent,
+  updateContent,
 } from '../../lib/api';
 import { toUiDocument } from '../../lib/view';
 import { cls, fmtRel } from '../../lib/util';
@@ -33,6 +35,15 @@ export function DocumentsTab({ project, onAction }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<DocFilter>('all');
   const [type, setType] = useState<DocTypeFilter>('all');
+  // Bulk-bar inline editors: 'tag' reveals a tag input, 'move' a project
+  // select. Only one open at a time.
+  const [bulkEditor, setBulkEditor] = useState<null | 'tag' | 'move'>(null);
+  const [bulkTag, setBulkTag] = useState('');
+  const { data: allProjects } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
+  const moveTargets = useMemo(
+    () => (allProjects ?? []).filter((p) => p.status === 'active' && p.id !== project.id),
+    [allProjects, project.id],
+  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['content'] });
@@ -47,6 +58,46 @@ export function DocumentsTab({ project, onAction }: Props) {
   });
   const retryMut = useMutation({ mutationFn: retryContent, onSuccess: invalidate });
   const reprocessMut = useMutation({ mutationFn: reprocessContent, onSuccess: invalidate });
+  // Bulk mutations update items one by one; a mid-loop failure must neither
+  // strand the cache (invalidate runs in onSettled) nor pass silently (the
+  // count of failed items is surfaced under the bulk bar).
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const runBulk = async (ids: string[], apply: (id: string) => Promise<void>, verb: string) => {
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await apply(id);
+      } catch {
+        failed++;
+      }
+    }
+    if (failed > 0) throw new Error(`${failed} of ${ids.length} items failed to ${verb}`);
+  };
+  // Bulk tag: additive — append the tag to each selected doc's existing set.
+  const bulkTagMut = useMutation({
+    mutationFn: ({ ids, tag }: { ids: string[]; tag: string }) =>
+      runBulk(ids, async (id) => {
+        const doc = docs.find((d) => d.id === id);
+        if (!doc || doc.tags.includes(tag)) return;
+        await updateContent(id, { tags: [...doc.tags, tag] });
+      }, 'tag'),
+    onSuccess: () => setBulkError(null),
+    onError: (err) => setBulkError(err instanceof Error ? err.message : String(err)),
+    onSettled: invalidate,
+  });
+  // Bulk move: swap THIS project's membership for the target — documents can
+  // belong to several projects, and moving out of one must not strip the rest.
+  const bulkMoveMut = useMutation({
+    mutationFn: ({ ids, projectId }: { ids: string[]; projectId: string }) =>
+      runBulk(ids, async (id) => {
+        const doc = docs.find((d) => d.id === id);
+        const others = (doc?.project_ids ?? []).filter((p) => p !== project.id && p !== projectId);
+        await updateContent(id, { project_ids: [...others, projectId] });
+      }, 'move'),
+    onSuccess: () => setBulkError(null),
+    onError: (err) => setBulkError(err instanceof Error ? err.message : String(err)),
+    onSettled: invalidate,
+  });
 
   const filtered = docs.filter(d => {
     if (filter === 'pinned' && !d.pinned) return false;
@@ -176,9 +227,6 @@ export function DocumentsTab({ project, onAction }: Props) {
                     <Icons.ArchiveBox />
                   </button>
                 </div>
-                <button className="btn btn-ghost btn-icon">
-                  <Icons.More />
-                </button>
               </div>
             ))}
           </div>
@@ -189,8 +237,61 @@ export function DocumentsTab({ project, onAction }: Props) {
         <div className="bulk-bar">
           <span className="ct">{selected.size} selected</span>
           <span className="sep" />
-          <button className="btn btn-sm">Tag</button>
-          <button className="btn btn-sm">Move to project</button>
+          <button
+            className={cls('btn btn-sm', bulkEditor === 'tag' && 'active')}
+            disabled={bulkTagMut.isPending}
+            onClick={() => setBulkEditor((cur) => (cur === 'tag' ? null : 'tag'))}
+          >
+            Tag
+          </button>
+          <button
+            className={cls('btn btn-sm', bulkEditor === 'move' && 'active')}
+            disabled={bulkMoveMut.isPending || moveTargets.length === 0}
+            onClick={() => setBulkEditor((cur) => (cur === 'move' ? null : 'move'))}
+          >
+            Move to project
+          </button>
+          {bulkEditor === 'tag' ? (
+            <input
+              className="input input-tag"
+              autoFocus
+              placeholder="tag-name — Enter applies to selection"
+              value={bulkTag}
+              onChange={(e) => setBulkTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setBulkEditor(null); setBulkTag(''); }
+                if (e.key === 'Enter' && bulkTag.trim() && !bulkTagMut.isPending) {
+                  const tag = bulkTag.trim().toLowerCase();
+                  const ids = Array.from(selected);
+                  setBulkTag('');
+                  setBulkEditor(null);
+                  setSelected(new Set());
+                  bulkTagMut.mutate({ ids, tag });
+                }
+              }}
+            />
+          ) : null}
+          {bulkEditor === 'move' ? (
+            <select
+              className="input"
+              autoFocus
+              aria-label="Move selection to project"
+              defaultValue=""
+              onChange={(e) => {
+                const projectId = e.target.value;
+                if (!projectId) return;
+                const ids = Array.from(selected);
+                setBulkEditor(null);
+                setSelected(new Set());
+                bulkMoveMut.mutate({ ids, projectId });
+              }}
+            >
+              <option value="" disabled>Move to…</option>
+              {moveTargets.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          ) : null}
           <button
             className="btn btn-sm"
             disabled={pinMut.isPending}
@@ -234,6 +335,11 @@ export function DocumentsTab({ project, onAction }: Props) {
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>
             Clear
           </button>
+        </div>
+      ) : null}
+      {bulkError ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 6 }}>
+          {bulkError} — the list has been refreshed; retry on the remaining items.
         </div>
       ) : null}
     </div>

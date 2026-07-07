@@ -7,8 +7,7 @@
 // (docs) collapsed to a min floor. ColumnWidget now caps at a flat
 // MAX_ROWS=6 regardless of viewport. The seed has >6 personal notes and >6
 // personal docs, so both exercise the cap.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
 
 const CAP = 6;
 

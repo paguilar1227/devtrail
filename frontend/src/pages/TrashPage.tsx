@@ -1,8 +1,24 @@
+// Archived (Trash) view — soft-deleted projects/documents/notes/todos.
+// Restore brings an item back; Delete forever hard-deletes it (gated on
+// typing the title, as the header copy promises); Empty archive purges
+// everything currently listed after an explicit confirm.
+
 import { useMemo, useState } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
 import { FilterChip } from '../components/primitives';
-import { listContent, listProjects, listTodos } from '../lib/api';
+import { ConfirmModal } from '../components/modals/ConfirmModal';
+import {
+  deleteContentForever,
+  deleteProject,
+  deleteTodoForever,
+  listContent,
+  listProjects,
+  listTodos,
+  restoreContent,
+  restoreProject,
+  restoreTodo,
+} from '../lib/api';
 import { fmtRel } from '../lib/util';
 
 type Kind = 'project' | 'document' | 'note' | 'todo';
@@ -16,8 +32,23 @@ interface TrashItem {
   sub: string;
 }
 
+const restoreByKind: Record<Kind, (id: string) => Promise<void>> = {
+  project: restoreProject,
+  document: restoreContent,
+  note: restoreContent,
+  todo: restoreTodo,
+};
+
+const deleteByKind: Record<Kind, (id: string) => Promise<void>> = {
+  project: deleteProject,
+  document: deleteContentForever,
+  note: deleteContentForever,
+  todo: deleteTodoForever,
+};
+
 export function TrashPage() {
   const [filter, setFilter] = useState<Filter>('all');
+  const qc = useQueryClient();
   const [projectsQ, contentQ, todosQ] = useQueries({
     queries: [
       { queryKey: ['projects', 'all-incl-archived'], queryFn: () => listProjects() },
@@ -74,6 +105,36 @@ export function TrashPage() {
     return result.sort((a, b) => b.at.localeCompare(a.at));
   }, [projectsQ.data, contentQ.data, todosQ.data, projectsById]);
 
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['projects'] });
+    qc.invalidateQueries({ queryKey: ['content'] });
+    qc.invalidateQueries({ queryKey: ['todos'] });
+    qc.invalidateQueries({ queryKey: ['project-counts'] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+
+  const restoreMut = useMutation({
+    mutationFn: (it: TrashItem) => restoreByKind[it.kind](it.id),
+    onSuccess: invalidate,
+  });
+  const deleteMut = useMutation({
+    mutationFn: (it: TrashItem) => deleteByKind[it.kind](it.id),
+    onSuccess: invalidate,
+  });
+  // Purge everything currently listed, sequentially — a few dozen rows at
+  // most, and sequential keeps the backend load boring.
+  const emptyMut = useMutation({
+    mutationFn: async (all: TrashItem[]) => {
+      for (const it of all) await deleteByKind[it.kind](it.id);
+    },
+    onSuccess: invalidate,
+  });
+
+  // Which dialog is open: a per-item delete confirm, or the bulk empty.
+  const [confirmDelete, setConfirmDelete] = useState<TrashItem | null>(null);
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
+
   const counts = {
     project: items.filter((i) => i.kind === 'project').length,
     document: items.filter((i) => i.kind === 'document').length,
@@ -84,6 +145,7 @@ export function TrashPage() {
 
   const isLoading = projectsQ.isLoading || contentQ.isLoading || todosQ.isLoading;
   const error = projectsQ.error || contentQ.error || todosQ.error;
+  const busy = restoreMut.isPending || deleteMut.isPending || emptyMut.isPending;
 
   if (error) {
     return (
@@ -105,7 +167,13 @@ export function TrashPage() {
             from chat retrieval but remain searchable here.
           </p>
         </div>
-        <button className="btn btn-danger">Empty archive</button>
+        <button
+          className="btn btn-danger"
+          disabled={items.length === 0 || busy}
+          onClick={() => setConfirmEmpty(true)}
+        >
+          Empty archive
+        </button>
       </div>
       <div className="filter-bar">
         <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
@@ -149,12 +217,54 @@ export function TrashPage() {
                   {it.kind} · {it.sub} · archived {fmtRel(it.at)}
                 </div>
               </div>
-              <button className="btn btn-ghost btn-sm">Restore</button>
-              <button className="btn btn-danger btn-sm">Delete forever</button>
+              <button
+                className="btn btn-ghost btn-sm"
+                disabled={busy}
+                onClick={() => restoreMut.mutate(it)}
+              >
+                Restore
+              </button>
+              <button
+                className="btn btn-danger btn-sm"
+                disabled={busy}
+                onClick={() => setConfirmDelete(it)}
+              >
+                Delete forever
+              </button>
             </div>
           ))}
         </div>
       )}
+
+      {confirmDelete ? (
+        <ConfirmModal
+          title={`Delete "${confirmDelete.title}" forever?`}
+          message={`This permanently deletes the ${confirmDelete.kind} — it can't be restored afterwards. Type the title to confirm.`}
+          confirmLabel="Delete forever"
+          requireType={confirmDelete.title}
+          danger
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            const it = confirmDelete;
+            setConfirmDelete(null);
+            deleteMut.mutate(it);
+          }}
+        />
+      ) : null}
+
+      {confirmEmpty ? (
+        <ConfirmModal
+          title={`Empty the archive?`}
+          message={`This permanently deletes all ${items.length} archived item${items.length === 1 ? '' : 's'} — projects, documents, notes, and todos. None of them can be restored afterwards.`}
+          confirmLabel="Delete all forever"
+          danger
+          onClose={() => setConfirmEmpty(false)}
+          onConfirm={() => {
+            setConfirmEmpty(false);
+            emptyMut.mutate(items);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

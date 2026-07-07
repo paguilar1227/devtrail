@@ -8,8 +8,7 @@
 // (a .modal, not a .drawer). The dedicated /activity page exposes
 // entity_kind in the row meta so we can filter to a row we know will
 // open a drawer.
-import { expect, test } from '@playwright/test';
-import { navTo } from '../../helpers/setup';
+import { test, expect, navTo } from '../../helpers/setup';
 
 test('drawer: expand toggle moves the right-rail drawer to centered/wider and back', async ({ page }) => {
   await navTo(page, 'Activity');

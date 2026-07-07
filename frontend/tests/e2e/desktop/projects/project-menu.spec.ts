@@ -1,9 +1,8 @@
 // Project header "⋯" (More project actions) menu — Edit / Archive·Restore /
 // Delete. The button used to be dead (no handler); this walks the whole menu
 // on a throwaway project so it never touches the seed.
-import { expect, test } from '@playwright/test';
 import { createProject, findProjectByName } from '../../helpers/api';
-import { projectTo, stamp } from '../../helpers/setup';
+import { test, expect, projectTo, stamp } from '../../helpers/setup';
 
 test('project ⋯ menu: edit, archive/restore, delete', async ({ page }) => {
   const name = stamp() + ' MenuTest';

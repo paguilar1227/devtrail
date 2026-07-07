@@ -2,8 +2,8 @@
 // underlying entity's modal (note editor, todo drawer, doc reader). Without
 // this, the widget is a fancy read-only list. The test walks: Home → click
 // the first activity row → assert a modal dialog opens.
-import { expect, test } from '@playwright/test';
-import '../../helpers/setup';
+import { expect, test } from '../../helpers/setup';
+import { expectDialogTitled } from '../../helpers/utils';
 
 test('home activity: clicking a row opens the underlying entity modal', async ({ page }) => {
   // Wait for the activity card to finish loading — its rows render after
@@ -26,5 +26,6 @@ test('home activity: clicking a row opens the underlying entity modal', async ({
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 15000 });
   // The opened modal should reference the same entity by title.
-  await expect(dialog).toContainText(title);
+  // Entity-kind agnostic: a note's editor keeps the title in an input value.
+  await expectDialogTitled(dialog, title);
 });

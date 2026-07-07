@@ -1,9 +1,7 @@
 // Mobile bottom-tabbar — primary nav. After the Inbox merge, the tabbar
 // has two route entries (Home, Projects) plus More. This test walks both
 // route entries, assertingt the hero h1 each time.
-import { expect, test } from '@playwright/test';
-import { TABBAR } from '../../helpers/setup';
-import '../../helpers/setup';
+import { test, expect, TABBAR } from '../../helpers/setup';
 
 test('mobile tabbar: Home and Projects each route to their own page', async ({ page }) => {
   const tab = (label: string) => page.locator(`${TABBAR} .mtab`, { hasText: label });

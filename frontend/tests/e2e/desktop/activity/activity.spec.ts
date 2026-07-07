@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { navTo } from '../../helpers/setup';
+import { test, expect, navTo } from '../../helpers/setup';
+import { expectDialogTitled } from '../../helpers/utils';
 
 test('activity: feed renders entries from the seed', async ({ page }) => {
   await navTo(page, 'Activity');
@@ -21,5 +21,6 @@ test('activity: clicking a row opens the underlying entity modal', async ({ page
   // slower than local — 5s is tight, 15s is generous.
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 15000 });
-  await expect(dialog).toContainText(title);
+  // Entity-kind agnostic: a note's editor keeps the title in an input value.
+  await expectDialogTitled(dialog, title);
 });
