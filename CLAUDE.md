@@ -44,6 +44,7 @@ There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no
 | Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
 | Blob storage | Azure Blob Storage |
 | Container | Docker on Azure Container Apps |
+| iOS app | Capacitor 8 shell (`frontend/ios/`, SPM — no CocoaPods) wrapping the same Vite `dist/` bundle |
 
 ## Models (see `backend/src/server.ts`)
 
@@ -136,6 +137,42 @@ locally means a green CI run.
   guard; post-merge CI is the safety net (red → revert/redeploy).
 - Both workflows have a `concurrency` block. PR-time review is **CodeRabbit +
   react-doctor** (`react-doctor.yml`, frontend PRs) — cheap, stays on PRs.
+
+### iOS app (Capacitor shell)
+
+The web `frontend/` IS the iOS app — Capacitor 8 wraps the same `dist/` bundle in a
+WKWebView shell. Web behavior is untouched: `apiOrigin()` (in
+`frontend/src/lib/nativeConfig.ts`) returns `''` outside Capacitor, so web requests stay
+same-origin. Native-only pieces: `nativeConfig.ts` (stored server origin),
+`components/ConnectScreen.tsx` (first-run server URL + API key, verified against
+`/api/v1/stats` before persisting), and native branches in `lib/api.ts`
+(`bootAuth`/`logout`/`probeServer`/`saveNativeServerConfig`).
+
+Build + run in the simulator:
+
+```bash
+cd frontend && npm run build && npx cap sync ios
+cd ios/App && xcodebuild -project App.xcodeproj -scheme App -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 17e' -derivedDataPath ./DerivedData build
+xcrun simctl install booted DerivedData/Build/Products/Debug-iphonesimulator/App.app
+xcrun simctl launch booted com.example.openbrain
+```
+
+First launch asks for server URL + API key (local dev: `http://localhost:3001` + the
+`OPEN_BRAIN_API_KEY` from `backend/.env`; Info.plist ATS allows plain-http to local hosts
+only). `npx cap sync ios` re-copies `dist/` into the shell — run it after any web build
+you want reflected natively. `ios/App/App/public/` and `capacitor.config.json` are
+generated (gitignored); `Info.plist` and the Xcode project are source.
+
+Shell test coverage is two layers on top of the regular suite:
+- **`webkit-mobile` Playwright project** (in `make ci-full`) — reruns core mobile
+  workflows on the WebKit engine, since the shell is WKWebView while the main mobile
+  project is Chromium. Scope is the curated `testMatch` list in `playwright.config.ts`.
+- **`make ios-smoke`** — LOCAL-ONLY simulator smoke (`scripts/ios-smoke.sh`): build →
+  fresh install → connect flow → create a todo through the UI → verify via REST →
+  clean up. The only layer exercising the real native context (capacitor:// origin,
+  WKWebView CORS, connect screen). Run it before merging changes to the shell,
+  `nativeConfig.ts`, `api.ts`, or mobile layout.
 
 ### Plan-first
 

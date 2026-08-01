@@ -34,3 +34,5 @@ frontend/tsconfig.tsbuildinfo
 # Anything that should not be committed long-term goes here.
 scratch/
 .superdev/
+.thermos/
+.ios-smoke/

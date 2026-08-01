@@ -1,17 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Pool, PoolClient, QueryResult } from 'pg';
 
-// Mock pg and pgvector modules
-vi.mock('pg', () => {
+// Mock pg and pgvector modules. The mock pool is a real EventEmitter so the
+// idle-client 'error' regression test below exercises actual emit semantics
+// (an EventEmitter with no 'error' listener THROWS on emit — exactly how the
+// unhandled pg pool error killed the process).
+vi.mock('pg', async () => {
+  const { EventEmitter } = await import('node:events');
   const mockClient = {
     query: vi.fn(),
     release: vi.fn(),
   };
-  const mockPool = {
+  const mockPool = Object.assign(new EventEmitter(), {
     query: vi.fn(),
     connect: vi.fn().mockResolvedValue(mockClient),
     end: vi.fn(),
-  };
+  });
   return { default: { Pool: vi.fn(() => mockPool) }, Pool: vi.fn(() => mockPool) };
 });
 
@@ -79,5 +83,19 @@ describe('DbClient', () => {
 
     expect(client.query).toHaveBeenCalledWith('ROLLBACK');
     expect(client.release).toHaveBeenCalled();
+  });
+
+  // Regression (2026-07-30): idle pooled connections dropping (server restart,
+  // TCP reset) emit 'error' on the Pool. Without a listener that becomes an
+  // uncaughtException and kills the whole server — it crashed the dev backend
+  // twice under e2e load. createDbClient must attach a listener.
+  it("survives an idle client 'error' event instead of crashing the process", async () => {
+    const { createDbClient } = await import('../../../src/db/client.js');
+    const db = createDbClient('postgresql://localhost/test');
+
+    const emitter = db.pool as unknown as import('node:events').EventEmitter;
+    expect(emitter.listenerCount('error')).toBeGreaterThan(0);
+    // With no listener this emit would throw (EventEmitter 'error' semantics).
+    expect(() => emitter.emit('error', new Error('Connection terminated unexpectedly'))).not.toThrow();
   });
 });

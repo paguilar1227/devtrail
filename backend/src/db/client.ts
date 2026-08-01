@@ -13,6 +13,15 @@ export interface DbClient {
 export function createDbClient(connectionString: string): DbClient {
   const pool = new Pool({ connectionString });
 
+  // Idle pooled connections can drop (server restart, network reset, TCP
+  // reaper). node-postgres re-emits that as an 'error' on the Pool, and with
+  // no listener it becomes an uncaughtException that kills the whole process
+  // — this took the dev server down twice under e2e load (2026-07-30). The
+  // pool already evicts the broken client; logging is all that's left to do.
+  pool.on('error', (err) => {
+    console.error('[db] idle client error (pool continues):', err.message);
+  });
+
   // Register pgvector type parser on first connect
   let vectorRegistered = false;
   const ensureVector = async () => {

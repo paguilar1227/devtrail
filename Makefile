@@ -65,3 +65,9 @@ e2e:
 	docker compose up -d --wait
 	cd frontend && npm run test:e2e:install
 	cd frontend && npm run test:e2e
+
+# Native iOS shell smoke — LOCAL-ONLY (needs macOS + Xcode + simulator + idb;
+# cloud CI has no macOS runner on the free tier). Run before merging anything
+# that touches the shell, nativeConfig, api.ts, or mobile layout.
+ios-smoke:
+	bash scripts/ios-smoke.sh

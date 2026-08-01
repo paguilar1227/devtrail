@@ -395,6 +395,11 @@ input, textarea { font-size: inherit; color: inherit; }
 .topbar {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 22px;
+  /* Native shell: keep the topbar clear of the iOS status bar. Capacitor 8
+     injects --safe-area-inset-* (SystemBars insetsHandling: css); env() is the
+     fallback. Both are 0 in desktop/mobile-Safari, so the web layout is
+     unchanged. */
+  padding-top: calc(12px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
   min-height: 56px;
@@ -1817,7 +1822,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   box-shadow: none;
 }
 .app[data-mobile="true"] .main-scroll { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-.app[data-mobile="true"] .topbar { padding: 14px 16px; min-height: 52px; }
+.app[data-mobile="true"] .topbar {
+  padding: 14px 16px;
+  /* Shorthand above resets the base rule's safe-area padding-top — re-apply
+     it, or the native shell's topbar sits under the iOS status bar. */
+  padding-top: calc(14px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+  min-height: 52px;
+}
 .app[data-mobile="true"] .page { padding: 18px 16px 32px; }
 .app[data-mobile="true"] .stats { grid-template-columns: 1fr 1fr; }
 .app[data-mobile="true"] .proj-grid { grid-template-columns: 1fr; }
@@ -3720,3 +3731,48 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .todos-done-chev { margin-left: auto; transition: transform 120ms; color: var(--fg-subtle); }
 .todos-done-chev.open { transform: rotate(90deg); }
 
+
+/* ---- Native shell (iOS) connect screen ---- */
+.connect-screen {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  padding-top: calc(24px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+  padding-bottom: calc(24px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+}
+.connect-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 22px;
+  border-radius: 18px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 0.5px solid var(--glass-border);
+}
+.connect-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+.connect-error {
+  margin-top: 10px;
+  font-size: 13px;
+  color: oklch(0.72 0.16 25);
+}
+
+/* ---- iOS input auto-zoom guard (keep LAST — must win every input rule) ----
+   iOS (the native shell's WKWebView and mobile Safari alike) zooms the whole
+   viewport when a focused text control's font-size is under 16px, and the
+   zoom/pan sticks after blur. Found via the ios-smoke connect flow. 16px on
+   touch devices kills the zoom; desktop keeps its compact sizes. !important
+   because sizes like `.input { font-size: var(--type-h) }` would otherwise
+   out-rank an element selector — this is a platform constraint, not a
+   design choice. */
+@media (pointer: coarse) {
+  input, textarea, select, [contenteditable="true"] { font-size: 16px !important; }
+}

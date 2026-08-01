@@ -7,6 +7,30 @@ paths:
 
 Loads when working in `frontend/`. Drawer composition pattern, compact-row pattern, e2e test setup.
 
+## Native shell (Capacitor iOS) — keep the surface thin
+
+`frontend/` doubles as the iOS app via a Capacitor 8 shell (`frontend/ios/`, SPM). Rules:
+
+- **Only `lib/nativeConfig.ts` imports `@capacitor/*`.** Everything else asks it
+  (`isNativeApp()`, `apiOrigin()`); don't scatter platform checks through components.
+- `apiOrigin()` MUST stay `''` on the web — the web app is same-origin by design (Vite
+  proxy in dev, Hono static serving in prod). Native gets its origin from the connect
+  screen (`components/ConnectScreen.tsx`), persisted in localStorage.
+- After changing web code, `npx cap sync ios` re-copies `dist/` into the shell. The build
+  loop lives in CLAUDE.md → "iOS app (Capacitor shell)".
+- New native-only behavior gets unit tests next to `nativeConfig.test.ts` (mock
+  `@capacitor/core` with a mutable flag — see that file for the pattern).
+- **Engine parity:** the `webkit-mobile` Playwright project reruns a curated slice of
+  mobile specs on WebKit (the shell's engine). Widen its `testMatch` list when adding
+  mobile workflows that matter on iOS. `make ios-smoke` covers the true native context —
+  it pins coordinates to the iPhone 17e layout, so update `scripts/ios-smoke.sh` if the
+  connect screen or Home composer moves.
+- **idb setup (needed by `make ios-smoke`):** the fb-idb Python client crashes under
+  Python 3.14 — install it under 3.12:
+  `brew tap facebook/fb && brew trust --formula facebook/fb/idb-companion && brew install facebook/fb/idb-companion` and
+  `/opt/homebrew/opt/python@3.12/bin/python3.12 -m pip install --user --break-system-packages fb-idb`
+  (client lands at `~/Library/Python/3.12/bin/idb`, where the script looks for it).
+
 ## Drawer composition — body vs chrome
 
 Drawers (`components/primitives.tsx` → `Drawer`) wrap a body. When a drawer's body might be embedded inside ANOTHER drawer's body (e.g. `DocReaderBody` inside `DocListDrawer`'s detail view), extract the body into its own component and keep the standalone `*Drawer` as a thin wrapper:

@@ -59,6 +59,25 @@ export default defineConfig({
         ...devices['Pixel 7'],
       },
     },
+    // WebKit smoke — the iOS app is a Capacitor shell around this exact
+    // bundle, and its engine is WebKit, not Chromium. This project reruns a
+    // curated slice of the mobile workflows on WebKit to catch engine-specific
+    // breakage (fetch/CORS, CSS, focus quirks) without doubling suite runtime.
+    // Full native-context coverage (capacitor:// origin, connect screen,
+    // safe areas) lives in `make ios-smoke`, which drives the real simulator.
+    {
+      name: 'webkit-mobile',
+      testMatch: [
+        /[\\/]mobile[\\/]tabbar[\\/]navigation\.spec\.ts$/,
+        /[\\/]mobile[\\/]home[\\/]home\.spec\.ts$/,
+        /[\\/]mobile[\\/]home[\\/]personal-todos\.spec\.ts$/,
+        /[\\/]mobile[\\/]todos[\\/]todos-view\.spec\.ts$/,
+        /[\\/]mobile[\\/]settings[\\/]settings\.spec\.ts$/,
+      ],
+      use: {
+        ...devices['iPhone 15'],
+      },
+    },
   ],
 
   // Two-server bring-up: backend (Hono on 3001) + Vite (5173). globalSetup

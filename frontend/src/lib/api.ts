@@ -77,27 +77,39 @@ import {
   type TodoListQuery,
 } from '@open-brain/shared';
 import { z } from 'zod';
+import { apiOrigin, clearServerOrigin, fetchCredentials, isNativeApp, saveServerOrigin, storedServerOrigin } from './nativeConfig';
 
-const BASE = '/api/v1';
+// Web: '' → same-origin relative paths, exactly as before. Native shell:
+// the server origin stored by the connect screen (see nativeConfig.ts).
+// Derived per request so config changes can never race a module-load
+// snapshot — correctness doesn't depend on callers remembering to reload.
+const base = (): string => `${apiOrigin()}/api/v1`;
 const TOKEN_STORAGE_KEY = 'ob.api_key';
 
-// Resolve the Bearer key the UI uses for /api/v1/* calls. Two sources:
-//   - Local dev: `VITE_OPEN_BRAIN_API_KEY` from the build env (matches the
-//     backend's stub-mode default).
-//   - Production: the `/api/auth/token` exchange, which sits behind Easy
-//     Auth — the platform has already validated the user's cookie session
-//     by the time that endpoint runs, and the response carries the long-
-//     lived Bearer key plus the Entra principal id/name. We cache it in
+// Resolve the Bearer key the UI uses for /api/v1/* calls. Three sources:
+//   - Local dev (web): `VITE_OPEN_BRAIN_API_KEY` from the build env (matches
+//     the backend's stub-mode default).
+//   - Production (web): the `/api/auth/token` exchange, which sits behind
+//     Easy Auth — the platform has already validated the user's cookie
+//     session by the time that endpoint runs, and the response carries the
+//     long-lived Bearer key plus the Entra principal id/name. We cache it in
 //     localStorage so the next page load skips the round-trip.
+//   - Native shell: ONLY the key stored by the connect screen counts — a
+//     dev key baked into the bundle at build time would silently pair the
+//     app with the wrong backend.
 //
 // `bootAuth()` is called once before React mounts (see main.tsx). If the
 // session has expired, the fetch comes back as an opaque redirect and we
 // hard-navigate to the AAD login URL with `post_login_redirect_uri` set
 // to the current page so the user lands back where they were.
-let API_KEY: string =
-  import.meta.env.VITE_OPEN_BRAIN_API_KEY ??
-  (typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '') ??
-  '';
+let API_KEY: string = resolveInitialApiKey();
+
+function resolveInitialApiKey(): string {
+  const stored =
+    typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '';
+  if (isNativeApp()) return stored;
+  return import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? stored;
+}
 
 // Drop the cached Bearer key and end the session. In prod this kicks
 // the user through Easy Auth's /.auth/logout endpoint, which clears the
@@ -106,6 +118,14 @@ let API_KEY: string =
 // reload so any in-memory state resets.
 export function logout(): void {
   try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch { /* ignore */ }
+  if (isNativeApp()) {
+    // Native shell = full disconnect: drop the stored server origin too, so
+    // the relaunch lands back on the connect screen.
+    clearServerOrigin();
+    API_KEY = '';
+    window.location.reload();
+    return;
+  }
   API_KEY = import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? '';
   if (import.meta.env.DEV) {
     window.location.assign('/');
@@ -116,7 +136,66 @@ export function logout(): void {
   window.location.assign('/.auth/logout?post_logout_redirect_uri=/');
 }
 
+// Thrown by bootAuth when the native shell has no stored server config yet.
+// main.tsx catches it and renders the connect screen instead of the app.
+export class NativeSetupRequired extends Error {
+  constructor() {
+    super('Native shell requires server configuration');
+    this.name = 'NativeSetupRequired';
+  }
+}
+
+// Connect-screen preflight: proves the origin hosts an Open Brain backend
+// AND that the key is accepted, without touching module state. /stats is the
+// cheapest authenticated read — and its body is validated against the shared
+// schema so a captive portal or wildcard vhost that 200s everything can't
+// pass the probe and get the key persisted.
+export async function probeServer(origin: string, key: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${origin}/api/v1/stats`, {
+      headers: { Authorization: `Bearer ${key}` },
+      // Without a deadline an unresponsive host pins the connect screen on
+      // "Connecting…" forever; 10s is generous for a /stats read.
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new ApiError(0, 'Could not reach the server — check the URL');
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new ApiError(res.status, 'The server rejected the API key');
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, `Server responded with HTTP ${res.status}`);
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new ApiError(res.status, "That URL responded, but not like an Open Brain server — check it");
+  }
+  if (!StatsSchema.safeParse(body).success) {
+    throw new ApiError(res.status, "That URL responded, but not like an Open Brain server — check it");
+  }
+}
+
+// Persist the connect-screen pair. Callers reload the page afterwards so the
+// app boots cleanly from the stored config (the API prefix itself is derived
+// per request and needs no reload).
+export function saveNativeServerConfig(origin: string, key: string): void {
+  saveServerOrigin(origin);
+  localStorage.setItem(TOKEN_STORAGE_KEY, key);
+}
+
 export async function bootAuth(): Promise<void> {
+  // Native shell: there is no Easy Auth session — the connect screen stores
+  // the server origin + API key, and until both exist there is nothing to
+  // boot. The reload after saving re-runs this check with storage populated.
+  if (isNativeApp()) {
+    if (!storedServerOrigin() || !API_KEY) throw new NativeSetupRequired();
+    return;
+  }
+
   // If the build supplied a key, we're in local dev — nothing to exchange.
   if (import.meta.env.VITE_OPEN_BRAIN_API_KEY) return;
 
@@ -166,7 +245,7 @@ async function request<T>(
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' });
+  const res = await fetch(`${base()}${path}`, { ...init, headers, credentials: fetchCredentials() });
   const text = await res.text();
   const json: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
@@ -192,7 +271,7 @@ async function fetchOk(path: string, init: RequestInit = {}): Promise<void> {
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' });
+  const res = await fetch(`${base()}${path}`, { ...init, headers, credentials: fetchCredentials() });
   if (!res.ok) {
     const text = await res.text();
     let msg = `HTTP ${res.status}`;
@@ -430,7 +509,7 @@ export async function uploadFile(opts: {
   if (opts.tags && opts.tags.length > 0) fd.set('tags', opts.tags.join(','));
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${API_KEY}`);
-  const res = await fetch(`${BASE}/content`, { method: 'POST', body: fd, headers, credentials: 'include' });
+  const res = await fetch(`${base()}/content`, { method: 'POST', body: fd, headers, credentials: fetchCredentials() });
   const text = await res.text();
   const json: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
