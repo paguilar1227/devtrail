@@ -266,76 +266,79 @@ export function TodosPanel({ scope, onAction, contextLabel }: Props) {
         </>
       )}
 
-      <div className="todos-toolbar">
-        <div className="search-box">
-          <Icons.Search size={13} />
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            onSubmit={() => { /* live */ }}
-            tags={tagSuggestions}
-            mentions={NO_MENTIONS}
-            sigils={TODO_SIGILS}
-            placeholder={contextLabel ? `Search ${contextLabel} todos… try #tag` : 'Search todos… try #tag'}
-          />
-        </div>
-        {!searchActive && (
-          <>
-            <TodoSortDropdown id={`panel-${scope}-sort`} mode={sortMode} onChange={setSortMode} />
-            {addingSection ? (
-              <input
-                className="folder-field-input todos-section-input"
-                autoFocus
-                placeholder="Section name"
-                value={sectionDraft}
-                onChange={(e) => setSectionDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); commitSection(); }
-                  if (e.key === 'Escape') { setAddingSection(false); setSectionDraft(''); }
-                }}
-                onBlur={commitSection}
-              />
-            ) : (
-              <button className="btn btn-ghost btn-sm" onClick={() => setAddingSection(true)}>
-                <Icons.Plus size={12} /> Add section
-              </button>
-            )}
-          </>
+      {/* One filter region, in funnel order under the type selection:
+          the type's tags first, then status/urgency chips, then the
+          list-scoped search + sort + section tools on the same line. */}
+      <div className="todos-filterbar">
+        {!searchActive && (tagOptions.length > 0 || tagFilter.tags.length > 0) && (
+          <div className="view-tagbar">
+            <HomeTagFilter options={tagOptions} filter={tagFilter} onChange={setTagFilter} />
+          </div>
         )}
-      </div>
-
-      {!searchActive && allTodos.length > 0 && (
-        <div className="todos-filters">
-          {PRIORITIES.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={cls('filter-chip', prioSel.has(p) && 'active')}
-              onClick={() => setPrioSel((s) => toggleSet(s, p))}
-            >
-              {p.toUpperCase()}
-            </button>
-          ))}
-          <span style={{ width: 1, height: 18, background: 'var(--hairline)', margin: '0 4px' }} />
-          <FilterChip active={dueLens === 'overdue'} onClick={() => setDueLens((d) => (d === 'overdue' ? null : 'overdue'))}>
-            Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
-          </FilterChip>
-          <FilterChip active={dueLens === 'today'} onClick={() => setDueLens((d) => (d === 'today' ? null : 'today'))}>
-            Today <span style={{ marginLeft: 4 }}>{todayCount}</span>
-          </FilterChip>
-          {(prioSel.size > 0 || dueLens !== null) && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPrioSel(new Set()); setDueLens(null); }}>
-              Clear
-            </button>
+        <div className="todos-toolbar">
+          {!searchActive && allTodos.length > 0 && (
+            <span className="todos-filters">
+              {PRIORITIES.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={cls('filter-chip', prioSel.has(p) && 'active')}
+                  onClick={() => setPrioSel((s) => toggleSet(s, p))}
+                >
+                  {p.toUpperCase()}
+                </button>
+              ))}
+              <span style={{ width: 1, height: 18, background: 'var(--hairline)', margin: '0 4px' }} />
+              <FilterChip active={dueLens === 'overdue'} onClick={() => setDueLens((d) => (d === 'overdue' ? null : 'overdue'))}>
+                Overdue <span style={{ marginLeft: 4 }}>{overdueCount}</span>
+              </FilterChip>
+              <FilterChip active={dueLens === 'today'} onClick={() => setDueLens((d) => (d === 'today' ? null : 'today'))}>
+                Today <span style={{ marginLeft: 4 }}>{todayCount}</span>
+              </FilterChip>
+              {(prioSel.size > 0 || dueLens !== null) && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPrioSel(new Set()); setDueLens(null); }}>
+                  Clear
+                </button>
+              )}
+            </span>
+          )}
+          <div className="search-box">
+            <Icons.Search size={13} />
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              onSubmit={() => { /* live */ }}
+              tags={tagSuggestions}
+              mentions={NO_MENTIONS}
+              sigils={TODO_SIGILS}
+              placeholder={contextLabel ? `Search ${contextLabel} todos… try #tag` : 'Search todos… try #tag'}
+            />
+          </div>
+          {!searchActive && (
+            <>
+              <TodoSortDropdown id={`panel-${scope}-sort`} mode={sortMode} onChange={setSortMode} />
+              {addingSection ? (
+                <input
+                  className="folder-field-input todos-section-input"
+                  autoFocus
+                  placeholder="Section name"
+                  value={sectionDraft}
+                  onChange={(e) => setSectionDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); commitSection(); }
+                    if (e.key === 'Escape') { setAddingSection(false); setSectionDraft(''); }
+                  }}
+                  onBlur={commitSection}
+                />
+              ) : (
+                <button className="btn btn-ghost btn-sm" onClick={() => setAddingSection(true)}>
+                  <Icons.Plus size={12} /> Add section
+                </button>
+              )}
+            </>
           )}
         </div>
-      )}
-
-      {!searchActive && (tagOptions.length > 0 || tagFilter.tags.length > 0) && (
-        <div className="view-tagbar">
-          <HomeTagFilter options={tagOptions} filter={tagFilter} onChange={setTagFilter} />
-        </div>
-      )}
+      </div>
 
       <div className="todos-body">
         {todosQ.isLoading ? (

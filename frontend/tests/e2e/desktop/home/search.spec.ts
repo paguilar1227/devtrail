@@ -20,7 +20,8 @@
 // (Postgres + Azurite + LLM_PROVIDER=stub) — no mocked plumbing.
 
 import type { Page } from '@playwright/test';
-import { expect, test } from '../../helpers/setup';
+import { expect, stamp, test } from '../../helpers/setup';
+import { createTodo, listProjects } from '../../helpers/api';
 
 // ---- Seed-data contract (kept in sync with scripts/seed-local.ts) ---------
 // Update these constants when the seed changes; do NOT inline counts.
@@ -314,35 +315,37 @@ test.describe('search: mode switch', () => {
     await expect(page.locator('.home-search-results')).toHaveCount(0);
   });
 
-  test('dashboard scope toggle updates section heading and tag chip row (regression)', async ({ page }) => {
+  test('dashboard scope toggle updates section heading and the panel tag row (regression)', async ({ page }) => {
     // Repro: the scope toggle was wired to search-mode only; the dashboard
-    // (heading + tag chip strip + panels) ignored it because their queries
-    // were hard-keyed to ['tags', 'home', 'personal'] etc. Toggle now
-    // propagates everywhere — verify each surface. Scope selectors to the
-    // PAGE-LEVEL tag bar (.page > .home-tag-filter): the Todos panel embeds
-    // its own HomeTagFilter inside .view-tagbar.
+    // ignored it because its queries were hard-keyed per scope. In browse
+    // mode the only tag row is now the PANEL's (the page-level bar renders
+    // in search mode only), so scope-reactivity is asserted there: seed a
+    // uniquely-tagged PROJECT todo, flip to All, and its tag must surface
+    // in the Todos panel's chip row.
+    const probe = `${stamp()} scope probe`;
+    const projects = await listProjects();
+    const project = projects.find((p) => p.status === 'active');
+    if (!project) throw new Error('seed expected at least one active project');
+    await createTodo(probe, project.id);
+
     await expect(page.locator('.home-personal-h h2')).toHaveText('Personal');
-    const personalTags = await page.locator('.page > .home-tag-filter button').allTextContents();
-    expect(personalTags.length).toBeGreaterThan(0);
+    // Personal scope: the panel owns the (visible) tag row, and the
+    // project-only todo is absent.
+    await expect(page.locator('.todos-panel .home-tag-filter')).toBeVisible();
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: probe })).toHaveCount(0);
 
     // Click "All projects" in the small dashboard scope toggle.
     await page.locator('.home-scope-toggle button', { hasText: 'All projects' }).click();
 
-    // Heading flips.
+    // Heading flips and the panel's data follows the scope: the project
+    // todo appears (its query re-keys to the 'all' scope).
     await expect(page.locator('.home-personal-h h2')).toHaveText('All projects');
-    // Tag chip row refetched: different set OR different counts.
-    await page.waitForFunction(
-      (prev) => {
-        const cur = Array.from(document.querySelectorAll('.page > .home-tag-filter button')).map((el) => el.textContent);
-        return JSON.stringify(cur) !== JSON.stringify(prev);
-      },
-      personalTags,
-      { timeout: 3000 },
-    );
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: probe })).toHaveCount(1);
 
-    // Flip back to Personal — heading reverts.
+    // Flip back to Personal — heading reverts and the project todo drops out.
     await page.locator('.home-scope-toggle button', { hasText: 'Personal' }).click();
     await expect(page.locator('.home-personal-h h2')).toHaveText('Personal');
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: probe })).toHaveCount(0);
   });
 
   test('clicking sidebar Home from a search-active state resets URL + state (regression)', async ({ page }) => {

@@ -594,7 +594,12 @@ export function HomePage({ onRoute, onAction, initialSearch, initialTab, searchF
         </>
       ) : null}
 
-      {sortedTagsForChipRow.length > 0 || tagFilter.tags.length > 0 ? (
+      {/* Page-level tag chips render in SEARCH MODE ONLY — search has no
+          type context, so a workspace-wide tag surface belongs there
+          (synced with the query's #tag predicates). In browse mode each
+          panel owns its type-scoped tag filter, so the funnel reads
+          scope → type → tags → items with no duplicate row. */}
+      {searchActive && (sortedTagsForChipRow.length > 0 || tagFilter.tags.length > 0) ? (
         <HomeTagFilter
           options={sortedTagsForChipRow}
           filter={tagFilter}

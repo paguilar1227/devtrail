@@ -2057,7 +2057,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .home-answer-cite:hover { color: var(--fg); border-color: var(--glass-border-strong); }
 /* Home tab strip + body — same .tabs-row idiom as the project page. */
 .home-tabs-row { margin-top: 4px; }
-.home-tab-body { margin-bottom: 24px; }
+/* Framed tab body — groups the panel's capture + filters + list as one
+   visual unit under the tab strip, so the composer reads as part of the
+   selected type rather than floating page chrome. */
+.home-tab-body {
+  margin-bottom: 24px;
+  border: 0.5px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--glass-bg-soft);
+  padding: 14px 2px 6px;
+  overflow: hidden;
+}
+.app[data-mobile="true"] .home-tab-body { padding: 10px 0 4px; }
 .home-scope-toggle button {
   border: 0; background: transparent; color: var(--fg-muted);
   padding: 8px 14px; border-radius: 10px; cursor: pointer;
@@ -3520,20 +3531,31 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
    .todos-body still gets its internal scroll on this page. (On Home the
    panel sits in normal flow and the page scrolls instead.) */
 .todos-view .todos-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.todos-toolbar {
-  display: flex; align-items: center; gap: 8px;
+/* One filter region under the quick-add: tags line, then the chips +
+   list-search + sort + section tools line. Region owns the page gutter
+   padding; the inner rows sit flush. */
+.todos-filterbar {
+  display: flex; flex-direction: column; gap: 8px;
   padding: 4px var(--pad-page) 10px;
 }
+.todos-filterbar .view-tagbar { padding: 0; }
+.todos-filterbar .todos-toolbar { padding: 0; }
+.todos-toolbar {
+  display: flex; align-items: center; gap: 8px;
+}
 .todos-toolbar .search-box { flex: 1; min-width: 0; }
+.todos-toolbar .todos-filters {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
 /* Mobile: search + sort + "Add section" can't share one row without the
    search input spilling over the sort dropdown. Wrap, and give the search
    its own full-width line so sort + add drop neatly to the row below. */
 .app[data-mobile="true"] .todos-toolbar { flex-wrap: wrap; }
 .app[data-mobile="true"] .todos-toolbar .search-box { flex: 1 1 100%; }
-.todos-filters {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
-  padding: 0 var(--pad-page) 12px;
-}
+/* (chips group now lives inline inside .todos-toolbar — see
+   .todos-toolbar .todos-filters above; it wraps on mobile with the row.) */
+.app[data-mobile="true"] .todos-toolbar .todos-filters { flex-wrap: wrap; }
 .todos-body {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 0 var(--pad-page) 56px;
