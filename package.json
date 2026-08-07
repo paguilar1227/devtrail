@@ -38,12 +38,12 @@
   "overrides": {
     "axios": "1.18.0",
     "@grpc/grpc-js": "1.14.4",
-    "fast-uri": "3.1.4",
+    "fast-uri": "3.1.5",
     "shell-quote": "1.10.0",
     "fast-xml-builder": "1.2.0",
     "express-rate-limit": "8.5.2",
     "qs": "6.15.2",
-    "ip-address": "10.2.0",
+    "ip-address": "10.3.1",
     "joi": "18.2.1",
     "esbuild": "0.28.1",
     "xcode": {
