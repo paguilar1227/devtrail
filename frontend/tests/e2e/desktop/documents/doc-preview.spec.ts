@@ -38,11 +38,17 @@ async function openDocFromActivity(page: import('@playwright/test').Page, title:
 // give image/audio docs real extracted titles, so the placeholder no
 // longer appears. The mime check inside the drawer is the authoritative
 // signal — title text can be anything the OCR fixture supplies.
+// Scoped to `· document` rows: the seed's todos are ingested AFTER the
+// docs, so dozens of "Ingested <todo>" rows precede the doc rows in the
+// feed — walking those drawers too blows the 60s test budget on a slow
+// host. The row meta line carries the entity kind, so filter on it.
 async function openDocByMime(page: import('@playwright/test').Page, mime: string) {
   await navTo(page, 'Activity');
   await expect(page.locator('h1', { hasText: 'Activity' })).toBeVisible();
   await expect(page.locator('.activity-row').first()).toBeVisible({ timeout: 15000 });
-  const rows = page.locator('.activity-row').filter({ hasText: /^Ingested / });
+  const rows = page.locator('.activity-row')
+    .filter({ hasText: /^Ingested / })
+    .filter({ hasText: '· document' });
   const count = await rows.count();
   expect(count).toBeGreaterThan(0);
   const drawer = page.locator('[role="dialog"]');

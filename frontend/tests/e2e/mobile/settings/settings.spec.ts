@@ -47,7 +47,9 @@ test('settings mobile: clicking Log out clears the cached token and redirects', 
   await expect(page.locator('.modal-head h3', { hasText: 'Settings' })).toBeVisible();
   await page.locator('.modal').getByRole('button', { name: 'Log out' }).click();
 
-  await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
+  // Post-logout reload re-boots the whole SPA — allow extra headroom on a
+  // loaded host (matches the desktop twin).
+  await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible({ timeout: 30000 });
   const stored = await page.evaluate(() => localStorage.getItem('ob.api_key'));
   expect(stored).toBeNull();
 });

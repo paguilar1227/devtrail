@@ -1,38 +1,36 @@
-// Home — personal-scope landing page. Absorbs what used to be the Inbox
-// (project-less todos), adds project-less notes alongside it, and exposes
-// search at the top with a Personal/All-projects scope toggle.
+// Home — the workspace landing page. One search box, one scope toggle,
+// and the shared browse panels under tabs.
 //
 // Layout (top to bottom):
 //   1. Hero      — greeting + New project button.
-//   2. Search    — input + scope toggle. Enter routes to /search?q=… so
-//                  the existing Search route owns rendering of results.
-//   3. Personal  — two columns: Todos | Notes. The high-traffic capture
-//                  surfaces get the full width so they're not cramped.
-//                  Each column has its own quick-add.
-//   4. Lower row  — Documents | Recent activity. Documents (no quick-add —
-//                  it goes through upload/from-url) sits beside the activity
-//                  feed a level down from the primary Todos/Notes columns.
-//   5. Pinned    — chip strip linking to pinned projects.
+//   2. Search    — THE query surface. Typing filters live (entity search
+//                  with the #tag / in:type / @name / project: DSL);
+//                  pressing Enter asks the knowledge base and renders a
+//                  synthesized answer with citations above the results.
+//                  There is deliberately no separate "chat" surface here.
+//   3. Tabs      — Todos | Notes | Documents | Activity, rendering the
+//                  shared scope-parameterized panels (the same components
+//                  the project page tabs use).
+//   4. Pinned    — chip strip linking to pinned projects.
 //
-// "Personal" means project_ids = [] (content) / project_id = null (todo).
-// All three columns hit the backend with `project_id='null'`.
+// Scope ('personal' | 'all' | project UUID) governs the search AND the
+// panels. "Personal" means project_ids = [] (content) / project_id = null
+// (todo) — the Inbox. The visible toggle offers Personal/All; project
+// scope arrives via cross-page search dispatch (ProjectPage submit) or
+// the scope chip row in search mode.
 
 import { useEffect, useMemo, useState } from 'react';
-import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { ActivityRow } from '../components/ActivityRow';
 import { Icons } from '../components/Icons';
-import { NoteRow } from '../components/NoteRow';
-import { DocRow } from '../components/DocRow';
-import { SortableTodoList } from '../components/SortableTodoList';
-import { sortPersonalTodos } from '../lib/todoSort';
-import { useTodoSortMode } from '../lib/useTodoSortMode';
-import { useNoteSortMode, compareNotesForMode } from '../lib/useNoteSortMode';
-import { NoteSortDropdown, SortDropdown, TodoSortDropdown } from '../components/SortDropdown';
-import { ColumnWidget } from '../components/ColumnWidget';
-import { FilterEmpty, HomeTagFilter } from '../components/HomeTagFilter';
+import { FilterChip, Tabs } from '../components/primitives';
+import { SortDropdown } from '../components/SortDropdown';
+import { HomeTagFilter } from '../components/HomeTagFilter';
+import { TodosPanel } from '../components/panels/TodosPanel';
+import { NotesPanel } from '../components/panels/NotesPanel';
+import { DocumentsPanel } from '../components/panels/DocumentsPanel';
 import {
   EMPTY_FILTER,
-  matchesTagFilter,
   parseTagFilter,
   serializeTagFilter,
   type TagFilter,
@@ -48,40 +46,24 @@ import {
 } from '../lib/searchSyntax';
 import { SearchInput, type MentionTarget, type ProjectSuggestion } from '../components/SearchInput';
 import { SearchResultsList } from '../components/SearchResultsList';
-import { FilterChip } from '../components/primitives';
-import { search } from '../lib/api';
-import { toUiSearchHit } from '../lib/view';
-import { useDebounced } from '../lib/useDebounced';
-
-// Activity widget filter — maps to the backend `kinds` query param.
-// 'all' is the unfiltered passthrough; the other three match the
-// ActivityKind enum from shared/schemas.
-type ActivityFilter = 'all' | 'ingest' | 'edit' | 'comment';
-const ACTIVITY_FILTER_MODES: readonly ActivityFilter[] = ['all', 'ingest', 'edit', 'comment'];
-const ACTIVITY_FILTER_LABELS: Record<ActivityFilter, string> = {
-  all: 'All',
-  ingest: 'Ingestion',
-  edit: 'Updates',
-  comment: 'Comments',
-};
-import { useTodoExpansion } from '../lib/useTodoExpansion';
 import {
-  createNote,
-  createTodo,
-  getContent,
   listActivity,
   listContent,
   listProjectCounts,
   listProjects,
   listTags,
-  listTodos,
-  getStats,
-  updateTodo,
+  rag,
+  search,
 } from '../lib/api';
-import { toUiActivity, toUiDocument, toUiNote, toUiProjects, toUiTodo } from '../lib/view';
+import { toUiActivity, toUiDocument, toUiNote, toUiProjects, toUiSearchHit } from '../lib/view';
 import { openEntity } from '../lib/openEntity';
+import { useDebounced } from '../lib/useDebounced';
 import { cls } from '../lib/util';
-import type { ActionDispatch, Route, Todo } from '../types';
+import type { ActionDispatch, ActivityEntityKind, Route } from '../types';
+import type { Project as ApiProject, RagResponse } from '@open-brain/shared';
+
+export type HomeTab = 'todos' | 'notes' | 'documents' | 'activity';
+const HOME_TABS: readonly HomeTab[] = ['todos', 'notes', 'documents', 'activity'];
 
 interface Props {
   onRoute: (r: Route) => void;
@@ -92,6 +74,8 @@ interface Props {
    *  mount as the initial query/scope; the URL itself is the
    *  persistent source of truth thereafter. */
   initialSearch?: { query?: string; scope?: 'personal' | 'all' | string };
+  /** Deep-link a tab (sidebar "Todos" routes here with tab='todos'). */
+  initialTab?: HomeTab;
   /** Bumped by the command palette's "Search…" action — focus the search
    *  input so the user can type immediately (>0 only after that action). */
   searchFocusNonce?: number;
@@ -102,18 +86,6 @@ interface Props {
 // trinary on the wire ('null' for personal, UUID for project, omit for all).
 type SearchScope = 'personal' | 'all' | string;
 
-// Convert the SearchScope union (used by both the search bar and the
-// dashboard scope toggle) into the trinary `project_id` arg the REST
-// list/content/todo endpoints accept:
-//   'personal' → 'null'    (server-side filter for rows with no project)
-//   'all'      → undefined (no filter — global)
-//   <uuid>     → uuid       (specific project)
-function scopeToProjectId(scope: SearchScope): 'null' | string | undefined {
-  if (scope === 'personal') return 'null';
-  if (scope === 'all') return undefined;
-  return scope;
-}
-
 // listTags speaks a slightly different dialect: it takes either a
 // `scope: 'personal' | 'all'` flag or a `project_id` UUID — never both.
 function scopeToTagsArg(scope: SearchScope): { scope: 'personal' | 'all' } | { project_id: string } {
@@ -121,38 +93,33 @@ function scopeToTagsArg(scope: SearchScope): { scope: 'personal' | 'all' } | { p
   return { project_id: scope };
 }
 
-export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 0 }: Props) {
-  const qc = useQueryClient();
-  // Filter the Activity widget by kind. 'all' is the passthrough.
-  // Keyed in the query cache so React Query refetches on flip.
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
-
+export function HomePage({ onRoute, onAction, initialSearch, initialTab, searchFocusNonce = 0 }: Props) {
   // Scope (Personal / All projects / specific project UUID) governs the
-  // whole dashboard view — the 3 column widgets, the tag chip row, AND
-  // the universal search. Hoisted up here (before the useQueries call)
-  // so the personal-section queries can be keyed on it. URL-seeded so
-  // bookmarks / deep-links replay the user's chosen scope.
+  // panels AND the universal search. URL-seeded so bookmarks / deep-links
+  // replay the user's chosen scope.
   const [scope, setScope] = useState<SearchScope>(() => {
     if (initialSearch?.scope) return initialSearch.scope;
     if (typeof window === 'undefined') return 'personal';
     const urlScope = new URLSearchParams(window.location.search).get('scope');
     return urlScope ?? 'personal';
   });
-  const scopeProjectId = scopeToProjectId(scope);
 
-  // Tag filter — URL-backed (?tag=foo,bar&mode=and). Synchronous init from
-  // location.search so the first paint reflects the URL with no flicker.
-  // Write via replaceState only — this is view state, not navigation.
+  const [tab, setTab] = useState<HomeTab>(() => {
+    if (initialTab) return initialTab;
+    if (typeof window === 'undefined') return 'todos';
+    const urlTab = new URLSearchParams(window.location.search).get('tab');
+    return (HOME_TABS as string[]).includes(urlTab ?? '') ? (urlTab as HomeTab) : 'todos';
+  });
+
+  // Tag filter mirrors the #tag predicates in the search query so the
+  // HomeTagFilter chip row and the input stay bidirectionally in sync (a
+  // chip click writes a #tag predicate into the input, which flips the
+  // page into search mode).
   const [tagFilter, setTagFilterState] = useState<TagFilter>(() =>
     typeof window === 'undefined'
       ? EMPTY_FILTER
       : parseTagFilter(new URLSearchParams(window.location.search)),
   );
-  // setTagFilter is the public mutator. Tag-array changes route THROUGH
-  // the universal search query (so the search input and chip row stay
-  // bidirectionally in sync); mode-only changes apply directly. The
-  // useEffect below mirrors parsed query tags back into tagFilter, so
-  // both directions converge on the same source of truth without loops.
   const setTagFilter = (next: TagFilter) => {
     const tagsChanged =
       next.tags.length !== tagFilter.tags.length ||
@@ -186,42 +153,20 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
 
   const queries = useQueries({
     queries: [
-      { queryKey: ['stats'], queryFn: () => getStats() },
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
       { queryKey: ['project-counts'], queryFn: () => listProjectCounts() },
-      // Column data: todos / notes / docs scoped by the dashboard's
-      // scope toggle. Cache key includes `scope` so flipping the toggle
-      // hits a different cache slot and refetches the right data.
-      //
-      // `placeholderData: keepPreviousData` on every query that re-keys on
-      // user interaction (scope toggle, activity filter) is load-bearing:
-      // the page-level `isLoading` gate below blanks the whole dashboard to
-      // "Loading…" whenever ANY query is pending. Without keepPreviousData a
-      // new key has no cached data → isLoading → the dashboard flashes its
-      // loading screen on every toggle (reads as a full page reload). Keeping
-      // the previous data means isLoading stays false and the widget swaps in
-      // place.
-      { queryKey: ['todos', 'home', scope], queryFn: () => listTodos(scopeProjectId === undefined ? {} : { project_id: scopeProjectId }), placeholderData: keepPreviousData },
-      { queryKey: ['content', 'notes', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'note' } : { type: 'note', project_id: scopeProjectId }), placeholderData: keepPreviousData },
-      { queryKey: ['content', 'documents', 'home', scope], queryFn: () => listContent(scopeProjectId === undefined ? { type: 'document' } : { type: 'document', project_id: scopeProjectId }), placeholderData: keepPreviousData },
-      {
-        queryKey: ['activity', 'recent', activityFilter],
-        queryFn: () =>
-          listActivity({
-            // Match the column widgets' 6-row preview cap.
-            limit: 6,
-            ...(activityFilter === 'all' ? {} : { kinds: activityFilter }),
-          }),
-        placeholderData: keepPreviousData,
-      },
-      // Top tags strip reflects whichever scope the dashboard is on so
-      // counts + which tags appear match the widgets below.
+      // Top tags reflect whichever scope the page is on so counts + which
+      // tags appear match the panels below.
       { queryKey: ['tags', 'home', scope], queryFn: () => listTags(scopeToTagsArg(scope)), placeholderData: keepPreviousData },
+      // Global docs + notes lists feed the @-mention typeahead (a mention
+      // can pull in an item from any project) and resolve mention clicks.
+      { queryKey: ['content', 'documents', 'all'], queryFn: () => listContent({ type: 'document' }) },
+      { queryKey: ['content', 'notes', 'all'], queryFn: () => listContent({ type: 'note' }) },
     ],
   });
-  const [statsQ, projectsQ, countsQ, todosQ, notesQ, docsQ, activityQ, tagsQ] = queries;
+  const [projectsQ, countsQ, tagsQ, docsQ, notesQ] = queries;
 
-  const projectsRaw = projectsQ.data ?? [];
+  const projectsRaw = (projectsQ.data ?? []) as ApiProject[];
   const projectsById = useMemo(
     () => new Map(projectsRaw.map((p) => [p.id, p])),
     [projectsRaw],
@@ -232,9 +177,8 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
   );
   const pinned = projects.filter((p) => p.pinned && p.status === 'active');
 
-  // Section heading + subtitle reflect whatever scope the dashboard is
-  // on. Project scope resolves the UUID to the project name (falls back
-  // to a short id while the projects list is still loading).
+  // Scope heading resolves a project UUID to its name (falls back to a
+  // short placeholder while the projects list is still loading).
   const scopeHeading = useMemo<{ title: string; subtitle: string }>(() => {
     if (scope === 'personal') {
       return { title: 'Personal', subtitle: 'project-less todos, notes, and documents' };
@@ -248,44 +192,6 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
       subtitle: p ? `todos, notes, and documents in ${p.name}` : 'loading project…',
     };
   }, [scope, projectsById]);
-  // Widget caps at depth=1 — anything deeper rolls up into a "+N deeper"
-  // hint on the deepest visible row. Drawer (TodoListDrawer) gets the
-  // full tree. Both surfaces honor the same per-parent expansion state.
-  const { isExpanded, toggle: toggleExpand } = useTodoExpansion();
-  const allPersonalTodos = useMemo(
-    () => (todosQ.data ?? []).map(toUiTodo),
-    [todosQ.data],
-  );
-  const { mode: sortMode, setMode: setSortMode } = useTodoSortMode('home');
-  // Tag filter is applied pre-sort so the SortedTodo tree only builds
-  // among the visible items (parent/child relationships among matching
-  // items only). Overview counts (open/overdue/this-week) use the
-  // unfiltered allPersonalTodos by design — they're a dashboard, not
-  // a filtered view.
-  const filteredPersonalTodos = useMemo(
-    () =>
-      tagFilter.tags.length === 0
-        ? allPersonalTodos
-        : allPersonalTodos.filter((t) => matchesTagFilter(t, tagFilter)),
-    [allPersonalTodos, tagFilter],
-  );
-  const personalTodos = useMemo(
-    () => sortPersonalTodos(filteredPersonalTodos, { mode: sortMode, maxDepth: 1, isExpanded }),
-    [filteredPersonalTodos, sortMode, isExpanded],
-  );
-  const { mode: noteSortMode, setMode: setNoteSortMode } = useNoteSortMode('home');
-  const personalNotes = useMemo(() => {
-    const arr = notesQ.data ?? [];
-    return arr.slice().sort(compareNotesForMode(noteSortMode));
-  }, [notesQ.data, noteSortMode]);
-  // Reuses the note sort vocabulary — same modes (recent/oldest/A-Z/Z-A)
-  // apply to any titled ContentItem with a created_at. Surface key is
-  // doc-specific so docs and notes keep independent user preferences.
-  const { mode: docSortMode, setMode: setDocSortMode } = useNoteSortMode('docs:home');
-  const personalDocs = useMemo(
-    () => (docsQ.data ?? []).slice().sort(compareNotesForMode(docSortMode)).map(toUiDocument),
-    [docsQ.data, docSortMode],
-  );
 
   // project: typeahead source — active projects only (no point suggesting
   // archived / completed ones for a NEW search predicate).
@@ -296,83 +202,27 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     [projectsRaw],
   );
 
-  // @-mention typeahead targets — docs + notes (personal scope, matching
-  // what's visible in the columns). Title-sorted so the popover surfaces
-  // alphabetically; the SearchInput component handles prefix filtering.
+  // @-mention typeahead targets — all docs + notes, title-sorted.
   const mentionTargets = useMemo<MentionTarget[]>(() => {
-    const docs: MentionTarget[] = personalDocs.map((d) => ({
-      title: d.title,
-      kind: 'document',
-      id: d.id,
-    }));
-    const notes: MentionTarget[] = (notesQ.data ?? []).map((n) => ({
-      title: n.title,
-      kind: 'note',
-      id: n.id,
-    }));
+    const docs: MentionTarget[] = (docsQ.data ?? []).map((d) => ({ title: d.title, kind: 'document', id: d.id }));
+    const notes: MentionTarget[] = (notesQ.data ?? []).map((n) => ({ title: n.title, kind: 'note', id: n.id }));
     return [...docs, ...notes].sort((a, b) => a.title.localeCompare(b.title));
-  }, [personalDocs, notesQ.data]);
+  }, [docsQ.data, notesQ.data]);
 
-  // Notes + docs: filter post-sort (no tree to rebuild). Todos already
-  // filtered pre-sort above.
-  const filteredNotes = useMemo(
-    () =>
-      tagFilter.tags.length === 0
-        ? personalNotes
-        : personalNotes.filter((n) => matchesTagFilter(n, tagFilter)),
-    [personalNotes, tagFilter],
-  );
-  const filteredDocs = useMemo(
-    () =>
-      tagFilter.tags.length === 0
-        ? personalDocs
-        : personalDocs.filter((d) => matchesTagFilter(d, tagFilter)),
-    [personalDocs, tagFilter],
-  );
-  // For todos, `personalTodos` IS already the filtered set (filter is
-  // applied pre-sort). Alias for symmetry with notes/docs render code.
-  const filteredTodos = personalTodos;
-  const activity = useMemo(
-    () => (activityQ.data ?? []).map((e) => toUiActivity(e, projectsById)),
-    [activityQ.data, projectsById],
-  );
-  const stats = statsQ.data;
+  const error = projectsQ.error || countsQ.error;
 
-  const isLoading = queries.some((q) => q.isLoading);
-  const error = queries.find((q) => q.error)?.error;
-
-  // Show the full-page loader on the FIRST load only. Scope toggle and the
-  // activity filter re-key their queries, which briefly flips them back to
-  // isLoading; gating the whole page on isLoading there dropped the entire
-  // dashboard to "Loading…" mid-interaction (read as a full page reload).
-  // Once everything has resolved once, latch `ready` and never blank again —
-  // later refetches update widgets in place (keepPreviousData keeps their
-  // data visible during the swap).
-  //
-  // Adjusted during render (not in an effect): React re-renders immediately
-  // with the new value before committing, and the guard is monotonic so it
-  // can't loop. This is the canonical "derive/latch state during render"
-  // pattern — see react.dev "You Might Not Need an Effect".
-  const [ready, setReady] = useState(false);
-  if (!ready && stats && !isLoading) {
-    setReady(true);
-  }
-
-  // Palette "Search…" → land on home with the search bar focused. Depends on
-  // `ready`: on a cold-cache remount the effect can fire before the search
-  // input is mounted (the page still shows its loading gate) — re-running
-  // when `ready` flips true catches that first visit.
+  // Palette "Search…" → land on home with the search bar focused. Re-runs
+  // when the loading gate clears: on a cold projects cache the input isn't
+  // mounted yet when the nonce bumps, and the focus would silently vanish.
   useEffect(() => {
-    if (searchFocusNonce > 0 && ready) {
+    if (searchFocusNonce > 0 && !projectsQ.isLoading) {
       document.querySelector<HTMLInputElement>('.home-search-box input')?.focus();
     }
-  }, [searchFocusNonce, ready]);
+  }, [searchFocusNonce, projectsQ.isLoading]);
 
-  // Full personal-scope tag list (sorted by usage) for the filter chip
-  // row — NOT pre-sliced. HomeTagFilter caps the visible chips via its
-  // own `visibleCap` prop and exposes a "+N more" expansion. Keeping
-  // the full list here means the +N more affordance can actually do
-  // something when the user has more than the cap.
+  // Full scoped tag list (sorted by usage) for the filter chip row — NOT
+  // pre-sliced. HomeTagFilter caps the visible chips via its own
+  // `visibleCap` prop and exposes a "+N more" expansion.
   const sortedTagsForChipRow = useMemo(() => {
     const all = tagsQ.data ?? [];
     return [...all]
@@ -382,18 +232,9 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
 
   // ── Search ───────────────────────────────────────────────
   // Universal search bar: the input text IS the source of truth for both
-  // the active filter AND the page mode. Empty input → home dashboard
-  // (Personal grid + overview + activity). Non-empty → unified search-
-  // results list takes over the personal-grid section.
-  //
-  // `#tag`, `in:type`, `@name`, `project:name`, and `-prefix` negations
-  // all parse live via searchSyntax.ts. tagFilter mirrors parsed tags
-  // via a useEffect below so the HomeTagFilter chip row stays
-  // bidirectionally in sync (a chip click writes a #tag predicate
-  // back into the input).
-  //
-  // Initial value seeded from the URL's ?tag= so existing bookmarks /
-  // browser-back states still surface the same scope visibly.
+  // the active filter AND the page mode. Empty input → tabs. Non-empty →
+  // unified search-results list takes over. Enter → synthesized answer
+  // (RAG over the effective scope) above the results.
   const [query, setQuery] = useState<string>(() => {
     // Resolution order on mount:
     //   1. initialSearch.query (cross-page dispatch from ProjectPage etc)
@@ -408,13 +249,10 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     const urlFilter = parseTagFilter(params);
     return urlFilter.tags.map((t) => `#${t}`).join(' ');
   });
-  // (scope state hoisted to top of component so the dashboard widget
-  // queries can be keyed on it — see scopeToProjectId / scopeToTagsArg
-  // helpers + the useQueries call above.)
 
-  // URL sync: any change to query or scope writes ?q= / ?scope= via
-  // replaceState (no history pollution; back button still works because
-  // it pre-dates the replaceState chain). Clears params when empty.
+  // URL sync: any change to query / scope / tab writes ?q= / ?scope= /
+  // ?tab= via replaceState (no history pollution). Params are cleared at
+  // their defaults so plain "/" stays plain.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
@@ -422,9 +260,10 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     else url.searchParams.delete('q');
     if (scope !== 'personal') url.searchParams.set('scope', scope);
     else url.searchParams.delete('scope');
+    if (tab !== 'todos') url.searchParams.set('tab', tab);
+    else url.searchParams.delete('tab');
     window.history.replaceState(null, '', url.toString());
-  }, [query, scope]);
-
+  }, [query, scope, tab]);
 
   // Live debounce. 180ms matches CommandPalette's tuned value — fast
   // enough to feel instant, slow enough to skip mid-token requests.
@@ -433,7 +272,7 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
 
   // `searchActive` is the mode switch. Any signal in the parsed query —
   // free text OR any predicate bucket — flips the page into results
-  // mode. Empty input drops back to the dashboard.
+  // mode. Empty input drops back to the tabs.
   const searchActive =
     parsedQuery.text.trim().length > 0
     || parsedQuery.tags.length > 0
@@ -446,13 +285,10 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     || parsedQuery.excludedProjects.length > 0;
 
   // updateBoth keeps the input string canonical when the user removes a
-  // predicate chip via the X — same pattern SearchDrawer used.
+  // predicate chip via the X.
   const updateBoth = (next: string) => setQuery(next);
 
   // Resolve @-mentions and project:names to UUIDs for the wire call.
-  // Same logic SearchDrawer had — global mention pool so a mention can
-  // pull in an item from any project, not just the personal scope the
-  // home dashboard surfaces by default.
   const { contentItemIds, excludedContentItemIds } = useMemo(() => {
     const matchByTitle = (name: string): string[] => {
       const lower = name.toLowerCase();
@@ -467,8 +303,6 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
   }, [parsedQuery.mentions, parsedQuery.excludedMentions, mentionTargets]);
 
   // First positive project: predicate wins over the scope chip toggle.
-  // Mirrors SearchDrawer's resolution rule — keeps the input the
-  // canonical source of truth even when the chips suggest otherwise.
   const projectIdFromPredicate = useMemo<string | null | undefined>(() => {
     if (parsedQuery.projects.length === 0) return undefined;
     const first = parsedQuery.projects[0]!.toLowerCase();
@@ -485,11 +319,7 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
           ? 'null'
           : scope;
 
-  // Live search hits. Fires whenever the debounced query has any
-  // signal (parsed predicates OR free text). Returns SearchHit[] from
-  // the existing /api/v1/search endpoint with all the PR #12+#14
-  // power-feature plumbing intact (mentions, projects, exclusions,
-  // vector + graph + lexical fusion).
+  // Live search hits from /api/v1/search (vector + graph + lexical fusion).
   const { data: hitsApi, isFetching: searchIsFetching, error: searchError } = useQuery({
     queryKey: [
       'search',
@@ -506,14 +336,10 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     queryFn: () =>
       search({
         // Predicate-only inputs (e.g. just `#chore`) have parsedQuery.text === ''.
-        // Send empty so the backend takes the filter-only path; falling back to
-        // the raw `#chore` string would embed garbage and match nothing.
+        // Send empty so the backend takes the filter-only path.
         query: parsedQuery.text,
         project_id: effectiveProjectId as 'null' | string | undefined,
         tags: parsedQuery.tags.length > 0 ? parsedQuery.tags : undefined,
-        // AND/OR toggle from the Home chip row. 'all' = intersection (every
-        // tag), 'any' = union (at least one). Only meaningful with 2+ tags;
-        // harmless for 0-1 (any-of-one === all-of-one).
         tag_match: parsedQuery.tags.length > 0 ? (tagFilter.mode === 'and' ? 'all' : 'any') : undefined,
         entity_types: parsedQuery.types.length > 0 ? parsedQuery.types : undefined,
         content_item_ids: contentItemIds.length > 0 ? contentItemIds : undefined,
@@ -529,19 +355,82 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     [hitsApi, projectsById],
   );
 
+  // ── Ask (RAG folded into the search box) ─────────────────
+  // Enter asks the knowledge base and renders the synthesized answer +
+  // citations above the live results. The request is built from a FRESH
+  // parse of the input (not the debounced one), so a just-typed
+  // project:/#tag/in: predicate scopes the answer exactly like the
+  // result list below it.
+  const askMut = useMutation({
+    mutationFn: (req: {
+      question: string;
+      project_id: 'null' | string | undefined;
+      tags?: string[];
+      entity_types?: typeof parsedQuery.types;
+    }): Promise<RagResponse> =>
+      rag({
+        question: req.question,
+        project_id: req.project_id,
+        tags: req.tags,
+        entity_types: req.entity_types,
+        depth: 'auto',
+      }),
+  });
+  const askReset = askMut.reset;
+  // Snapshot of what was asked — the raw input string plus the scope it
+  // resolved to. Staleness is judged against THIS, never against the
+  // debounced query: the trailing debounce lands up to 180ms after Enter,
+  // and resetting on it detached the in-flight mutation and silently
+  // dropped the answer (council-review finding, confirmed by 4/4 lenses).
+  const [asked, setAsked] = useState<{ query: string; projectId: 'null' | string | undefined } | null>(null);
+  // Resolve the ask scope from a fresh parse: first matching project:
+  // predicate wins, else the page scope — the same rule the live search
+  // applies via projectIdFromPredicate/effectiveProjectId.
+  const resolveAskScope = (parsed: ReturnType<typeof parseSearchSyntax>): 'null' | string | undefined => {
+    if (parsed.projects.length > 0) {
+      const first = parsed.projects[0]!.toLowerCase();
+      const match = projectSuggestions.find((p) => p.name.toLowerCase() === first);
+      if (match) return match.id;
+    }
+    return scope === 'all' ? undefined : scope === 'personal' ? 'null' : scope;
+  };
+  const submitAsk = () => {
+    const parsed = parseSearchSyntax(query);
+    const text = parsed.text.trim();
+    if (text.length === 0 || askMut.isPending) return;
+    const project_id = resolveAskScope(parsed);
+    setAsked({ query, projectId: project_id });
+    askMut.mutate({
+      question: text,
+      project_id,
+      tags: parsed.tags.length > 0 ? parsed.tags : undefined,
+      entity_types: parsed.types.length > 0 ? parsed.types : undefined,
+    });
+  };
+  const dismissAnswer = () => {
+    askReset();
+    setAsked(null);
+  };
+  // Clear a stale answer only when the input genuinely diverges from the
+  // asked snapshot, or the scope toggle re-resolves the same input to a
+  // different scope. Comparing the RAW query means Enter-then-debounce
+  // can never race the mutation it just started.
+  useEffect(() => {
+    if (!asked) return;
+    if (query !== asked.query || resolveAskScope(parseSearchSyntax(query)) !== asked.projectId) {
+      dismissAnswer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, scope, projectSuggestions, asked]);
+  const openCitation = (c: RagResponse['citations'][number]) => {
+    if (!c.type || !c.content_item_id) return;
+    void openEntity({ entity_kind: c.type as ActivityEntityKind, entity_id: c.content_item_id }, onAction);
+  };
+
   // query → tagFilter sync. Parses #tag predicates out of the search
-  // input and mirrors them into tagFilter.tags (preserving mode). The
-  // setTagFilter mutator handles the reverse direction by writing the
-  // diff back through `query`. Effect+mutator converge cleanly because
-  // each only updates the OTHER state when there's a real diff.
-  //
-  // Mid-typing guard: only promote a parsed tag to tagFilter if it
-  // matches a known tag in the user's data. Typing `#t` shouldn't
-  // surface an orphan `t` chip in HomeTagFilter just because the
-  // partial token parsed cleanly. Orphans are still kept for tags the
-  // user previously selected that have since vanished from data —
-  // those preserve in tagFilter until explicitly cleared (the chip is
-  // visible inside HomeTagFilter regardless of this filter).
+  // input and mirrors them into tagFilter.tags (preserving mode). Only
+  // promotes a parsed tag if it matches a known tag in the user's data,
+  // so mid-typing `#t` doesn't surface an orphan chip.
   useEffect(() => {
     const parsedTags = parseSearchSyntax(query).tags;
     const knownNames = new Set((tagsQ.data ?? []).map((t) => t.name));
@@ -554,57 +443,6 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     });
   }, [query, tagsQ.data]);
 
-  // ── Quick-add ───────────────────────────────────────────
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['todos'] });
-    qc.invalidateQueries({ queryKey: ['content'] });
-    qc.invalidateQueries({ queryKey: ['stats'] });
-    qc.invalidateQueries({ queryKey: ['activity'] });
-  };
-  const todoCreate = useMutation({
-    mutationFn: (content: string) => createTodo({ content }),
-    onSuccess: (todo) => {
-      invalidate();
-      // Pop the detail drawer for the just-created todo so the user can
-      // immediately attach priority / due / tags / subtasks without an
-      // extra click. They can dismiss with ESC or the close button if
-      // the quick-capture was all they wanted.
-      onAction({ kind: 'todo-detail', payload: toUiTodo(todo) });
-    },
-  });
-  const noteCreate = useMutation({
-    // Quick capture — first line becomes the title (capped at 80 chars),
-    // full text goes into the body. Mirrors the NoteEditorModal contract
-    // but keystroke-light for the Home column. On success, pop the
-    // editor for the just-created note so the user can flesh out the
-    // body / tags / project membership without an extra click. The
-    // editor needs the full ContentItem (toUiNote signature), so we
-    // refetch by id — POST /content only returns { id, status }.
-    mutationFn: async (body: string) => {
-      const firstLine = body.split('\n')[0].trim();
-      const title = (firstLine || 'Untitled note').slice(0, 80);
-      const created = await createNote({ type: 'note', title, content: body, project_ids: [], tags: [] });
-      const full = await getContent(created.id);
-      return full;
-    },
-    onSuccess: (item) => {
-      invalidate();
-      if (item.type === 'note') {
-        onAction({ kind: 'note-edit', payload: toUiNote(item) });
-      }
-    },
-  });
-  const todoToggle = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: Todo['status'] }) =>
-      updateTodo(id, { status }),
-    onSuccess: invalidate,
-  });
-
-  const [todoDraft, setTodoDraft] = useState('');
-  const [noteDraft, setNoteDraft] = useState('');
-
-  // Fit count + ResizeObserver wiring now lives inside <ColumnWidget>.
-
   if (error) {
     return (
       <div className="page">
@@ -615,13 +453,20 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
     );
   }
 
-  if (!ready) {
+  if (projectsQ.isLoading) {
     return (
       <div className="page">
         <div className="page-subtle">Loading…</div>
       </div>
     );
   }
+
+  const tabItems = [
+    { id: 'todos', label: 'Todos', icon: <Icons.Check /> },
+    { id: 'notes', label: 'Notes', icon: <Icons.Note /> },
+    { id: 'documents', label: 'Documents', icon: <Icons.Doc /> },
+    { id: 'activity', label: 'Activity', icon: <Icons.Activity /> },
+  ];
 
   return (
     <div className="page">
@@ -640,39 +485,39 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
           <SearchInput
             value={query}
             onChange={setQuery}
-            // Search is live (debounced) so Enter doesn't need to
-            // submit anything. We provide a no-op so the input still
-            // swallows Enter without bubbling a form submit somewhere.
-            onSubmit={() => { /* live mode — no submit */ }}
+            // Live results appear while typing; Enter escalates to a
+            // synthesized answer over the same scope.
+            onSubmit={submitAsk}
             tags={sortedTagsForChipRow.map((t) => ({ name: t.name, total: t.total }))}
             mentions={mentionTargets}
             projects={projectSuggestions}
             onMentionSelect={(target) => {
               if (target.kind === 'document') {
-                const doc = personalDocs.find((d) => d.id === target.id);
-                if (doc) onAction({ kind: 'doc-read', payload: doc });
+                const raw = (docsQ.data ?? []).find((d) => d.id === target.id);
+                if (raw) onAction({ kind: 'doc-read', payload: toUiDocument(raw) });
               } else {
                 const raw = (notesQ.data ?? []).find((n) => n.id === target.id);
                 if (raw && raw.type === 'note') onAction({ kind: 'note-edit', payload: toUiNote(raw) });
               }
             }}
             // ArrowDown from the input descends focus into the first
-            // search hit — so the flow is: type → ↓ → ↓ → Enter without
-            // ever touching Tab. The results region defines its own
-            // ↑/↓/Enter handler from there (see SearchResultsList).
+            // search hit — type → ↓ → ↓ → Enter without touching Tab.
             onArrowDownExit={() => {
               const first = document.querySelector<HTMLButtonElement>(
                 '.home-search-results .search-hit-title',
               );
               first?.focus();
             }}
-            placeholder="Search… try #tag, in:todo, or @docname"
+            placeholder="Search or ask… try #tag, in:todo, or @docname"
           />
         </div>
-        <div className="home-scope-toggle" role="tablist" aria-label="Search scope">
+        {/* Plain toggle group — NOT a tablist: the real tablist below (the
+            Todos|Notes|… strip) owns that role, and duplicate tablists
+            confuse assistive tech. */}
+        <div className="home-scope-toggle" role="group" aria-label="Search scope">
           <button
             type="button"
-            role="tab"
+            aria-pressed={scope === 'personal'}
             className={cls(scope === 'personal' && 'active')}
             onClick={() => setScope('personal')}
           >
@@ -680,7 +525,7 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
           </button>
           <button
             type="button"
-            role="tab"
+            aria-pressed={scope === 'all'}
             className={cls(scope === 'all' && 'active')}
             onClick={() => setScope('all')}
           >
@@ -690,16 +535,11 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
       </div>
 
       {/* Search-mode chrome — scope chip row + parsed-predicate chips.
-          Visible only while searching so the dashboard isn't cluttered
-          when the user isn't searching. The scope chip row widens
-          beyond the simple Personal|All toggle above to surface every
-          active project (so a search can be scoped to a specific
-          project from the home page without first navigating there). */}
+          Visible only while searching. The scope chip row widens beyond
+          the Personal|All toggle to surface every active project (so a
+          search can be scoped to a specific project from here). */}
       {searchActive ? (
         <>
-          {/* Visible escape hatch out of search mode back to the dashboard.
-              Reuses App's canonical "fresh home" path (wipe URL view-state +
-              remount via homeNonce) — identical to the sidebar Home click. */}
           <button
             type="button"
             className="btn btn-ghost btn-sm home-search-back"
@@ -764,6 +604,49 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
 
       {searchActive ? (
         <div className="home-search-results">
+          {/* Synthesized answer — RAG over the effective scope. */}
+          {askMut.isPending ? (
+            <div className="home-answer-card">
+              <div className="hd"><Icons.Sparkle size={13} /> Thinking…</div>
+            </div>
+          ) : askMut.error ? (
+            <div className="home-answer-card">
+              <div className="hd"><Icons.Sparkle size={13} /> Answer</div>
+              <div className="body" style={{ color: 'var(--danger)' }}>
+                {askMut.error instanceof Error ? askMut.error.message : String(askMut.error)}
+              </div>
+            </div>
+          ) : askMut.data ? (
+            <div className="home-answer-card">
+              <div className="hd">
+                <Icons.Sparkle size={13} /> Answer
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon home-answer-dismiss"
+                  aria-label="Dismiss answer"
+                  onClick={dismissAnswer}
+                >
+                  <Icons.X size={11} />
+                </button>
+              </div>
+              <div className="body">{askMut.data.answer}</div>
+              {askMut.data.citations.length > 0 ? (
+                <div className="cites">
+                  {askMut.data.citations.map((c, i) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="home-answer-cite"
+                      title={c.title}
+                      onClick={() => openCitation(c)}
+                    >
+                      {i + 1}. {c.title}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {searchError ? (
             <div className="page-subtle" style={{ color: 'var(--danger)' }}>
               Search failed: {searchError instanceof Error ? searchError.message : String(searchError)}
@@ -774,7 +657,12 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
             <div className="page-subtle">No results.</div>
           ) : (
             <>
-              <div className="subtle results-count">{searchHits.length} results</div>
+              <div className="subtle results-count">
+                {searchHits.length} results
+                {parsedQuery.text.trim().length > 0 && !askMut.data && !askMut.isPending
+                  ? ' · press Enter to ask for an answer'
+                  : ''}
+              </div>
               <SearchResultsList hits={searchHits} onOpen={(h) => openEntity(h, onAction)} />
             </>
           )}
@@ -787,161 +675,26 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
         <span className="sub">{scopeHeading.subtitle}</span>
       </div>
 
-      <div className="home-personal-grid">
-        <ColumnWidget
-          id="todos"
-          title="Todos"
-          count={filteredTodos.length}
-          sort={<TodoSortDropdown id="home-todos-sort" mode={sortMode} onChange={setSortMode} />}
-          quickAdd={
-            <input
-              placeholder="+ New todo (no project) — press Enter to add"
-              value={todoDraft}
-              onChange={(e) => setTodoDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && todoDraft.trim() && !todoCreate.isPending) {
-                  e.preventDefault();
-                  const c = todoDraft.trim();
-                  setTodoDraft('');
-                  todoCreate.mutate(c);
-                }
-              }}
-              disabled={todoCreate.isPending}
-            />
-          }
-          isEmpty={filteredTodos.length === 0}
-          empty={
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="todos" filter={tagFilter} />
-            ) : (
-              <div className="pcol-empty">Inbox is empty — capture above to get started.</div>
-            )
-          }
-          renderRows={(fit) => (
-            <SortableTodoList
-              rows={filteredTodos.slice(0, fit)}
-              allRows={filteredTodos}
-              isExpanded={isExpanded}
-              onToggleExpand={toggleExpand}
-              onClickRow={(t) => onAction({ kind: 'todo-detail', payload: t })}
-              onToggleDone={(t) =>
-                todoToggle.mutate({
-                  id: t.id,
-                  status: t.status === 'done' ? 'not_started' : 'done',
-                })
-              }
-            />
-          )}
-          totalRows={filteredTodos.length}
-          onMore={() => onAction({ kind: 'personal-todos', tagFilter })}
-        />
-
-        <ColumnWidget
-          id="notes"
-          title="Notes"
-          count={filteredNotes.length}
-          sort={<NoteSortDropdown id="home-notes-sort" mode={noteSortMode} onChange={setNoteSortMode} />}
-          quickAdd={
-            <input
-              placeholder="+ Quick note — press Enter to capture"
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && noteDraft.trim() && !noteCreate.isPending) {
-                  e.preventDefault();
-                  const c = noteDraft.trim();
-                  setNoteDraft('');
-                  noteCreate.mutate(c);
-                }
-              }}
-              disabled={noteCreate.isPending}
-            />
-          }
-          isEmpty={filteredNotes.length === 0}
-          empty={
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="notes" filter={tagFilter} />
-            ) : (
-              <div className="pcol-empty">No personal notes — capture above.</div>
-            )
-          }
-          renderRows={(fit) =>
-            filteredNotes.slice(0, fit).map((n) => (
-              <NoteRow
-                key={n.id}
-                note={toUiNote(n)}
-                folder={n.folder}
-                tags={n.tags}
-                onClick={() => onAction({ kind: 'note-edit', payload: toUiNote(n) })}
-              />
-            ))
-          }
-          totalRows={filteredNotes.length}
-          onMore={() => onAction({ kind: 'personal-notes', tagFilter })}
-        />
+      <div className="tabs-row home-tabs-row">
+        <Tabs value={tab} onChange={(id) => setTab(id as HomeTab)} items={tabItems} />
       </div>
 
-      <div className="home-top-row">
-        <ColumnWidget
-          id="documents"
-          title="Documents"
-          count={filteredDocs.length}
-          sort={<NoteSortDropdown id="home-docs-sort" mode={docSortMode} onChange={setDocSortMode} />}
-          isEmpty={filteredDocs.length === 0}
-          empty={
-            tagFilter.tags.length > 0 ? (
-              <FilterEmpty entity="documents" filter={tagFilter} />
-            ) : (
-              <div className="pcol-empty">No personal documents — upload or save from URL.</div>
-            )
-          }
-          renderRows={(fit) =>
-            filteredDocs.slice(0, fit).map((d) => (
-              <DocRow
-                key={d.id}
-                doc={d}
-                onClick={() => onAction({ kind: 'doc-read', payload: d })}
-              />
-            ))
-          }
-          totalRows={filteredDocs.length}
-          onMore={() => onAction({ kind: 'personal-docs', tagFilter })}
-        />
-        <div className="stat-activity">
-          <div className="ah">
-            <div className="lb">Recent activity</div>
-            <SortDropdown<ActivityFilter>
-              id="home-activity-filter"
-              mode={activityFilter}
-              modes={ACTIVITY_FILTER_MODES}
-              labels={ACTIVITY_FILTER_LABELS}
-              onChange={setActivityFilter}
-              label="Filter"
-            />
-          </div>
-          {activity.length === 0 ? (
-            <div className="page-subtle stat-activity-empty">
-              {activityFilter === 'all' ? 'No recent activity.' : 'No matching events.'}
-            </div>
-          ) : (
-            <div className="activity-list activity-list-compact">
-              {activity.map((a) => (
-                <ActivityRow
-                  key={a.id}
-                  activity={a}
-                  onClick={() => openEntity(a, onAction)}
-                />
-              ))}
-            </div>
-          )}
-          <button
-            className="stat-activity-more"
-            onClick={() => onRoute({ route: 'activity' })}
-          >
-            View full feed
-            <Icons.ChevronRight size={11} />
-          </button>
-        </div>
+      <div className="home-tab-body">
+        {tab === 'todos' && <TodosPanel scope={scope} onAction={onAction} />}
+        {tab === 'notes' && <NotesPanel scope={scope} onAction={onAction} />}
+        {tab === 'documents' && (
+          <DocumentsPanel
+            scope={scope}
+            // Project-scoped Home (via search dispatch / scope chips): give
+            // the panel the project so "Add document" uploads INTO it
+            // instead of silently landing in Personal.
+            project={projects.find((p) => p.id === scope) ?? null}
+            onAction={onAction}
+          />
+        )}
+        {tab === 'activity' && (
+          <HomeActivityTab projectsById={projectsById} onRoute={onRoute} onAction={onAction} />
+        )}
       </div>
 
       {pinned.length > 0 ? (
@@ -960,6 +713,82 @@ export function HomePage({ onRoute, onAction, initialSearch, searchFocusNonce = 
         </div>
       ) : null}
       </>) : null}
+    </div>
+  );
+}
+
+// ── Activity tab ───────────────────────────────────────────
+// The recent-activity feed as a Home tab (global — the activity API has
+// no personal scope). "View full feed" links to the Activity page.
+
+type ActivityFilter = 'all' | 'ingest' | 'edit' | 'comment';
+const ACTIVITY_FILTER_MODES: readonly ActivityFilter[] = ['all', 'ingest', 'edit', 'comment'];
+const ACTIVITY_FILTER_LABELS: Record<ActivityFilter, string> = {
+  all: 'All',
+  ingest: 'Ingestion',
+  edit: 'Updates',
+  comment: 'Comments',
+};
+
+function HomeActivityTab({
+  projectsById,
+  onRoute,
+  onAction,
+}: {
+  projectsById: Map<string, ApiProject>;
+  onRoute: (r: Route) => void;
+  onAction: ActionDispatch;
+}) {
+  const [filter, setFilter] = useState<ActivityFilter>('all');
+  const { data } = useQuery({
+    queryKey: ['activity', 'home-tab', filter],
+    queryFn: () =>
+      listActivity({
+        limit: 50,
+        ...(filter === 'all' ? {} : { kinds: filter }),
+      }),
+    placeholderData: keepPreviousData,
+  });
+  const activity = useMemo(
+    () => (data ?? []).map((e) => toUiActivity(e, projectsById)),
+    [data, projectsById],
+  );
+
+  return (
+    <div className="stat-activity home-activity-tab">
+      <div className="ah">
+        <div className="lb">Recent activity</div>
+        <SortDropdown<ActivityFilter>
+          id="home-activity-filter"
+          mode={filter}
+          modes={ACTIVITY_FILTER_MODES}
+          labels={ACTIVITY_FILTER_LABELS}
+          onChange={setFilter}
+          label="Filter"
+        />
+      </div>
+      {activity.length === 0 ? (
+        <div className="page-subtle stat-activity-empty">
+          {filter === 'all' ? 'No recent activity.' : 'No matching events.'}
+        </div>
+      ) : (
+        <div className="activity-list activity-list-compact">
+          {activity.map((a) => (
+            <ActivityRow
+              key={a.id}
+              activity={a}
+              onClick={() => openEntity(a, onAction)}
+            />
+          ))}
+        </div>
+      )}
+      <button
+        className="stat-activity-more"
+        onClick={() => onRoute({ route: 'activity' })}
+      >
+        View full feed
+        <Icons.ChevronRight size={11} />
+      </button>
     </div>
   );
 }

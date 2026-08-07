@@ -1,9 +1,10 @@
-// Home activity widget on mobile (HOME-M-7..8) — parity with
+// Home Activity tab on mobile (HOME-M-7..8) — parity with
 // desktop/home/activity-click.spec.ts + activity-filter.spec.ts (the filter
-// case is condensed: in-place update, dashboard stays mounted).
+// case is condensed: in-place update, tab strip stays mounted).
 import { expect, test } from '../../helpers/setup';
 
 test('home mobile activity: clicking a row opens the underlying entity modal', async ({ page }) => {
+  await page.locator('.home-tabs-row .tab', { hasText: 'Activity' }).click();
   await expect(page.locator('.stat-activity .activity-list-compact')).toBeVisible();
   const firstRow = page.locator('.stat-activity .activity-row').first();
   await expect(firstRow).toBeVisible();
@@ -26,10 +27,11 @@ test('home mobile activity: clicking a row opens the underlying entity modal', a
   }).toPass({ timeout: 10000 });
 });
 
-test('home mobile activity: changing the filter updates in place, dashboard stays mounted', async ({ page }) => {
+test('home mobile activity: changing the filter updates in place, tab strip stays mounted', async ({ page }) => {
+  await page.locator('.home-tabs-row .tab', { hasText: 'Activity' }).click();
   await expect(page.locator('.stat-activity .activity-list-compact')).toBeVisible();
-  const grid = page.locator('.home-personal-grid');
-  await expect(grid).toBeVisible();
+  const tabsRow = page.locator('.home-tabs-row');
+  await expect(tabsRow).toBeVisible();
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/activity') && r.url().includes('kinds=ingest')),
@@ -37,6 +39,6 @@ test('home mobile activity: changing the filter updates in place, dashboard stay
   ]);
   await expect(page.locator('.stat-activity select')).toHaveValue('ingest');
 
-  await expect(grid).toBeVisible();
+  await expect(tabsRow).toBeVisible();
   await expect(page.locator('.stat-activity')).toBeVisible();
 });

@@ -9,12 +9,14 @@
 //
 // We seed the parent + an existing subtask via REST so the test only
 // needs to drive the UI for the actual flows (add / toggle / click).
+// Entry point: the parent's row in Home's Todos-tab panel (subtasks are
+// collapsed by default, so the parent row is always directly clickable).
 
 import { createTodo, listTodos } from '../../helpers/api';
 import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
-const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';
+const PANEL = '.todos-panel';
 
 test('todo detail: add a subtask via the drawer', async ({ page }) => {
   const parentContent = stamp() + ' Parent for add';
@@ -22,13 +24,10 @@ test('todo detail: add a subtask via the drawer', async ({ page }) => {
   await page.reload();
   await waitForAppReady(page);
 
-  // Open detail via the drawer (works regardless of column slice).
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const listDrawer = page.locator('.drawer');
-  await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  await listDrawer.locator('.prow', { hasText: parentContent }).click();
-  // List drawer closes; detail drawer opens with the parent.
+  // Open detail by clicking the parent's row in the panel.
+  await page.locator(`${PANEL} .prow`, { hasText: parentContent }).click();
   const detail = page.locator('.drawer');
+  await expect(detail).toBeVisible({ timeout: 15000 });
   await expect(detail.locator('.drawer-head .ti', { hasText: parentContent })).toBeVisible();
   await expect(detail.locator('.field-label', { hasText: /Subtasks · 0/ })).toBeVisible();
 
@@ -57,12 +56,9 @@ test('todo detail: toggle a subtask done via its checkbox', async ({ page }) => 
   await page.reload();
   await waitForAppReady(page);
 
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const listDrawer = page.locator('.drawer');
-  await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  await listDrawer.locator('.prow', { hasText: parentContent }).click();
-
+  await page.locator(`${PANEL} .prow`, { hasText: parentContent }).click();
   const detail = page.locator('.drawer');
+  await expect(detail).toBeVisible({ timeout: 15000 });
   const subRow = detail.locator('.todo-subtask-row', { hasText: subContent });
   await expect(subRow).toBeVisible();
 
@@ -95,13 +91,12 @@ test('todo detail: subtask input is gated at the depth cap (max 4 levels)', asyn
   await page.reload();
   await waitForAppReady(page);
 
-  // Open the great-grandchild detail directly via the parent chain.
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const listDrawer = page.locator('.drawer');
-  await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  // Open root → click child → click grand → click great.
-  await listDrawer.locator('.prow', { hasText: rootContent }).click();
+  // Open the great-grandchild detail via the parent chain: click the
+  // root's row, then drill down through the drawer's subtask rows.
+  await page.locator(`${PANEL} .prow`, { hasText: rootContent }).click();
   const detail = page.locator('.drawer');
+  await expect(detail).toBeVisible({ timeout: 15000 });
+  await expect(detail.locator('.drawer-head .ti', { hasText: rootContent })).toBeVisible();
   await detail.locator('.todo-subtask-row', { hasText: childContent }).click();
   await expect(detail.locator('.drawer-head .ti', { hasText: childContent })).toBeVisible({ timeout: 5000 });
   await detail.locator('.todo-subtask-row', { hasText: grandContent }).click();
@@ -131,12 +126,10 @@ test('todo detail: clicking the parent meta link navigates UP to the parent', as
   await page.reload();
   await waitForAppReady(page);
 
-  // Open the drawer + drill to subtask via parent → subtask click.
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const listDrawer = page.locator('.drawer');
-  await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  await listDrawer.locator('.prow', { hasText: parentContent }).click();
+  // Open the parent row + drill to subtask via the subtask-row click.
+  await page.locator(`${PANEL} .prow`, { hasText: parentContent }).click();
   const detail = page.locator('.drawer');
+  await expect(detail).toBeVisible({ timeout: 15000 });
   await expect(detail.locator('.drawer-head .ti', { hasText: parentContent })).toBeVisible();
   await detail.locator('.todo-subtask-row', { hasText: subContent }).click();
   await expect(detail.locator('.drawer-head .ti', { hasText: subContent })).toBeVisible({ timeout: 5000 });
@@ -154,12 +147,9 @@ test('todo detail: clicking a subtask navigates to its detail drawer', async ({ 
   await page.reload();
   await waitForAppReady(page);
 
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const listDrawer = page.locator('.drawer');
-  await expect(listDrawer).toBeVisible({ timeout: 15000 });
-  await listDrawer.locator('.prow', { hasText: parentContent }).click();
-
+  await page.locator(`${PANEL} .prow`, { hasText: parentContent }).click();
   const detail = page.locator('.drawer');
+  await expect(detail).toBeVisible({ timeout: 15000 });
   await expect(detail.locator('.drawer-head .ti', { hasText: parentContent })).toBeVisible();
 
   // Click the subtask row to navigate.

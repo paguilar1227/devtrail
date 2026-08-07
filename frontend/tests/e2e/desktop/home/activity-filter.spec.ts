@@ -1,66 +1,34 @@
-// Recent activity widget filter — regression for the "filter change reloads
-// the whole page" bug.
-//
-// The activity query is keyed by the selected kind filter, so changing the
-// filter mints a new query key with no cached data. The page-level loading
-// gate used to be `queries.some(q => q.isLoading)`, so that one re-keyed
-// query flipped the ENTIRE dashboard to its "Loading…" screen mid-interaction
-// — a full-page blank that read as a reload. The fix latches a `ready` flag
-// after the first load so later refetches update widgets in place.
-//
-// This walks the real path (open Home → change the kind filter) and asserts
-// the full-page loader never appears and the dashboard never unmounts.
+// Home Activity tab filter — changing the kind filter refetches the list
+// and updates it in place. The old full-page-reload regression premise is
+// obsolete (the page no longer gates rendering on the activity query — the
+// tab body owns its own query with keepPreviousData), so this simply pins
+// the in-place behavior: the tab strip stays mounted and the filtered
+// request round-trips while the select changes.
 import { expect, test } from '../../helpers/setup';
 
-test('home: changing the activity filter updates in place, no full-page reload', async ({ page }) => {
-  // Dashboard fully loaded.
+test('home: changing the activity filter updates in place, tab strip stays mounted', async ({ page }) => {
+  // Open the Activity tab and let its list load.
+  await page.locator('.home-tabs-row .tab', { hasText: 'Activity' }).click();
   await expect(page.locator('.stat-activity .activity-list-compact')).toBeVisible();
-  const grid = page.locator('.home-personal-grid');
-  await expect(grid).toBeVisible();
+  const tabsRow = page.locator('.home-tabs-row');
+  await expect(tabsRow).toBeVisible();
 
-  // Flag if the full-page "Loading…" screen ever appears (grid removed +
-  // the loading subtitle shown) — the exact signature of the regression.
-  await page.evaluate(() => {
-    (window as Window & typeof globalThis & { __sawLoadingScreen?: boolean }).__sawLoadingScreen = false;
-    const obs = new MutationObserver(() => {
-      const loading = Array.from(document.querySelectorAll('.page-subtle')).some(
-        (e) => /^Loading/i.test((e.textContent || '').trim()),
-      );
-      if (loading && !document.querySelector('.home-personal-grid')) {
-        (window as Window & typeof globalThis & { __sawLoadingScreen?: boolean }).__sawLoadingScreen = true;
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-    (window as Window & typeof globalThis & { __loadingObs?: MutationObserver }).__loadingObs = obs;
-  });
+  // Change the kind filter and wait for its refetch to land.
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes('/api/v1/activity') && r.url().includes('kinds=ingest'),
+    ),
+    page.locator('.stat-activity select').selectOption('ingest'),
+  ]);
+  await expect(page.locator('.stat-activity select')).toHaveValue('ingest');
 
-  // Change the kind filter and wait for its refetch to land. The observer is
-  // torn down + read in a finally so it's always disconnected even if an
-  // assertion in the try throws.
-  let sawLoadingScreen: boolean | undefined;
-  try {
-    await Promise.all([
-      page.waitForResponse(
-        (r) => r.url().includes('/api/v1/activity') && r.url().includes('kinds=ingest'),
-      ),
-      page.locator('.stat-activity select').selectOption('ingest'),
-    ]);
-    await expect(page.locator('.stat-activity select')).toHaveValue('ingest');
-  } finally {
-    sawLoadingScreen = await page.evaluate(() => {
-      const w = window as Window & typeof globalThis & {
-        __loadingObs?: MutationObserver;
-        __sawLoadingScreen?: boolean;
-      };
-      w.__loadingObs?.disconnect();
-      return w.__sawLoadingScreen;
-    });
-  }
-
-  // The dashboard never dropped to the loading screen…
-  expect(sawLoadingScreen).toBe(false);
-  // …and the grid + activity card stayed mounted (the card renders either
-  // the filtered list or an empty state — both keep .stat-activity present).
-  await expect(grid).toBeVisible();
+  // The tab strip and the activity card stayed mounted (the card renders
+  // either the filtered list or an empty state — both keep .stat-activity
+  // present), and the Activity tab is still the active one.
+  await expect(tabsRow).toBeVisible();
+  await expect(page.locator('.home-tabs-row .tab', { hasText: 'Activity' })).toHaveClass(/active/);
   await expect(page.locator('.stat-activity')).toBeVisible();
+
+  // Ingest events exist in the seed, so the filtered list renders rows.
+  await expect(page.locator('.stat-activity .activity-row').first()).toBeVisible();
 });

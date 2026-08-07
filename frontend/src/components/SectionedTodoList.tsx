@@ -1,13 +1,18 @@
-// DnD list for the Todos view. Top-level todos live in sections; dragging a
-// row reorders it within its section OR moves it to another section (dropping
-// on a row or on a section's body). Subtasks render nested under their parent
-// and are not independently draggable here — section is a root-todo concept.
+// DnD list for the shared TodosPanel. Top-level todos live in sections;
+// dragging a row reorders it within its section OR moves it to another
+// section (dropping on a row or on a section's body). Subtasks render
+// nested under their parent and drag WITHIN their sibling group only —
+// each parent's children get their own nested SortableContext (useSortable
+// binds to the nearest context), and cross-parent / cross-section drops
+// are rejected in the handler: section is a root-todo concept.
 //
 // Persistence rides on two existing fields, no migration:
 //   - cross-section move → updateTodo({ section })
-//   - order             → POST /todos/reorder renumbers manual_order across
-//                          ALL open top-level todos in the new visual order,
-//                          so each section's slice stays internally ordered.
+//   - top-level order    → POST /todos/reorder (parent_id null) renumbers
+//                          manual_order across ALL open top-level todos in
+//                          the new visual order.
+//   - subtask order      → POST /todos/reorder (parent_id <id>) renumbers
+//                          manual_order across that parent's children.
 
 import { Fragment, useMemo } from 'react';
 import {
@@ -18,10 +23,12 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
+  arrayMove,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
@@ -114,8 +121,29 @@ export function SectionedTodoList({
     return undefined;
   };
 
+  // Row lookup + parent → visible children (render order). A dragged
+  // subtask's siblings are always all visible — children only render when
+  // their parent is expanded, so the sibling set built here is complete
+  // and safe to renumber wholesale.
+  const { rowById, childrenByParent } = useMemo(() => {
+    const byId = new Map<string, SortedTodo>();
+    const byParent = new Map<string, SortedTodo[]>();
+    for (const sec of sections) {
+      for (const r of sec.rows) {
+        byId.set(r.todo.id, r);
+        const pid = r.todo.parent_id;
+        if (pid) {
+          const arr = byParent.get(pid);
+          if (arr) arr.push(r);
+          else byParent.set(pid, [r]);
+        }
+      }
+    }
+    return { rowById: byId, childrenByParent: byParent };
+  }, [sections]);
+
   const reorderMut = useMutation({
-    mutationFn: (ids: string[]) => reorderTodos({ parent_id: null, ids }),
+    mutationFn: (req: { parent_id: string | null; ids: string[] }) => reorderTodos(req),
     onSuccess: () => {
       for (const key of invalidateKeys ?? [['todos']]) qc.invalidateQueries({ queryKey: key });
     },
@@ -127,10 +155,76 @@ export function SectionedTodoList({
     },
   });
 
+  // Optimistic cache patch shared by both drag paths: stamp the new
+  // manual_order (and optionally a new section) on every cached todos
+  // query so the next render reflects the drag before the refetch.
+  const patchCaches = (orderById: Map<string, number>, moved?: { id: string; section: string | null }) => {
+    const patch = (t: Todo): Todo => {
+      let n = t;
+      if (orderById.has(t.id)) n = { ...n, manual_order: orderById.get(t.id)! };
+      if (moved && t.id === moved.id) n = { ...n, section: moved.section };
+      return n;
+    };
+    qc.setQueriesData<unknown>({ queryKey: ['todos'] }, (data: unknown) => {
+      if (!data) return data;
+      if (Array.isArray(data)) return (data as Todo[]).map(patch);
+      if (typeof data === 'object' && 'pages' in (data as Record<string, unknown>)) {
+        const inf = data as { pages: Todo[][]; pageParams: unknown[] };
+        return { ...inf, pages: inf.pages.map((p) => p.map(patch)) };
+      }
+      return data;
+    });
+  };
+
+  // Collision detection scoped to the active item's VALID targets. With
+  // plain closestCenter a tall section body's center can beat the sibling
+  // row right under the pointer, so a subtask drop resolved to the section
+  // and was rejected. Subtasks compete only against their siblings;
+  // top-level rows against other top-level rows + section bodies.
+  const collisionForActive: CollisionDetection = (args) => {
+    const activeRow = rowById.get(String(args.active.id));
+    if (activeRow?.todo.parent_id) {
+      const siblings = new Set(
+        (childrenByParent.get(activeRow.todo.parent_id) ?? []).map((r) => r.todo.id),
+      );
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((c) => siblings.has(String(c.id))),
+      });
+    }
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter((c) => {
+        const id = String(c.id);
+        if (id.startsWith('sec:')) return true;
+        return !rowById.get(id)?.todo.parent_id;
+      }),
+    });
+  };
+
   const handleDragEnd = (e: DragEndEvent) => {
     const { active, over } = e;
     if (!over) return;
     const activeId = String(active.id);
+
+    // ── Subtask drag: reorder within the sibling group only. Cross-parent
+    // and cross-section drops are rejected — a subtask's home is its
+    // parent; re-parenting lives in the detail drawer.
+    const activeRow = rowById.get(activeId);
+    if (activeRow?.todo.parent_id) {
+      const parentId = activeRow.todo.parent_id;
+      const overRow = rowById.get(String(over.id));
+      if (!overRow || overRow.todo.parent_id !== parentId) return;
+      const siblings = (childrenByParent.get(parentId) ?? []).map((r) => r.todo.id);
+      const oldIndex = siblings.indexOf(activeId);
+      const newIndex = siblings.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+      const newIds = arrayMove(siblings, oldIndex, newIndex);
+      patchCaches(new Map(newIds.map((id, i) => [id, i + 1])));
+      reorderMut.mutate({ parent_id: parentId, ids: newIds });
+      return;
+    }
+
     const fromSection = sectionOf(activeId);
     if (fromSection === undefined) return;
 
@@ -168,66 +262,51 @@ export function SectionedTodoList({
     const flatIds = next.flatMap((g) => g.ids);
     const sectionChanged = fromSection !== toSection;
 
-    // Optimistic cache patch: section on the moved row + manual_order across
-    // all reordered top-levels. Mirrors SortableTodoList's dual-shape patch.
-    const orderById = new Map(flatIds.map((id, i) => [id, i + 1]));
-    const patch = (t: Todo): Todo => {
-      let n = t;
-      if (orderById.has(t.id)) n = { ...n, manual_order: orderById.get(t.id)! };
-      if (t.id === activeId && sectionChanged) n = { ...n, section: toSection };
-      return n;
-    };
-    qc.setQueriesData<unknown>({ queryKey: ['todos'] }, (data: unknown) => {
-      if (!data) return data;
-      if (Array.isArray(data)) return (data as Todo[]).map(patch);
-      if (typeof data === 'object' && 'pages' in (data as Record<string, unknown>)) {
-        const inf = data as { pages: Todo[][]; pageParams: unknown[] };
-        return { ...inf, pages: inf.pages.map((p) => p.map(patch)) };
-      }
-      return data;
-    });
+    patchCaches(
+      new Map(flatIds.map((id, i) => [id, i + 1])),
+      sectionChanged ? { id: activeId, section: toSection } : undefined,
+    );
 
     if (sectionChanged) moveMut.mutate({ id: activeId, section: toSection });
-    reorderMut.mutate(flatIds);
+    reorderMut.mutate({ parent_id: null, ids: flatIds });
   };
 
-  const renderRows = (rows: SortedTodo[]): React.ReactNode =>
-    rows.map((s) =>
-      s.depth === 0 ? (
+  // Recursive render: every row is sortable; a row's visible children are
+  // wrapped in their own nested SortableContext, so useSortable binds each
+  // subtask to its sibling group and dnd-kit only offers in-place sorts
+  // within that group at any depth.
+  const renderRow = (s: SortedTodo): React.ReactNode => {
+    const childRows = childrenByParent.get(s.todo.id) ?? [];
+    return (
+      <Fragment key={s.todo.id}>
         <SortableRow
-          key={s.todo.id}
           s={s}
           isExpanded={isExpanded}
           onToggleExpand={onToggleExpand}
           onClickRow={onClickRow}
           onToggleDone={onToggleDone}
         />
-      ) : (
-        // Subtasks: nested, not independently draggable.
-        <div key={s.todo.id} className="sectioned-subrow">
-          <TodoRow
-            todo={s.todo}
-            depth={s.depth}
-            childCount={s.childCount}
-            expanded={isExpanded(s.todo.id)}
-            hiddenDescendants={s.hiddenDescendants}
-            onClick={() => onClickRow(s.todo)}
-            onToggleExpand={() => onToggleExpand(s.todo.id)}
-            onToggleDone={() => onToggleDone(s.todo)}
-          />
-        </div>
-      ),
+        {childRows.length > 0 ? (
+          <SortableContext
+            items={childRows.map((c) => c.todo.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {childRows.map(renderRow)}
+          </SortableContext>
+        ) : null}
+      </Fragment>
     );
+  };
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={collisionForActive} onDragEnd={handleDragEnd}>
       {sections.map((sec) => (
         <SectionDroppable key={sec.name ?? UNGROUPED_KEY} name={sec.name} count={sec.topIds.length}>
           <SortableContext items={sec.topIds} strategy={verticalListSortingStrategy}>
             {sec.rows.length === 0 ? (
               <div className="todos-section-empty page-subtle">Drop a todo here</div>
             ) : (
-              renderRows(sec.rows)
+              sec.rows.filter((r) => r.depth === 0).map(renderRow)
             )}
           </SortableContext>
         </SectionDroppable>

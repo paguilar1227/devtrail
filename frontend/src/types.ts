@@ -1,6 +1,3 @@
-import type { TagFilter } from './lib/tagFilter';
-import type { TodoSortMode } from './lib/todoSort';
-
 export type ProjectAccent = 'magenta' | 'violet' | 'indigo' | 'cyan' | 'neutral';
 export type ProjectStatus = 'active' | 'archived' | 'completed';
 
@@ -154,15 +151,16 @@ export type Route =
   // q + scope seed the inline search on HomePage when present (and the
   // URL writes ?q= / ?scope= so bookmarks / back-forward replay
   // naturally). Both default to undefined = no search-mode seed.
-  | { route: 'home'; q?: string; scope?: 'personal' | 'all' | string }
+  // `tab` deep-links a Home tab (sidebar "Todos" → tab: 'todos').
+  | { route: 'home'; q?: string; scope?: 'personal' | 'all' | string; tab?: 'todos' | 'notes' | 'documents' | 'activity' }
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
   | { route: 'tags'; name?: string }
   // Notes browser organized by Folders (hierarchical slash-tags). `path`
   // deep-links a selected folder, `scope` the project scope.
   | { route: 'notes'; path?: string; scope?: 'personal' | 'all' | string }
-  // Todos browser — a sectioned list with a scope dropdown. `scope` mirrors
-  // Notes; sections are stored per todo (todo.section) and scoped naturally.
+  // Standalone Todos view — a shell over the shared TodosPanel with a
+  // scope dropdown. Deliberately kept alongside Home's Todos tab.
   | { route: 'todos'; scope?: 'personal' | 'all' | string }
   | { route: 'activity' }
   | { route: 'trash' };
@@ -177,14 +175,11 @@ export type ModalKind =
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }
   | { kind: 'confirm-rename'; payload: TagRow }
   | { kind: 'new-project' }
-  | { kind: 'settings' }
+  | { kind: 'settings' };
   // `search` is no longer a modal — it's a route. Callers should
-  // navigate via onRoute({ route: 'home', q, scope }). Kept commented
-  // for grep-discoverability if you're looking for "where did the
-  // search modal go" while reading old code.
-  // | { kind: 'search'; payload?: { query?: string; scope?: 'personal' | 'all' | string } }
-  | { kind: 'personal-todos'; sort?: TodoSortMode; tagFilter?: TagFilter }
-  | { kind: 'personal-notes'; tagFilter?: TagFilter }
-  | { kind: 'personal-docs'; tagFilter?: TagFilter };
+  // navigate via onRoute({ route: 'home', q, scope }). The old
+  // personal-todos / personal-notes / personal-docs list drawers are
+  // gone too: Home's tabs render the full-height shared panels, so
+  // there is no "More" overflow to open a drawer for.
 
 export type ActionDispatch = (modal: ModalKind) => void;

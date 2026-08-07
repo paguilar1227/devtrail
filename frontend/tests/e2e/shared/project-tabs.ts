@@ -57,7 +57,10 @@ export function defineProjectTabsTests() {
     await tab(page, 'Notes').click();
     await expect(page.locator('.note-grid .note-card')).toHaveCount(1);
     await tab(page, 'Todos').click();
-    await expect(page.locator('.todo-group', { hasText: 'Open' })).toBeVisible();
+    // The Todos tab renders the shared sectioned panel; the parent todo is
+    // a top-level row (its subtask stays collapsed behind the chevron).
+    await expect(page.locator('.todos-panel')).toBeVisible();
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: 'tab todo' })).toBeVisible();
   });
 
   test('documents tab: type filter chips narrow files vs URLs', async ({ page }) => {
@@ -176,7 +179,7 @@ export function defineProjectTabsTests() {
     await expect(page.locator('.note-grid')).toBeVisible();
   });
 
-  test('todos tab: quick-add lands in Open; checkbox moves it to Done', async ({ page }) => {
+  test('todos tab: quick-add lands in the sections; checkbox moves it to the Done group', async ({ page }) => {
     const name = `${stamp()} TodoAddProj`;
     await createProject(name, 'todos-tab quick-add fixture');
     await openFreshProject(page, name);
@@ -186,37 +189,46 @@ export function defineProjectTabsTests() {
     await page.getByPlaceholder(`Add a todo to ${name} — Enter to save`).fill(title);
     await page.keyboard.press('Enter');
 
-    const openGroup = page.locator('.todo-group', { hasText: 'Open' });
-    const row = openGroup.locator('.prow-todo', { hasText: title });
+    // Fast path: no drawer — the row lands straight in the open sections.
+    const row = page.locator('.todos-panel .todos-section .prow-todo', { hasText: title });
     await expect(row).toBeVisible();
 
     await row.locator('.checkbox').click();
-    const doneGroup = page.locator('.todo-group', { hasText: 'Done' });
-    await expect(doneGroup.locator('.prow-todo', { hasText: title })).toBeVisible();
+    // Completed top-levels collapse into the Done group at the bottom —
+    // the row leaves the open list until Done is expanded.
+    await expect(row).toHaveCount(0);
+    await page.locator('.todos-done-head').click();
+    const doneRow = page.locator('.todos-done .prow-todo', { hasText: title });
+    await expect(doneRow).toBeVisible();
+    await expect(doneRow).toHaveClass(/prow-done/);
   });
 
-  test('todos tab: Hierarchy nests the subtask, Flat flattens it', async ({ page }) => {
+  test('todos tab: chevron expands and collapses the subtask tree', async ({ page }) => {
     const name = `${stamp()} TodoHierProj`;
     const p = await createProject(name, 'todos-tab hierarchy fixture');
-    const parent = await createTodo(`${stamp()} hier parent`, p.id);
+    const parentTitle = `${stamp()} hier parent`;
+    const parent = await createTodo(parentTitle, p.id);
     const childTitle = `${stamp()} hier child`;
     await createTodo(childTitle, p.id, { parent_id: parent.id });
 
     await openFreshProject(page, name);
     await tab(page, 'Todos').click();
 
-    // Hierarchy (default): the child renders indented at depth 1.
-    await expect(page.locator('.prow-todo[data-depth="1"]', { hasText: childTitle })).toBeVisible();
+    // Collapsed by default: the parent row renders, the child does not.
+    const parentRow = page.locator('.todos-panel .prow-todo', { hasText: parentTitle });
+    await expect(parentRow).toBeVisible();
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: childTitle })).toHaveCount(0);
 
-    await page.locator('.seg-toggle button', { hasText: 'Flat' }).click();
-    await expect(page.locator('.prow-todo[data-depth="1"]')).toHaveCount(0);
-    await expect(page.locator('.prow-todo[data-depth="0"]', { hasText: childTitle })).toBeVisible();
+    // Expand via the chevron: the child renders nested at depth 1.
+    await parentRow.locator('.prow-chev').click();
+    await expect(page.locator('.todos-panel .prow-todo[data-depth="1"]', { hasText: childTitle })).toBeVisible();
 
-    await page.locator('.seg-toggle button', { hasText: 'Hierarchy' }).click();
-    await expect(page.locator('.prow-todo[data-depth="1"]', { hasText: childTitle })).toBeVisible();
+    // Collapse hides it again.
+    await parentRow.locator('.prow-chev').click();
+    await expect(page.locator('.todos-panel .prow-todo', { hasText: childTitle })).toHaveCount(0);
   });
 
-  test('todos tab: filter chips narrow to Open / Overdue / P1 (intent fix)', async ({ page }) => {
+  test('todos tab: priority + due-lens chips narrow the sections; Clear restores', async ({ page }) => {
     const name = `${stamp()} TodoChipProj`;
     const p = await createProject(name, 'todos-tab chip fixture');
     const plain = await createTodo(`${stamp()} chip plain`, p.id);
@@ -226,30 +238,40 @@ export function defineProjectTabsTests() {
     await updateTodo(p1.id, { priority: 'P1' });
     const done = await createTodo(`${stamp()} chip done`, p.id);
     await updateTodo(done.id, { status: 'done' });
+    void plain;
 
     await openFreshProject(page, name);
     await tab(page, 'Todos').click();
-    const row = (title: string) => page.locator('.prow-todo', { hasText: title });
+    // Scope to the open sections: done top-levels always live in the
+    // collapsed Done group, independent of the filter chips.
+    const row = (title: string) =>
+      page.locator('.todos-panel .todos-section:not(.todos-done) .prow-todo', { hasText: title });
+    const chips = page.locator('.todos-panel .todos-filters');
+    await expect(chips).toBeVisible();
 
-    // Open: done row drops out, the rest stay.
-    await page.locator('.filter-chip', { hasText: 'Open' }).click();
+    // Default: open rows visible, the done row collapsed away.
     await expect(row('chip plain')).toBeVisible();
     await expect(row('chip done')).toHaveCount(0);
 
-    // Overdue: only the overdue row survives.
-    await page.locator('.filter-chip', { hasText: 'Overdue' }).click();
+    // Overdue lens: only the overdue row survives in the sections.
+    await chips.locator('.filter-chip', { hasText: 'Overdue' }).click();
     await expect(row('chip overdue')).toBeVisible();
     await expect(row('chip plain')).toHaveCount(0);
 
-    // P1: only the P1 row survives.
-    await page.locator('.filter-chip', { hasText: 'P1' }).click();
-    await expect(row('chip p-one')).toBeVisible();
+    // Stack P1 on top: the overdue row (P3) drops too — nothing is both
+    // P1 and overdue. Then drop the due lens: the P1 row remains.
+    await chips.locator('.filter-chip', { hasText: /^P1$/ }).click();
     await expect(row('chip overdue')).toHaveCount(0);
+    await chips.locator('.filter-chip', { hasText: 'Overdue' }).click();
+    await expect(row('chip p-one')).toBeVisible();
+    await expect(row('chip plain')).toHaveCount(0);
 
-    // All restores everything, including the done group.
-    await page.locator('.filter-chip', { hasText: /^All/ }).click();
+    // Clear restores every open row; the done row is reachable via Done.
+    await chips.locator('button', { hasText: 'Clear' }).click();
     await expect(row('chip plain')).toBeVisible();
-    await expect(row('chip done')).toBeVisible();
+    await expect(row('chip overdue')).toBeVisible();
+    await page.locator('.todos-done-head').click();
+    await expect(page.locator('.todos-done .prow-todo', { hasText: 'chip done' })).toBeVisible();
   });
 
   test('todos tab: Add details creates from the draft and opens the detail drawer (intent fix)', async ({ page }) => {
@@ -271,9 +293,9 @@ export function defineProjectTabsTests() {
     await expect(drawer).toContainText(title);
     await drawer.locator('.drawer-head button[aria-label="Close"]').click();
 
-    // …and the row is in the Open group.
+    // …and the row is in the open sections.
     await expect(
-      page.locator('.todo-group', { hasText: 'Open' }).locator('.prow-todo', { hasText: title }),
+      page.locator('.todos-panel .todos-section .prow-todo', { hasText: title }),
     ).toBeVisible();
   });
 
@@ -332,7 +354,7 @@ export function defineProjectTabsTests() {
     }).toBe(true);
   });
 
-  test('todos tab: search filters to flat ranked rows; clearing restores groups', async ({ page }) => {
+  test('todos tab: search filters to flat ranked rows; clearing restores sections', async ({ page }) => {
     const name = `${stamp()} TodoSearchProj`;
     const p = await createProject(name, 'todos-tab search fixture');
     const title = `${stamp()} kraken hunt todo`;
@@ -340,13 +362,13 @@ export function defineProjectTabsTests() {
 
     await openFreshProject(page, name);
     await tab(page, 'Todos').click();
-    await expect(page.locator('.todo-group', { hasText: 'Open' })).toBeVisible();
+    await expect(page.locator('.todos-panel .todos-section').first()).toBeVisible();
 
     await page.getByPlaceholder(`Search ${name} todos… try #tag`).fill('kraken');
-    await expect(page.locator('.todo-list-drawer-rows .prow-todo', { hasText: title })).toBeVisible();
-    await expect(page.locator('.todo-group')).toHaveCount(0);
+    await expect(page.locator('.todos-search-rows .prow-todo', { hasText: title })).toBeVisible();
+    await expect(page.locator('.todos-panel .todos-section')).toHaveCount(0);
 
     await page.getByPlaceholder(`Search ${name} todos… try #tag`).fill('');
-    await expect(page.locator('.todo-group', { hasText: 'Open' })).toBeVisible();
+    await expect(page.locator('.todos-panel .todos-section').first()).toBeVisible();
   });
 }

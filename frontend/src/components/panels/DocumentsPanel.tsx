@@ -1,0 +1,385 @@
+// The shared documents surface — used by Home's Documents tab (scope
+// 'personal' | 'all') and the project page's Documents tab (scope =
+// project UUID). Full browse: type/status filters, bulk select with
+// tag/move/pin/reprocess/archive, retry on failed ingests.
+//
+// "Move to project" semantics depend on scope: in a project scope it
+// SWAPS this project's membership for the target (multi-project rows
+// keep their other memberships); in personal/all scope it ADDS the
+// target membership.
+
+import { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Icons } from '../Icons';
+import { BulkCheckbox, FilterChip, Status, Tag } from '../primitives';
+import {
+  archiveContent,
+  listContent,
+  listProjects,
+  pinContent,
+  reprocessContent,
+  retryContent,
+  unpinContent,
+  updateContent,
+} from '../../lib/api';
+import { toUiDocument } from '../../lib/view';
+import { cls, fmtRel } from '../../lib/util';
+import type { ActionDispatch, DocumentType, Project } from '../../types';
+import { scopeToProjectId, type PanelScope } from './TodosPanel';
+
+interface Props {
+  scope: PanelScope;
+  onAction: ActionDispatch;
+  /** The project entity when scope is a project — target for the upload
+   *  modal and excluded from "Move to project" targets. */
+  project?: Project | null;
+}
+
+type DocFilter = 'all' | 'pinned' | 'pending' | 'failed';
+type DocTypeFilter = 'all' | DocumentType;
+
+export function DocumentsPanel({ scope, onAction, project }: Props) {
+  const qc = useQueryClient();
+  const projectId = scopeToProjectId(scope);
+  const isProjectScope = scope !== 'personal' && scope !== 'all';
+  // keepPreviousData: the scope prop re-keys the query mid-interaction
+  // (Home's Personal/All toggle) — without it the whole panel chrome
+  // unmounts to "Loading…" on every flip.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['content', 'document', 'panel', scope],
+    queryFn: () => listContent(projectId === undefined ? { type: 'document' } : { type: 'document', project_id: projectId }),
+    placeholderData: keepPreviousData,
+  });
+
+  const docs = useMemo(() => (data ?? []).map(toUiDocument), [data]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<DocFilter>('all');
+  const [type, setType] = useState<DocTypeFilter>('all');
+  // Bulk-bar inline editors: 'tag' reveals a tag input, 'move' a project
+  // select. Only one open at a time.
+  const [bulkEditor, setBulkEditor] = useState<null | 'tag' | 'move'>(null);
+  const [bulkTag, setBulkTag] = useState('');
+  const { data: allProjects } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => listProjects() });
+  const moveTargets = useMemo(
+    () => (allProjects ?? []).filter((p) => p.status === 'active' && (!isProjectScope || p.id !== scope)),
+    [allProjects, isProjectScope, scope],
+  );
+
+  // Scope change MUST clear the bulk selection: ids selected under one
+  // scope refer to rows that may be invisible in the next, and letting
+  // Archive/Move act on hidden documents — or rebuild project_ids from a
+  // stale list — is silent data damage (council-review finding). Filters
+  // reset with it so the panel reads fresh per scope.
+  useEffect(() => {
+    setSelected(new Set());
+    setBulkEditor(null);
+    setBulkTag('');
+    setBulkError(null);
+    setFilter('all');
+    setType('all');
+  }, [scope]);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['content'] });
+    qc.invalidateQueries({ queryKey: ['project-counts'] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+    qc.invalidateQueries({ queryKey: ['activity'] });
+  };
+  const archiveMut = useMutation({ mutationFn: archiveContent, onSuccess: invalidate });
+  const pinMut = useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => (pinned ? unpinContent(id) : pinContent(id)),
+    onSuccess: invalidate,
+  });
+  const retryMut = useMutation({ mutationFn: retryContent, onSuccess: invalidate });
+  const reprocessMut = useMutation({ mutationFn: reprocessContent, onSuccess: invalidate });
+  // Bulk mutations update items one by one; a mid-loop failure must neither
+  // strand the cache (invalidate runs in onSettled) nor pass silently (the
+  // count of failed items is surfaced under the bulk bar).
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const runBulk = async (ids: string[], apply: (id: string) => Promise<void>, verb: string) => {
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await apply(id);
+      } catch {
+        failed++;
+      }
+    }
+    if (failed > 0) throw new Error(`${failed} of ${ids.length} items failed to ${verb}`);
+  };
+  // Bulk tag: additive — append the tag to each selected doc's existing set.
+  const bulkTagMut = useMutation({
+    mutationFn: ({ ids, tag }: { ids: string[]; tag: string }) =>
+      runBulk(ids, async (id) => {
+        const doc = docs.find((d) => d.id === id);
+        if (!doc || doc.tags.includes(tag)) return;
+        await updateContent(id, { tags: [...doc.tags, tag] });
+      }, 'tag'),
+    onSuccess: () => setBulkError(null),
+    onError: (err) => setBulkError(err instanceof Error ? err.message : String(err)),
+    onSettled: invalidate,
+  });
+  // Bulk move: in project scope, swap THIS project's membership for the
+  // target — documents can belong to several projects, and moving out of
+  // one must not strip the rest. In personal/all scope there's nothing to
+  // swap out, so the target membership is simply added.
+  const bulkMoveMut = useMutation({
+    mutationFn: ({ ids, projectId: targetId }: { ids: string[]; projectId: string }) =>
+      runBulk(ids, async (id) => {
+        const doc = docs.find((d) => d.id === id);
+        const others = (doc?.project_ids ?? []).filter((p) => (!isProjectScope || p !== scope) && p !== targetId);
+        await updateContent(id, { project_ids: [...others, targetId] });
+      }, 'move'),
+    onSuccess: () => setBulkError(null),
+    onError: (err) => setBulkError(err instanceof Error ? err.message : String(err)),
+    onSettled: invalidate,
+  });
+
+  const filtered = docs.filter(d => {
+    if (filter === 'pinned' && !d.pinned) return false;
+    if (filter === 'pending' && d.processing_status !== 'pending') return false;
+    if (filter === 'failed' && d.processing_status !== 'failed') return false;
+    if (type !== 'all' && d.type !== type) return false;
+    return true;
+  });
+  const allSelected = filtered.length > 0 && filtered.every(d => selected.has(d.id));
+  const toggle = (id: string) =>
+    setSelected(s => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map(d => d.id)));
+
+  if (error) {
+    return <div className="page-subtle" style={{ color: 'var(--danger)' }}>Failed to load documents: {String((error as Error).message)}</div>;
+  }
+  if (isLoading) {
+    return <div className="page-subtle">Loading documents…</div>;
+  }
+
+  return (
+    <div className="documents-panel">
+      <div className="filter-bar">
+        <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
+          All <span style={{ marginLeft: 4 }}>{docs.length}</span>
+        </FilterChip>
+        <FilterChip active={filter === 'pinned'} onClick={() => setFilter('pinned')}>
+          Pinned <span style={{ marginLeft: 4 }}>{docs.filter(d => d.pinned).length}</span>
+        </FilterChip>
+        <FilterChip active={filter === 'pending'} onClick={() => setFilter('pending')}>
+          Processing <span style={{ marginLeft: 4 }}>{docs.filter(d => d.processing_status === 'pending').length}</span>
+        </FilterChip>
+        <FilterChip active={filter === 'failed'} onClick={() => setFilter('failed')}>
+          Failed <span style={{ marginLeft: 4 }}>{docs.filter(d => d.processing_status === 'failed').length}</span>
+        </FilterChip>
+        <span style={{ width: 1, height: 18, background: 'var(--hairline)', margin: '0 4px' }} />
+        <FilterChip active={type === 'all'} onClick={() => setType('all')}>Any type</FilterChip>
+        <FilterChip active={type === 'binary'} onClick={() => setType('binary')}>Files</FilterChip>
+        <FilterChip active={type === 'url'} onClick={() => setType('url')}>URLs</FilterChip>
+        <FilterChip active={type === 'note-as-doc'} onClick={() => setType('note-as-doc')}>Notes-as-doc</FilterChip>
+        <span style={{ marginLeft: 'auto' }} className="row-flex gap-1">
+          <button className="btn btn-sm" onClick={() => onAction({ kind: 'upload', payload: project ?? null })}>
+            <Icons.Plus /> Add document
+          </button>
+        </span>
+      </div>
+
+      {docs.length === 0 ? (
+        <div className="page-subtle">
+          {isProjectScope ? 'No documents in this project yet.' : 'No personal documents — upload or save from URL.'}
+        </div>
+      ) : (
+        <>
+          <div className="row-flex gap-2 list-bulk-bar">
+            <BulkCheckbox checked={allSelected} onClick={toggleAll} />
+            <span className="subtle">
+              {filtered.length} of {docs.length} {selected.size ? `· ${selected.size} selected` : ''}
+            </span>
+          </div>
+
+          <div className="doc-list">
+            {filtered.map(d => (
+              <div key={d.id} className={cls('doc-row', selected.has(d.id) && 'selected')}>
+                <BulkCheckbox checked={selected.has(d.id)} onClick={() => toggle(d.id)} />
+                <div className="ic-box">
+                  {d.type === 'binary' ? <Icons.Doc /> : d.type === 'url' ? <Icons.Globe /> : <Icons.Note />}
+                </div>
+                <div onClick={() => d.processing_status === 'ready' && onAction({ kind: 'doc-read', payload: d })}>
+                  <div className="row-flex gap-2">
+                    <span className="nm">{d.title}</span>
+                    {d.pinned ? <Icons.Pin size={11} style={{ color: 'var(--fg-subtle)' }} /> : null}
+                    {d.tags.slice(0, 2).map(t => (
+                      <Tag key={t}>{t}</Tag>
+                    ))}
+                    {d.project_ids.length > 1 ? <Tag>+{d.project_ids.length - 1} project</Tag> : null}
+                  </div>
+                  <div className="sub">
+                    <Status status={d.processing_status} error={d.processing_error} />
+                    <span>{d.size}</span>
+                    {d.source_url ? (
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}>
+                        {d.source_url}
+                      </span>
+                    ) : null}
+                    {d.file_hash ? <span>sha {d.file_hash.slice(0, 7)}</span> : null}
+                    {d.processing_status === 'failed' ? (
+                      <span style={{ color: 'oklch(0.72 0.14 25)' }}>{d.processing_error}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <span className="date">{fmtRel(d.created_at)}</span>
+                <div className="actions">
+                  {d.processing_status === 'failed' ? (
+                    <button
+                      className="btn btn-sm"
+                      disabled={retryMut.isPending}
+                      onClick={() => retryMut.mutate(d.id)}
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    title={d.pinned ? 'Unpin' : 'Pin'}
+                    disabled={pinMut.isPending}
+                    onClick={() => pinMut.mutate({ id: d.id, pinned: !!d.pinned })}
+                  >
+                    <Icons.Pin />
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    title="Reprocess"
+                    disabled={reprocessMut.isPending || d.processing_status === 'pending'}
+                    onClick={() => reprocessMut.mutate(d.id)}
+                  >
+                    <Icons.Sparkle />
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    title="Archive"
+                    disabled={archiveMut.isPending}
+                    onClick={() => archiveMut.mutate(d.id)}
+                  >
+                    <Icons.ArchiveBox />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {selected.size > 0 ? (
+        <div className="bulk-bar">
+          <span className="ct">{selected.size} selected</span>
+          <span className="sep" />
+          <button
+            className={cls('btn btn-sm', bulkEditor === 'tag' && 'active')}
+            disabled={bulkTagMut.isPending}
+            onClick={() => setBulkEditor((cur) => (cur === 'tag' ? null : 'tag'))}
+          >
+            Tag
+          </button>
+          <button
+            className={cls('btn btn-sm', bulkEditor === 'move' && 'active')}
+            disabled={bulkMoveMut.isPending || moveTargets.length === 0}
+            onClick={() => setBulkEditor((cur) => (cur === 'move' ? null : 'move'))}
+          >
+            Move to project
+          </button>
+          {bulkEditor === 'tag' ? (
+            <input
+              className="input input-tag"
+              autoFocus
+              placeholder="tag-name — Enter applies to selection"
+              value={bulkTag}
+              onChange={(e) => setBulkTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setBulkEditor(null); setBulkTag(''); }
+                if (e.key === 'Enter' && bulkTag.trim() && !bulkTagMut.isPending) {
+                  const tag = bulkTag.trim().toLowerCase();
+                  const ids = Array.from(selected);
+                  setBulkTag('');
+                  setBulkEditor(null);
+                  setSelected(new Set());
+                  bulkTagMut.mutate({ ids, tag });
+                }
+              }}
+            />
+          ) : null}
+          {bulkEditor === 'move' ? (
+            <select
+              className="input"
+              autoFocus
+              aria-label="Move selection to project"
+              defaultValue=""
+              onChange={(e) => {
+                const projectId = e.target.value;
+                if (!projectId) return;
+                const ids = Array.from(selected);
+                setBulkEditor(null);
+                setSelected(new Set());
+                bulkMoveMut.mutate({ ids, projectId });
+              }}
+            >
+              <option value="" disabled>Move to…</option>
+              {moveTargets.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            className="btn btn-sm"
+            disabled={pinMut.isPending}
+            onClick={() => {
+              const ids = Array.from(selected);
+              setSelected(new Set());
+              ids.forEach((id) => {
+                const doc = docs.find((x) => x.id === id);
+                pinMut.mutate({ id, pinned: !!doc?.pinned });
+              });
+            }}
+          >
+            Pin
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={reprocessMut.isPending}
+            onClick={() => {
+              const ids = Array.from(selected).filter((id) => {
+                const doc = docs.find((x) => x.id === id);
+                return doc?.processing_status !== 'pending';
+              });
+              setSelected(new Set());
+              ids.forEach((id) => reprocessMut.mutate(id));
+            }}
+          >
+            Reprocess
+          </button>
+          <span className="sep" />
+          <button
+            className="btn btn-sm btn-danger"
+            disabled={archiveMut.isPending}
+            onClick={() => {
+              const ids = Array.from(selected);
+              setSelected(new Set());
+              ids.forEach((id) => archiveMut.mutate(id));
+            }}
+          >
+            Archive
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        </div>
+      ) : null}
+      {bulkError ? (
+        <div className="page-subtle" style={{ color: 'var(--danger)', marginTop: 6 }}>
+          {bulkError} — the list has been refreshed; retry on the remaining items.
+        </div>
+      ) : null}
+    </div>
+  );
+}

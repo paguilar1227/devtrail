@@ -1,6 +1,12 @@
-// Tag filtering at the top of Home, applied to all 3 personal widgets
-// (todos / notes / documents). Verifies the chip-row UX, the AND/OR
-// toggle, and URL persistence + reload hydration.
+// Tag filtering at the top of Home — the page-level chip row writes #tag
+// predicates into the universal search, flipping the page into the unified
+// results list. Verifies the chip-row UX, the AND/OR toggle, and URL
+// persistence + reload hydration.
+//
+// Selector note: the Todos panel embeds its OWN HomeTagFilter (inside
+// .view-tagbar), so every locator here scopes to the page-level bar via
+// `.page > [data-tag-filter]` — a bare [data-tag-filter] is ambiguous in
+// browse mode.
 
 import {
   createDoc,
@@ -44,11 +50,11 @@ test.describe('Home tag filtering', () => {
     await createDoc(`${s} doc-A`, 'doc body A', { tags: [TAG_A] });
     await createDoc(`${s} doc-B`, 'doc body B', { tags: [TAG_B] });
     await page.reload();
-    await page.locator('[data-tag-filter]').waitFor({ state: 'visible' });
+    await page.locator('.page > [data-tag-filter]').waitFor({ state: 'visible' });
   });
 
   test('chip row renders + Clear hidden until a chip is active', async ({ page }) => {
-    const filterBar = page.locator('[data-tag-filter]');
+    const filterBar = page.locator('.page > [data-tag-filter]');
     await expect(filterBar).toBeVisible();
     // Our seeded tags appear as chips somewhere in the row.
     await expect(filterBar.getByRole('button', { name: `#${TAG_A}` })).toBeVisible();
@@ -58,7 +64,7 @@ test.describe('Home tag filtering', () => {
   });
 
   test('single tag scopes the results + URL updates + Clear restores', async ({ page }) => {
-    const filterBar = page.locator('[data-tag-filter]');
+    const filterBar = page.locator('.page > [data-tag-filter]');
     const chipA = filterBar.getByRole('button', { name: `#${TAG_A}` });
     await chipA.click();
     await expect(chipA).toHaveAttribute('aria-pressed', 'true');
@@ -75,15 +81,16 @@ test.describe('Home tag filtering', () => {
     await expect(results.filter({ hasText: `${s} todo-AB` })).toHaveCount(1);
     await expect(results.filter({ hasText: `${s} todo-B` })).toHaveCount(0);
 
-    // Clear restores the dashboard: results list gone, the columns return.
+    // Clear restores the dashboard: results list gone, the tabbed panels return.
     await filterBar.getByRole('button', { name: /clear tag filter/i }).click();
     await expect.poll(() => new URL(page.url()).searchParams.has('tag')).toBe(false);
     await expect(chipA).toHaveAttribute('aria-pressed', 'false');
-    await expect(page.locator('[data-pcol="todos"]')).toBeVisible();
+    await expect(page.locator('.home-tabs-row')).toBeVisible();
+    await expect(page.locator('.todos-panel')).toBeVisible();
   });
 
   test('AND toggle: OR yields the union, AND the intersection', async ({ page }) => {
-    const filterBar = page.locator('[data-tag-filter]');
+    const filterBar = page.locator('.page > [data-tag-filter]');
     await filterBar.getByRole('button', { name: `#${TAG_A}` }).click();
     // Mode toggle hidden at 1 selected.
     await expect(filterBar.locator('.home-tag-filter-mode-btn')).toHaveCount(0);
@@ -119,7 +126,7 @@ test.describe('Home tag filtering', () => {
     // Wait specifically for the chip row to mount (NOT for networkidle —
     // that misses the flash window). The first observable state of the
     // chip MUST be pressed=true, never pressed=false then pressed=true.
-    const chipA = page.locator(`[data-tag-filter] button:has-text("#${TAG_A}")`);
+    const chipA = page.locator(`.page > [data-tag-filter] button:has-text("#${TAG_A}")`);
     await chipA.waitFor({ state: 'attached' });
     await expect(chipA).toHaveAttribute('aria-pressed', 'true');
     // The hydrated tag drives the unified search-results list from first
@@ -131,7 +138,7 @@ test.describe('Home tag filtering', () => {
   });
 
   test('keyboard nav: ArrowRight moves focus, Space toggles', async ({ page }) => {
-    const chipA = page.locator(`[data-tag-filter] button:has-text("#${TAG_A}")`);
+    const chipA = page.locator(`.page > [data-tag-filter] button:has-text("#${TAG_A}")`);
     await chipA.focus();
     await page.keyboard.press('Space');
     await expect(chipA).toHaveAttribute('aria-pressed', 'true');
@@ -148,7 +155,7 @@ test.describe('Home tag filtering', () => {
     // read otherwise races React's state update AND the search-mode re-render
     // that selecting the 2nd tag triggers (this is what made the test flaky).
     // Focus stays on the chip across that re-render, so `:focus` stays valid.
-    const focusedChip = page.locator('[data-tag-filter] button[aria-pressed]:focus');
+    const focusedChip = page.locator('.page > [data-tag-filter] button[aria-pressed]:focus');
     await expect(focusedChip).toHaveAttribute('aria-pressed', 'false');
     await page.keyboard.press('Space');
     await expect(focusedChip).toHaveAttribute('aria-pressed', 'true');

@@ -5,6 +5,15 @@
 > (Postgres 5434 + Azurite + stub LLM), seeded via `scripts/seed-local.ts`.
 >
 > Status legend: ☐ planned · ✅ implemented & green · ⛔ excluded (justified)
+>
+> ⚠️ **Partially historical since the Home-tabs consolidation (2026-08).** Home's widget
+> columns, the personal-* list drawers, and the widget cap were retired — Home now renders
+> the shared `TodosPanel`/`NotesPanel`/`DocumentsPanel` under tabs (same components as the
+> project tabs), and Enter in the Home search box asks the knowledge base (RAG). The
+> standalone Todos view remains, as a shell over the same TodosPanel. Rows below that
+> reference drawers / the widget cap describe surfaces that no longer exist; their flows
+> were migrated onto the panel surfaces where still meaningful. The spec files under
+> `tests/e2e/` are the source of truth for current coverage.
 
 ## 1. Baseline
 

@@ -7,10 +7,7 @@ import { ConfirmModal } from './components/modals/ConfirmModal';
 import { DocReaderDrawer } from './components/modals/DocReaderDrawer';
 import { ProjectModal } from './components/modals/ProjectModal';
 import { NoteEditorModal } from './components/modals/NoteEditorModal';
-import { NoteListDrawer } from './components/modals/NoteListDrawer';
-import { DocListDrawer } from './components/modals/DocListDrawer';
 import { TodoDetailDrawer } from './components/modals/TodoDetailDrawer';
-import { TodoListDrawer } from './components/modals/TodoListDrawer';
 import { UploadModal } from './components/modals/UploadModal';
 import { useIsMobile } from './lib/useIsMobile';
 import { useProjects } from './lib/useProjects';
@@ -120,8 +117,10 @@ export default function App() {
   const navigate = useCallback((r: Route) => {
     if (r.route === 'home' && !r.q && !r.scope) {
       // "Fresh home" intent — wipe URL view-state (q, scope, tag, mode)
-      // and force a HomePage remount so its internal state matches.
-      window.history.replaceState(null, '', '/');
+      // and force a HomePage remount so its internal state matches. A tab
+      // deep-link (sidebar "Todos") keeps its ?tab so the remount lands
+      // on the right tab.
+      window.history.replaceState(null, '', r.tab && r.tab !== 'todos' ? `/?tab=${r.tab}` : '/');
       setHomeNonce((n) => n + 1);
     }
     setRoute(r);
@@ -198,6 +197,7 @@ export default function App() {
               // q + scope on the home route are the cross-page search
               // seed; HomePage reads them on mount.
               initialSearch={route.q || route.scope ? { query: route.q, scope: route.scope } : undefined}
+              initialTab={route.tab}
               searchFocusNonce={searchFocusNonce}
             />
           )}
@@ -240,16 +240,8 @@ export default function App() {
       {modal?.kind === 'settings' && (
         <SettingsModal theme={theme} onTheme={setTheme} onClose={() => setModal(null)} />
       )}
-      {/* Search is inline on HomePage; no modal here. */}
-      {modal?.kind === 'personal-todos' && (
-        <TodoListDrawer initialSort={modal.sort} initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} />
-      )}
-      {modal?.kind === 'personal-notes' && (
-        <NoteListDrawer initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
-      )}
-      {modal?.kind === 'personal-docs' && (
-        <DocListDrawer initialTagFilter={modal.tagFilter} onClose={() => setModal(null)} onAction={onAction} onRoute={navigate} />
-      )}
+      {/* Search is inline on HomePage; no modal here. The personal-*
+          list drawers are gone — Home's tabs render the full panels. */}
 
       {cmdkOpen && (
         <CommandPalette

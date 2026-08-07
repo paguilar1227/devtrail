@@ -8,8 +8,13 @@
 // Layered against the parser features (`#tag`, `-#tag`, `in:type`, `@name`,
 // `project:name`, exclusions, combinations), the UI features (live debounce,
 // inline mode-switch, scope chips, predicate chips with X, bidirectional
-// sync, URL persistence, click-to-open with selection guard), and the
-// cross-page navigation (ProjectPage → home, CommandPalette → home).
+// sync, URL persistence, click-to-open with selection guard), the ask flow
+// (Enter → RAG answer card above the results), and the cross-page
+// navigation (ProjectPage → home, CommandPalette → home).
+//
+// NOTE: pressing Enter in the home search input fires POST /api/v1/rag now
+// (the search box absorbed the ask surface) — tests that only exercise the
+// live-filter path must stick to fill() and never press Enter.
 //
 // Each test exercises a real user click-path against running services
 // (Postgres + Azurite + LLM_PROVIDER=stub) — no mocked plumbing.
@@ -261,6 +266,35 @@ test.describe('search: UI behavior', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Ask flow — Enter escalates the query to a synthesized answer (RAG over
+// the effective scope; LLM_PROVIDER=stub answers deterministically fast).
+// ---------------------------------------------------------------------------
+
+test.describe('search: ask', () => {
+  test('Enter on a free-text question renders the answer card; dismiss clears it', async ({ page }) => {
+    // Settle the live search first so the debounced-query effect (which
+    // resets a stale answer on query change) can't race the mutation.
+    await typeAndSettle(page, 'what did I note about pgvector');
+
+    const ragPromise = page.waitForResponse(
+      (r) => r.url().includes('/api/v1/rag') && r.request().method() === 'POST',
+    );
+    await input(page).press('Enter');
+    await ragPromise;
+
+    // Answer card renders above the results with non-empty body text.
+    const card = page.locator('.home-answer-card');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.body')).not.toHaveText('');
+
+    // Dismiss clears the card; the live results stay.
+    await card.locator('.home-answer-dismiss').click();
+    await expect(page.locator('.home-answer-card')).toHaveCount(0);
+    await expect(page.locator('.home-search-results')).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mode switch + dashboard restoration (covers use case for empty input)
 // ---------------------------------------------------------------------------
 
@@ -280,13 +314,15 @@ test.describe('search: mode switch', () => {
     await expect(page.locator('.home-search-results')).toHaveCount(0);
   });
 
-  test('dashboard scope toggle updates section heading, tag chip row, and widget data (regression)', async ({ page }) => {
+  test('dashboard scope toggle updates section heading and tag chip row (regression)', async ({ page }) => {
     // Repro: the scope toggle was wired to search-mode only; the dashboard
-    // (heading + tag chip strip + column widgets) ignored it because their
-    // queries were hard-keyed to ['tags', 'home', 'personal'] etc. Toggle
-    // now propagates everywhere — verify each surface.
+    // (heading + tag chip strip + panels) ignored it because their queries
+    // were hard-keyed to ['tags', 'home', 'personal'] etc. Toggle now
+    // propagates everywhere — verify each surface. Scope selectors to the
+    // PAGE-LEVEL tag bar (.page > .home-tag-filter): the Todos panel embeds
+    // its own HomeTagFilter inside .view-tagbar.
     await expect(page.locator('.home-personal-h h2')).toHaveText('Personal');
-    const personalTags = await page.locator('.home-tag-filter .filter-chip, .home-tag-filter button').allTextContents();
+    const personalTags = await page.locator('.page > .home-tag-filter button').allTextContents();
     expect(personalTags.length).toBeGreaterThan(0);
 
     // Click "All projects" in the small dashboard scope toggle.
@@ -297,7 +333,7 @@ test.describe('search: mode switch', () => {
     // Tag chip row refetched: different set OR different counts.
     await page.waitForFunction(
       (prev) => {
-        const cur = Array.from(document.querySelectorAll('.home-tag-filter .filter-chip, .home-tag-filter button')).map((el) => el.textContent);
+        const cur = Array.from(document.querySelectorAll('.page > .home-tag-filter button')).map((el) => el.textContent);
         return JSON.stringify(cur) !== JSON.stringify(prev);
       },
       personalTags,

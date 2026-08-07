@@ -1,14 +1,17 @@
-// Recent activity widget on Home — each row is a button that opens the
-// underlying entity's modal (note editor, todo drawer, doc reader). Without
-// this, the widget is a fancy read-only list. The test walks: Home → click
-// the first activity row → assert a modal dialog opens.
+// Home Activity tab — each row is a button that opens the underlying
+// entity's modal (note editor, todo drawer, doc reader). Without this,
+// the tab is a fancy read-only list. The test walks: Home → Activity tab →
+// click the first activity row → assert a modal dialog opens.
 import { expect, test } from '../../helpers/setup';
 import { expectDialogTitled } from '../../helpers/utils';
 
 test('home activity: clicking a row opens the underlying entity modal', async ({ page }) => {
-  // Wait for the activity card to finish loading — its rows render after
-  // the listActivity query resolves, so a bare .arow query can race with
-  // the SPA's first paint on cold start.
+  // Activity lives behind its tab now — open it first.
+  await page.locator('.home-tabs-row .tab', { hasText: 'Activity' }).click();
+
+  // Wait for the activity tab to finish loading — its rows render after
+  // the listActivity query resolves, so a bare row query can race with
+  // the tab's first paint.
   await expect(page.locator('.stat-activity .activity-list-compact')).toBeVisible();
   const firstRow = page.locator('.stat-activity .activity-row').first();
   await expect(firstRow).toBeVisible();

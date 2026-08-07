@@ -3011,4 +3011,21 @@ describe('RAG API', () => {
     expect(body.meta.depth_used).toBe('thorough');
     expect(body.meta.depth_reason).toContain('caller forced');
   });
+
+  it("accepts project_id 'null' (personal scope) and scopes retrieval to project-less rows", async () => {
+    vi.mocked(deps.db.query).mockResolvedValue({ rows: [] } as any);
+
+    const res = await app.fetch(new Request('http://localhost/api/v1/rag', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Anything', project_id: 'null' }),
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.citations).toEqual([]);
+    // The personal-scope predicate (no project membership) must reach the
+    // chunk retrieval SQL — same condition the search route emits.
+    const sqlCalls = vi.mocked(deps.db.query).mock.calls.map((c) => String(c[0]));
+    expect(sqlCalls.some((sql) => sql.includes('cardinality(ci.project_ids) = 0'))).toBe(true);
+  });
 });

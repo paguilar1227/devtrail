@@ -1686,7 +1686,8 @@ export function createApp(deps: ServiceDeps) {
     async (c) => {
       const body = c.req.valid('json');
       const result = await ragSvc.ragQuery(deps, body.question, {
-        projectId: body.project_id,
+        // 'null' literal → null (personal scope), matching the search route.
+        projectId: body.project_id === 'null' ? null : body.project_id,
         tags: body.tags,
         entityTypes: body.entity_types,
         maxChunks: body.max_chunks ?? 6,

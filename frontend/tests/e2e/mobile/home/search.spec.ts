@@ -27,5 +27,6 @@ test('home mobile search: free text returns hits; removing the #tag chip restore
   await expect(results.filter({ hasText: `${s} axolotl errand` })).toHaveCount(1);
 
   await chip.click();
-  await expect(page.locator('.home-personal-grid')).toBeVisible();
+  await expect(page.locator('.home-tabs-row')).toBeVisible();
+  await expect(page.locator('.todos-panel')).toBeVisible();
 });

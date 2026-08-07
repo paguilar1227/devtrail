@@ -2020,6 +2020,44 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-size: var(--type-meta);
   color: var(--fg-subtle);
 }
+/* Synthesized answer (Enter in the search box → RAG over the effective
+   scope). Sits above the result list; citations are chips that open the
+   underlying entity. */
+.home-answer-card {
+  background: var(--glass-bg);
+  border: 0.5px solid var(--glass-border-strong);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.home-answer-card .hd {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--type-meta); font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.home-answer-card .hd .home-answer-dismiss { margin-left: auto; }
+.home-answer-card .body {
+  font-size: var(--type-body);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.home-answer-card .cites {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.home-answer-cite {
+  border: 0.5px solid var(--hairline);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--type-meta);
+  font-family: var(--font-sans);
+  padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.home-answer-cite:hover { color: var(--fg); border-color: var(--glass-border-strong); }
+/* Home tab strip + body — same .tabs-row idiom as the project page. */
+.home-tabs-row { margin-top: 4px; }
+.home-tab-body { margin-bottom: 24px; }
 .home-scope-toggle button {
   border: 0; background: transparent; color: var(--fg-muted);
   padding: 8px 14px; border-radius: 10px; cursor: pointer;
@@ -2032,19 +2070,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   box-shadow: inset 0 0 0 0.5px var(--hairline);
 }
 
-.home-top-row {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-  margin-bottom: 24px;
-}
-.app[data-mobile="true"] .home-top-row { grid-template-columns: 1fr; }
-.stat-todos, .stat-activity, .stat-overview {
+/* Activity card — used by Home's Activity tab (HomeActivityTab). Flex
+   column so the bottom "View full feed" footer sticks to the bottom. */
+.stat-activity {
   padding: 14px 16px; border-radius: 14px;
   background: var(--glass-bg); border: 0.5px solid var(--hairline);
+  display: flex; flex-direction: column;
 }
-/* Activity widget — flex column so its bottom "View full feed"
-   footer can stick to the bottom of the card the same way the
-   personal column footers do. */
-.stat-activity { display: flex; flex-direction: column; }
 .stat-activity-empty { flex: 1; }
 .stat-activity-more {
   appearance: none; border: 0; cursor: pointer;
@@ -2054,130 +2086,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font: inherit;
   font-size: var(--type-meta);
   border-top: 0.5px solid var(--hairline);
-  /* Negative margins break out of the card's internal padding so
-     the footer spans edge-to-edge like .pcol-more does. margin-top:
-     auto pushes it to the bottom of the flex column. */
+  /* Negative margins break out of the card's internal padding so the
+     footer spans edge-to-edge. margin-top: auto pushes it to the bottom
+     of the flex column. */
   margin: auto -16px -14px;
   transition: background 100ms;
 }
 .stat-activity-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
-.stat-todos .lb, .stat-activity .lb, .stat-overview .lb {
+.stat-activity .lb {
   font-size: var(--type-meta); font-weight: 500;
   letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--fg-subtle);
   margin-bottom: 6px;
-}
-.stat-todos .vl {
-  font-size: var(--type-stat); font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-  margin-bottom: 6px;
-}
-.stat-todos .vl-sub {
-  font-size: var(--type-stat); color: var(--fg-subtle); font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.stat-todos .ds { font-size: var(--type-meta); color: var(--fg-muted); }
-
-/* Overview card — replaces the old stat-todos hero with three stacked
-   sections (counts → tags → recent projects). Each section is its own
-   block of related click-through affordances. */
-.stat-overview {
-  display: flex; flex-direction: column;
-}
-.stat-overview-section + .stat-overview-section {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--hairline);
-}
-.stat-overview-h {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 6px;
-}
-.stat-overview-h .lb { margin-bottom: 0; }
-
-/* Counts row — tabular numbers in bold, smaller "open / overdue /
-   this week" label after. Each count is a button that opens the
-   personal todos drawer. */
-.stat-overview-counts {
-  display: flex; flex-wrap: wrap; gap: 10px;
-}
-.stat-overview-count {
-  display: inline-flex; align-items: baseline; gap: 4px;
-  padding: 4px 8px; border-radius: 8px;
-  background: var(--glass-bg-soft);
-  border: 0.5px solid var(--hairline);
-  color: var(--fg-muted);
-  font-size: var(--type-meta);
-  cursor: pointer;
-  transition: background 100ms, border-color 100ms, color 100ms;
-}
-.stat-overview-count:hover {
-  background: var(--glass-bg);
-  border-color: var(--fg-subtle);
-  color: var(--fg);
-}
-.stat-overview-count strong {
-  color: var(--fg);
-  font-size: var(--type-body);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.stat-overview-count-warn strong { color: var(--danger); }
-
-/* Tag pills — small, dense, click-to-route. */
-.stat-overview-tags {
-  display: flex; flex-wrap: wrap; gap: 6px;
-}
-.stat-overview-tag {
-  display: inline-flex; align-items: baseline; gap: 4px;
-  padding: 3px 8px;
-  border: 0.5px solid var(--hairline);
-  background: var(--glass-bg-soft);
-  color: var(--fg-muted);
-  border-radius: 99px;
-  font-size: var(--type-meta);
-  cursor: pointer;
-  transition: background 100ms, border-color 100ms, color 100ms;
-}
-.stat-overview-tag:hover {
-  background: var(--glass-bg);
-  color: var(--fg);
-  border-color: var(--fg-subtle);
-}
-.stat-overview-tag-count {
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-subtle);
-}
-
-/* Project rows — name + last-touched timestamp on the right. */
-.stat-overview-projects {
-  display: flex; flex-direction: column; gap: 2px;
-  margin: 0 -8px;
-}
-.stat-overview-project {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  border-radius: 8px;
-  color: var(--fg);
-  cursor: pointer;
-  text-align: left;
-  transition: background 100ms;
-}
-.stat-overview-project:hover { background: var(--glass-bg-soft); }
-.stat-overview-project .nm {
-  font-size: var(--type-body);
-  font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.stat-overview-project .sub {
-  font-size: var(--type-meta);
-  color: var(--fg-subtle);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 .stat-activity .ah {
   display: flex; align-items: center; justify-content: space-between;
@@ -2361,77 +2281,16 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   font-size: var(--type-meta); color: var(--fg-subtle);
 }
 
-.home-personal-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-  margin-bottom: 24px;
-  /* Columns grow to content (each widget caps at 6 rows + footer);
-     stretch keeps the two cards equal height — the taller column wins
-     and the shorter pins its footer to the bottom. */
-  align-items: stretch;
-}
-.app[data-mobile="true"] .home-personal-grid { grid-template-columns: 1fr; min-height: 0; }
-.pcol {
-  border: 0.5px solid var(--hairline); border-radius: 14px;
-  background: var(--glass-bg);
-  overflow: hidden;
-  /* Flex column so the grid's row-stretch fills downward and the
-     "View N more" footer can stick to the bottom regardless of how
-     tall the visible rows are. Keeps both columns visually balanced
-     when one has heavier rows (todos with subtasks / due chips)
-     than the other (plain notes). */
-  display: flex; flex-direction: column;
-}
-/* Wrapper around the row stack inside each column. flex:1 so it
-   absorbs remaining vertical space; overflow:hidden so a brief
-   measurement-mismatch can't leak a clipped row past the bottom edge
-   while the fit-count hook recomputes on resize. */
-.pcol-rows {
-  flex: 1;
-  min-height: 0;
-  display: flex; flex-direction: column;
-  overflow: hidden;
-}
-.pcol .pcol-h {
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 0.5px solid var(--hairline);
-}
-.pcol .pcol-h h3 { font-size: var(--type-h); font-weight: 600; margin: 0; flex: 1; }
-.pcol .pcol-h .ct {
-  font-size: var(--type-meta); color: var(--fg-subtle);
-  padding: 1px 7px; border: 0.5px solid var(--hairline); border-radius: 6px;
-  font-variant-numeric: tabular-nums;
-}
-.pcol-more {
-  appearance: none; border: 0; cursor: pointer;
-  background: transparent; color: var(--fg-subtle);
-  padding: 11px 16px;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  font: inherit;
-  font-size: var(--type-meta);
-  border-top: 0.5px solid var(--hairline);
-  width: 100%;
-  transition: background 100ms;
-  /* Push to the bottom of the flex column so the footer aligns
-     between sibling .pcol columns even when their row counts differ. */
-  margin-top: auto;
-}
-.pcol-more:hover { background: var(--glass-bg-soft); color: var(--fg); }
+/* Flat search-result row stack — used by NotesPanel's search mode.
+   (Named for the retired list drawers it originated in.) */
 .todo-list-drawer-rows {
   display: flex; flex-direction: column;
   margin: -8px -18px;
 }
 .todo-list-drawer-rows .prow + .prow { border-top: 0.5px solid var(--hairline); }
-.todo-list-drawer-toolbar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 0 10px 0;
-}
-.todo-list-drawer-toolbar .search-box { flex: 1; min-width: 0; }
-.todo-list-drawer-toolbar .todo-sort-dropdown { flex-shrink: 0; }
 
-/* Search box — debounced input used in personal/project drawer
-   toolbars and project tab filter bars. Matches the home search box
-   visually but smaller. */
+/* Search box — debounced input used in panel toolbars and project tab
+   filter bars. Matches the home search box visually but smaller. */
 .search-box {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 6px 10px; border-radius: 8px;
@@ -2460,18 +2319,9 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border-radius: 4px; cursor: pointer; padding: 0;
 }
 .search-box-clear:hover { background: var(--glass-bg); color: var(--fg); }
-/* IntersectionObserver target. Needs a non-zero height so an
-   observer fires on a scrolled drawer that's just barely longer
-   than the viewport. */
-.todo-list-drawer-sentinel {
-  min-height: 24px;
-  padding: 12px 0;
-  display: flex; justify-content: center;
-}
 
-/* Sort dropdown — used in Home column header, Inbox drawer toolbar,
-   and project todos panel filter bar. Native <select> styled to match
-   the existing chrome (FilterChip / seg-toggle). */
+/* Sort dropdown — used in the panel toolbars and filter bars. Native
+   <select> styled to match the existing chrome (FilterChip / seg-toggle). */
 .todo-sort-dropdown {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: var(--type-meta); color: var(--fg-subtle);
@@ -2501,20 +2351,6 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .todo-sort-dropdown-select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-.pcol .pcol-add {
-  padding: 12px 16px;
-  border-bottom: 0.5px solid var(--hairline);
-}
-.pcol .pcol-add input {
-  width: 100%; background: transparent; border: 0; outline: 0;
-  color: var(--fg); font-family: var(--font-sans);
-  font-size: var(--type-body); font-weight: 400;
-}
-.pcol .pcol-add input::placeholder { color: var(--fg-subtle); font-style: italic; }
-.pcol .pcol-empty {
-  padding: 16px; color: var(--fg-subtle); font-size: var(--type-body);
-}
-
 .prow {
   padding: 11px 16px; display: grid; gap: 10px; align-items: center;
   cursor: pointer;
@@ -2536,19 +2372,20 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
 .prow-todo > .ats { grid-area: time; }
 /* Mobile: the title-content takes the whole first row (no truncation, and the
    status/tags chips stop wrapping onto extra lines); the comments / priority /
-   timestamp meta drops to a compact strip indented beneath it. Drag grip is
-   hidden — touch reorder isn't used. */
-.app[data-mobile="true"] .prow-todo > .prow-grip,
-.app[data-mobile="true"] .prow-todo > .prow-grip-spacer { display: none; }
+   timestamp meta drops to a compact strip indented beneath it. The drag grip
+   stays — touch drag works through it (touch-action: none on the grip pins
+   the gesture to the drag instead of the scroll) — and is always visible,
+   since touch has no hover to reveal it. */
 .app[data-mobile="true"] .prow-todo {
-  grid-template-columns: 18px 14px 1fr auto auto;
+  grid-template-columns: 14px 18px 14px 1fr auto auto;
   grid-template-areas:
-    "check chev main     main main"
-    ".     .    comments prio time";
+    "grip check chev main     main main"
+    ".    .     .    comments prio time";
   align-items: start;
   row-gap: 4px;
   column-gap: 6px;
 }
+.app[data-mobile="true"] .prow-grip { opacity: 1; }
 .app[data-mobile="true"] .prow-todo > .ats { justify-self: end; }
 .prow-grip {
   width: 14px; height: 18px;
@@ -3061,10 +2898,10 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
   border-radius: 10px; border: 0.5px solid var(--hairline);
 }
 
-/* "Back to list" button shown above the doc reader chrome when the reader
-   is embedded inside another list drawer (DocListDrawer in detail mode).
-   Negative margin pulls it tight under the drawer header so it reads as
-   part of the chrome, not the body content. */
+/* "Back to list" button shown above reader chrome when a reader body is
+   embedded inside another surface (see ReaderBackButton). Negative margin
+   pulls it tight under the drawer header so it reads as part of the
+   chrome, not the body content. */
 /* `reader-back` is the canonical name (shared by doc/note/todo reader
    surfaces). `.doc-reader-back` kept as an alias for back-compat with
    any remaining inline usage; safe to drop once nothing references it. */
@@ -3679,6 +3516,10 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.5; }
    Todos view — sectioned list with scope dropdown + filters
    ============================================================ */
 .todos-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* The page body is the shared TodosPanel — keep the flex height chain so
+   .todos-body still gets its internal scroll on this page. (On Home the
+   panel sits in normal flow and the page scrolls instead.) */
+.todos-view .todos-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .todos-toolbar {
   display: flex; align-items: center; gap: 8px;
   padding: 4px var(--pad-page) 10px;

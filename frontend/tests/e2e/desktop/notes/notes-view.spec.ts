@@ -33,8 +33,10 @@ test.describe('Notes view: Folders browser', () => {
     // The reused tag bar lives above the columns on desktop.
     const tagBar = page.locator('.notes-view .home-tag-filter');
     await expect(tagBar).toBeVisible();
+    // The tag bar can render before the notes-list query resolves — poll
+    // until rows exist instead of one-shot counting an in-flight list.
+    await expect.poll(() => listRows(page).count()).toBeGreaterThan(2);
     const unfiltered = await listRows(page).count();
-    expect(unfiltered).toBeGreaterThan(2);
 
     // Filter by #reading → only reading-tagged notes remain. Scope to the
     // visible chip row (the hidden measure layer also carries .home-filter-chip).

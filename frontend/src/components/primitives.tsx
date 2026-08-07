@@ -128,6 +128,16 @@ export function Tabs({
           className={cls('tab', value === it.id && 'active')}
           onClick={() => onChange(it.id)}
           role="tab"
+          aria-selected={value === it.id}
+          // Keyboard reachability: tabs were click-only spans, which left
+          // everything behind them unreachable without a mouse.
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onChange(it.id);
+            }
+          }}
         >
           {it.icon ? <span className="ic">{it.icon}</span> : null}
           {it.label}
@@ -174,7 +184,7 @@ export function Modal({
 }) {
   // Capture phase + stopImmediatePropagation so that when a modal is
   // open over a Drawer (e.g. opening NoteEditorModal from inside a
-  // NoteReaderBody embedded in NoteListDrawer), pressing Escape closes
+  // NoteReaderBody embedded in another surface), pressing Escape closes
   // ONLY the modal and not the surrounding drawer. Without this, both
   // listeners fire — drawer-first by registration order — and the whole
   // surface collapses out from under the modal.

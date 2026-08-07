@@ -1,25 +1,27 @@
-// Home dashboard on mobile (HOME-M-1..3) — parity with desktop
-// desktop/home/home.spec.ts. Same selectors (the dashboard reflows below
-// 820px but keeps its structure); the sidebar assertions are replaced by
-// the tabbar, which waitForAppReady already gates on.
+// Home on mobile (HOME-M-1..3) — parity with desktop desktop/home/home.spec.ts.
+// Same selectors (the page reflows below 820px but keeps its structure); the
+// sidebar assertions are replaced by the tabbar, which waitForAppReady
+// already gates on.
 import { expect, test } from '../../helpers/setup';
 
-test('home mobile: structure renders — hero, search, columns, activity, pinned strip', async ({ page }) => {
+test('home mobile: structure renders — hero, search, tab strip, todos panel, pinned strip', async ({ page }) => {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
 
   await expect(page.locator('.home-search-box input')).toBeVisible();
   await expect(page.locator('.home-scope-toggle button', { hasText: 'Personal' })).toHaveClass(/active/);
 
-  const todosCol = page.locator('.home-personal-grid .pcol').filter({ has: page.locator('h3:text-is("Todos")') });
-  const notesCol = page.locator('.home-personal-grid .pcol').filter({ has: page.locator('h3:text-is("Notes")') });
-  await expect(todosCol).toBeVisible();
-  await expect(notesCol).toBeVisible();
-  await expect(todosCol.locator('.pcol-add input')).toBeVisible();
-  await expect(notesCol.locator('.pcol-add input')).toBeVisible();
+  // Tab strip: 4 tabs, Todos active by default, its panel mounted.
+  const tabs = page.locator('.home-tabs-row .tab');
+  await expect(tabs).toHaveCount(4);
+  await expect(tabs.filter({ hasText: 'Todos' })).toHaveClass(/active/);
+  await expect(page.locator('.todos-panel')).toBeVisible();
+  await expect(page.locator('.todos-panel .todo-input-row .field input')).toBeVisible();
 
-  const docsCol = page.locator('.home-top-row .pcol').filter({ has: page.locator('h3:text-is("Documents")') });
-  await expect(docsCol).toBeVisible();
-  await expect(page.locator('.home-top-row .stat-activity')).toBeVisible();
+  // Switching tabs swaps the panel.
+  await tabs.filter({ hasText: 'Notes' }).click();
+  await expect(page.locator('.notes-panel')).toBeVisible();
+  await tabs.filter({ hasText: 'Todos' }).click();
+  await expect(page.locator('.todos-panel')).toBeVisible();
 
   await expect(page.locator('.home-pinned-strip .pin-chip').first()).toBeVisible();
 });

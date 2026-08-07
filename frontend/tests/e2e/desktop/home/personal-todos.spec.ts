@@ -1,21 +1,22 @@
-// Personal todos column on Home. These tests used to target the Inbox
-// route; the route is gone now, so the same flows run against the
-// Home Personal column. Capture creates a todo via the quick-add input,
-// toggle flips status via the row checkbox.
+// Personal todos on Home. These flows used to target the widget-grid
+// Todos column; Home's Todos tab now renders the shared TodosPanel, so
+// the same flows run against `.todos-panel` (the default tab). Capture
+// creates a todo via the quick-add row, toggle flips status via the row
+// checkbox, done rows live in the collapsed Done group.
 import { createTodo, deleteTodo, listTodos, updateTodo } from '../../helpers/api';
 import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
-const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';
+const PANEL = '.todos-panel';
 
-test('home personal todos: capture via Enter creates a project-less todo and shows it in the column', async ({ page }) => {
+test('home personal todos: capture via Enter creates a project-less todo and shows it in the panel', async ({ page }) => {
   const content = stamp() + ' Inbox capture';
   const before = (await listTodos({ project_id: 'null' })).length;
 
-  await page.locator(`${TODOS_COL} .pcol-add input`).fill(content);
-  await page.locator(`${TODOS_COL} .pcol-add input`).press('Enter');
+  await page.locator(`${PANEL} .todo-input-row .field input`).fill(content);
+  await page.locator(`${PANEL} .todo-input-row .field input`).press('Enter');
 
-  await expect(page.locator(`${TODOS_COL} .prow .ti`, { hasText: content })).toBeVisible();
+  await expect(page.locator(`${PANEL} .todos-body .prow .ti`, { hasText: content })).toBeVisible();
   const after = await listTodos({ project_id: 'null' });
   expect(after.length).toBe(before + 1);
 });
@@ -28,11 +29,11 @@ test('home personal todos: toggling the row checkbox marks the todo done in the 
   await page.reload();
   await waitForAppReady(page);
 
-  const row = page.locator(`${TODOS_COL} .prow`, { hasText: content });
+  const row = page.locator(`${PANEL} .prow`, { hasText: content });
   await expect(row).toBeVisible();
   await row.locator('.checkbox').click();
 
-  // The Home column doesn't render a status pill, so confirm via REST.
+  // The row's struck-through state races the refetch; confirm via REST.
   await expect.poll(async () => {
     const todos = await listTodos({ project_id: 'null' });
     return todos.find((t) => t.content === content)?.status;
@@ -46,7 +47,7 @@ test('home personal todos: status is editable from the detail drawer', async ({ 
     await page.reload();
     await waitForAppReady(page);
 
-    const row = page.locator(`${TODOS_COL} .prow`, { hasText: content });
+    const row = page.locator(`${PANEL} .prow`, { hasText: content });
     await expect(row).toBeVisible();
     await row.click();
 
@@ -79,7 +80,7 @@ test('home personal todos: an in_progress / paused row shows a status pill', asy
     await page.reload();
     await waitForAppReady(page);
 
-    const row = () => page.locator(`${TODOS_COL} .prow`, { hasText: content });
+    const row = () => page.locator(`${PANEL} .prow`, { hasText: content });
     await expect(row()).toBeVisible();
     await expect(row().locator('.prow-status')).toHaveText('In progress');
 
@@ -117,14 +118,12 @@ test('home personal todos: reopening a done parent cascades back to descendants'
             byId.get(child2.id)?.status, byId.get(gc.id)?.status];
   }).toEqual(['done', 'done', 'done', 'done']);
 
-  // Now untick via the UI. Done todos sit at the bottom of the column,
-  // so we use the drawer (full list) to reach the parent row reliably.
+  // Now untick via the UI. Done top-levels collapse into the Done group
+  // at the bottom of the panel — expand it to reach the parent row.
   await page.reload();
   await waitForAppReady(page);
-  await page.locator(`${TODOS_COL} .pcol-more`).click();
-  const drawer = page.locator('.drawer');
-  await expect(drawer).toBeVisible({ timeout: 15000 });
-  const parentRow = drawer.locator('.prow', { hasText: parentContent });
+  await page.locator(`${PANEL} .todos-done-head`).click();
+  const parentRow = page.locator(`${PANEL} .todos-done .prow`, { hasText: parentContent });
   await expect(parentRow).toBeVisible();
   await parentRow.locator('.checkbox').first().click();
 
@@ -168,12 +167,11 @@ test('home personal todos: completing a parent cascades to non-done descendants'
   await page.reload();
   await waitForAppReady(page);
 
-  // Expand the parent so its checkbox is reachable in the column.
-  const parentRow = page.locator(`${TODOS_COL} .prow`, { hasText: parentContent });
+  // Expand the parent's subtree via the chevron (still works in the
+  // sectioned panel), then tick the parent's checkbox.
+  const parentRow = page.locator(`${PANEL} .prow`, { hasText: parentContent });
   await expect(parentRow).toBeVisible();
   await parentRow.locator('.prow-chev').click();
-
-  // Tick the parent's checkbox.
   await parentRow.locator('.checkbox').first().click();
 
   // All non-done descendants should flip to done. Child2 was already

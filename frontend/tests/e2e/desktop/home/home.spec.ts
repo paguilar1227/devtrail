@@ -1,10 +1,11 @@
-// Home — the merged-Inbox landing page. Asserts the structure renders:
-// hero greeting, search row, Personal top row (Todos + Notes), lower row
-// (Documents + Recent activity), and the Pinned chip strip.
-// Behavior tests for personal todo flows live in personal-todos.spec.ts.
+// Home — the tabbed landing page. Asserts the structure renders: hero
+// greeting, search row + scope toggle, the Todos|Notes|Documents|Activity
+// tab strip (Todos active by default, its panel mounted), and the Pinned
+// chip strip. Behavior tests for personal todo flows live in
+// personal-todos.spec.ts; tab-panel behavior lives with each panel's suite.
 import { expect, test } from '../../helpers/setup';
 
-test('home: structure renders — hero, search, top row, personal columns, pinned strip', async ({ page }) => {
+test('home: structure renders — hero, search, scope toggle, tab strip, todos panel, pinned strip', async ({ page }) => {
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
 
   // Search row + scope toggle (default Personal).
@@ -14,25 +15,39 @@ test('home: structure renders — hero, search, top row, personal columns, pinne
   await expect(personalTab).toHaveClass(/active/);
   await expect(allTab).not.toHaveClass(/active/);
 
-  // Personal section: top row is two columns (Todos + Notes), each with a
-  // quick-add input.
+  // Personal heading + the tab strip: 4 tabs, Todos active by default.
   await expect(page.locator('.home-personal-h h2', { hasText: 'Personal' })).toBeVisible();
-  const todosCol = page.locator('.home-personal-grid .pcol').filter({ has: page.locator('h3:text-is("Todos")') });
-  const notesCol = page.locator('.home-personal-grid .pcol').filter({ has: page.locator('h3:text-is("Notes")') });
-  await expect(todosCol).toBeVisible();
-  await expect(notesCol).toBeVisible();
-  await expect(todosCol.locator('.pcol-add input')).toBeVisible();
-  await expect(notesCol.locator('.pcol-add input')).toBeVisible();
+  const tabs = page.locator('.home-tabs-row .tab');
+  await expect(tabs).toHaveCount(4);
+  for (const label of ['Todos', 'Notes', 'Documents', 'Activity']) {
+    await expect(tabs.filter({ hasText: label })).toBeVisible();
+  }
+  await expect(tabs.filter({ hasText: 'Todos' })).toHaveClass(/active/);
 
-  // Lower row: the Documents widget sits beside the Recent activity card.
-  // (The Overview card was removed — Top Tags lives in the filter bar,
-  // Active Projects in the Projects nav.)
-  const docsCol = page.locator('.home-top-row .pcol').filter({ has: page.locator('h3:text-is("Documents")') });
-  await expect(docsCol).toBeVisible();
-  await expect(page.locator('.home-top-row .stat-activity')).toBeVisible();
+  // Default tab body is the shared todos panel with its quick-add row.
+  await expect(page.locator('.todos-panel')).toBeVisible();
+  await expect(page.locator('.todos-panel .todo-input-row .field input')).toBeVisible();
 
   // Seed has 2 pinned projects → strip exists with at least one chip.
   await expect(page.locator('.home-pinned-strip .pin-chip').first()).toBeVisible();
+});
+
+test('home: tab strip swaps panels — Notes, Documents, Activity, back to Todos', async ({ page }) => {
+  const tab = (label: string) => page.locator('.home-tabs-row .tab', { hasText: label });
+
+  await tab('Notes').click();
+  await expect(tab('Notes')).toHaveClass(/active/);
+  await expect(page.locator('.notes-panel')).toBeVisible();
+  await expect(page.locator('.todos-panel')).toHaveCount(0);
+
+  await tab('Documents').click();
+  await expect(page.locator('.documents-panel')).toBeVisible();
+
+  await tab('Activity').click();
+  await expect(page.locator('.stat-activity.home-activity-tab')).toBeVisible();
+
+  await tab('Todos').click();
+  await expect(page.locator('.todos-panel')).toBeVisible();
 });
 
 test('home: scope toggle flips active state', async ({ page }) => {

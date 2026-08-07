@@ -13,28 +13,29 @@ import { TODO_SORT_MODES, type TodoSortMode } from './todoSort';
 const STORAGE_PREFIX = 'obv2.todoSort.';
 const DEFAULT_MODE: TodoSortMode = 'smart';
 
-function readInitial(surfaceKey: string): TodoSortMode {
-  if (typeof window === 'undefined') return DEFAULT_MODE;
+function readInitial(surfaceKey: string, defaultMode: TodoSortMode): TodoSortMode {
+  if (typeof window === 'undefined') return defaultMode;
   try {
     const raw = window.localStorage.getItem(STORAGE_PREFIX + surfaceKey);
     if (raw && (TODO_SORT_MODES as string[]).includes(raw)) return raw as TodoSortMode;
-    return DEFAULT_MODE;
+    return defaultMode;
   } catch {
-    return DEFAULT_MODE;
+    return defaultMode;
   }
 }
 
-export function useTodoSortMode(surfaceKey: string): {
+export function useTodoSortMode(surfaceKey: string, defaultMode: TodoSortMode = DEFAULT_MODE): {
   mode: TodoSortMode;
   setMode: (m: TodoSortMode) => void;
 } {
-  const [mode, setModeState] = useState<TodoSortMode>(() => readInitial(surfaceKey));
+  const [mode, setModeState] = useState<TodoSortMode>(() => readInitial(surfaceKey, defaultMode));
 
   // Re-read when the surface key changes (e.g. user navigates from
   // Project A to Project B). Without this the dropdown would stick on
   // Project A's last choice when re-mounting against Project B's key.
   useEffect(() => {
-    setModeState(readInitial(surfaceKey));
+    setModeState(readInitial(surfaceKey, defaultMode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surfaceKey]);
 
   useEffect(() => {

@@ -34,10 +34,15 @@ test('doc preview mobile: image doc renders inline with tap-to-enlarge lightbox'
   await gotoView(page, 'Activity');
   await expect(page.locator('.activity-row').first()).toBeVisible({ timeout: 15000 });
 
-  // Walk ingested rows until the image/png doc drawer comes up (same
+  // Walk ingested DOC rows until the image/png doc drawer comes up (same
   // strategy as the desktop spec — the OCR-stubbed title is fixture data,
-  // the mime line is the authoritative signal).
-  const rows = page.locator('.activity-row').filter({ hasText: /^Ingested / });
+  // the mime line is the authoritative signal). Scoped to `· document`
+  // rows: the seed's todos are ingested after the docs, so dozens of
+  // todo rows precede the doc rows and walking their drawers too blows
+  // the 60s test budget on a slow host.
+  const rows = page.locator('.activity-row')
+    .filter({ hasText: /^Ingested / })
+    .filter({ hasText: '· document' });
   const count = await rows.count();
   expect(count).toBeGreaterThan(0);
   const drawer = page.locator('[role="dialog"]');

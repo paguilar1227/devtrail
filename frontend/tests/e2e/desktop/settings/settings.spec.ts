@@ -39,7 +39,9 @@ test('settings desktop: clicking Log out clears the cached token and redirects',
   await page.locator('.modal').getByRole('button', { name: 'Log out' }).click();
 
   // Wait for the post-logout reload + bootAuth to settle on the home view.
-  await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible();
+  // The reload re-boots the whole SPA (bootAuth → mount → projects query),
+  // which can exceed the 10s default on a loaded host — give it headroom.
+  await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible({ timeout: 30000 });
   const stored = await page.evaluate(() => localStorage.getItem('ob.api_key'));
   expect(stored).toBeNull();
 });

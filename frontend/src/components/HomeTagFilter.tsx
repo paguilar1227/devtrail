@@ -427,16 +427,3 @@ function TagPickerPopover({ options, selected, onToggle, onClose }: PopoverProps
   );
 }
 
-interface FilterEmptyProps {
-  entity: 'todos' | 'notes' | 'documents';
-  filter: TagFilter;
-}
-
-export function FilterEmpty({ entity, filter }: FilterEmptyProps) {
-  const tags = filter.tags.map((t) => `#${t}`).join(filter.mode === 'and' ? ' AND ' : ' or ');
-  return (
-    <div className="pcol-empty">
-      No {entity} with {filter.tags.length === 1 ? 'tag' : 'tags'} {tags}.
-    </div>
-  );
-}

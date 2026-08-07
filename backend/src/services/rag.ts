@@ -4,7 +4,9 @@ import { classifyQueryDepth, type QueryDepth } from './query-depth.js';
 import { withSpan } from '../observability.js';
 
 export interface RagOptions {
-  projectId?: string;
+  // UUID = project scope, null = personal (no project membership),
+  // undefined = global. Same trinary the search service speaks.
+  projectId?: string | null;
   tags?: string[];
   maxChunks?: number;
   entityTypes?: Array<'document' | 'note' | 'todo'>;
@@ -140,7 +142,7 @@ export async function ragQuery(
     'rag.query',
     {
       'rag.depth_requested': String(opts.depth ?? 'fast'),
-      'rag.project_id': opts.projectId ?? '',
+      'rag.project_id': opts.projectId === null ? 'personal' : opts.projectId ?? '',
       'rag.question_length': question.length,
     },
     () => ragQueryImpl(deps, question, opts),
@@ -164,7 +166,7 @@ async function ragQueryImpl(
   const requestedDepth = opts.depth ?? 'fast';
   const pipelineStart = performance.now();
   console.log(
-    `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId ?? 'global'}, depth: ${requestedDepth}`,
+    `[rag] Question: "${question.slice(0, 100)}", project: ${opts.projectId === null ? 'personal' : opts.projectId ?? 'global'}, depth: ${requestedDepth}`,
   );
 
   // Resolve depth + extract query entities. Auto → classifier; forced → skip.
@@ -197,7 +199,7 @@ async function ragQueryImpl(
   if (hits.length === 0) {
     const totalMs = Math.round(performance.now() - pipelineStart);
     return {
-      answer: `I don't have any information in your knowledge base${opts.projectId ? ' for this project' : ''} that relates to this question.`,
+      answer: `I don't have any information in your knowledge base${opts.projectId ? ' for this project' : opts.projectId === null ? ' in your personal space' : ''} that relates to this question.`,
       citations: [],
       used_chunks: 0,
       meta: {

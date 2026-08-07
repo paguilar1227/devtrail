@@ -8,9 +8,16 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect, stamp } from '../../helpers/setup';
-import { createTodo } from '../../helpers/api';
+import { createTodo, listTodos } from '../../helpers/api';
+import { waitForAppReady } from '../../helpers/utils';
 
 async function openTodos(page: Page) {
+  // The Todos page shares the TodosPanel (and its ['todos','panel','personal']
+  // query key) with Home's default Todos tab, which the page fixture already
+  // warmed at boot. Reload first so todos created via REST inside a test
+  // aren't hidden behind the 30s staleTime.
+  await page.reload();
+  await waitForAppReady(page);
   await page.locator('.sidebar .sb-item', { has: page.locator('.label:text-is("Todos")') }).click();
   await expect(page.locator('.todos-view')).toBeVisible({ timeout: 10000 });
 }
@@ -127,5 +134,70 @@ test.describe('Todos view', () => {
       { has: page.locator('.ti', { hasText: title }) },
     );
     await expect(inTarget).toBeVisible();
+  });
+
+  test('dragging a subtask reorders it within its parent (nested drag)', async ({ page }) => {
+    // Regression for the consolidation: the retired SortableTodoList had
+    // per-parent nested reordering; SectionedTodoList now carries it.
+    const parentTitle = stamp() + ' drag parent';
+    const subA = stamp() + ' sub A';
+    const subB = stamp() + ' sub B';
+    const parent = await createTodo(parentTitle, null);
+    const a = await createTodo(subA, null, { parent_id: parent.id });
+    const b = await createTodo(subB, null, { parent_id: parent.id });
+    await openTodos(page);
+
+    // Expand the parent to reveal its children.
+    const parentRow = rowByTitle(page, parentTitle);
+    await expect(parentRow).toBeVisible();
+    await parentRow.locator('.prow-chev').click();
+    const rowA = rowByTitle(page, subA);
+    const rowB = rowByTitle(page, subB);
+    await expect(rowA).toBeVisible();
+    await expect(rowB).toBeVisible();
+
+    // Unranked children order newest-first, so don't assume creation order:
+    // read the initial visual order, then drag the BOTTOM sibling's grip
+    // onto the TOP one — a swap is unambiguous proof the drag worked.
+    const visualOrder = async () => {
+      const titles = await page.locator('.todos-section .prow-todo .ti').allInnerTexts();
+      const ia = titles.findIndex((x) => x.includes(subA));
+      const ib = titles.findIndex((x) => x.includes(subB));
+      return { ia, ib };
+    };
+    const before = await visualOrder();
+    expect(before.ia).not.toBe(-1);
+    expect(before.ib).not.toBe(-1);
+    const [topRow, bottomRow, topId, bottomId] =
+      before.ia < before.ib ? [rowA, rowB, a.id, b.id] : [rowB, rowA, b.id, a.id];
+
+    // Same PointerSensor dance as the section move: >6px threshold, then
+    // stepped move to the drop target.
+    await bottomRow.scrollIntoViewIfNeeded();
+    const g = await bottomRow.locator('.prow-grip').boundingBox();
+    const t = await topRow.boundingBox();
+    if (!g || !t) throw new Error('missing drag boxes');
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(g.x + g.width / 2 + 12, g.y + g.height / 2 - 12); // cross threshold
+    await page.mouse.move(t.x + t.width / 2, t.y + t.height / 2, { steps: 12 });
+    await page.mouse.up();
+
+    // Visual order swapped: the dragged (bottom) sibling now renders first.
+    await expect.poll(async () => {
+      const now = await visualOrder();
+      const draggedFirst = bottomId === b.id ? now.ib < now.ia : now.ia < now.ib;
+      return now.ia !== -1 && now.ib !== -1 && draggedFirst;
+    }).toBe(true);
+
+    // Persisted: /todos/reorder renumbered the SIBLING group (parent-scoped),
+    // dragged sibling first.
+    await expect.poll(async () => {
+      const todos = await listTodos({ project_id: 'null' });
+      const byId = new Map(todos.map((x) => [x.id, x]));
+      const mTop = byId.get(topId)?.manual_order;
+      const mBottom = byId.get(bottomId)?.manual_order;
+      return mTop != null && mBottom != null && mBottom < mTop;
+    }).toBe(true);
   });
 });

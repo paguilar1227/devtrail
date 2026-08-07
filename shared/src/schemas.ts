@@ -455,7 +455,9 @@ export type RagCitation = z.infer<typeof RagCitationSchema>;
 
 export const RagRequestSchema = z.object({
   question: z.string().min(1),
-  project_id: UuidSchema.optional(),
+  // Same trinary as SearchRequest: UUID = project scope, 'null' literal =
+  // personal scope (no project membership), omitted = global.
+  project_id: z.union([UuidSchema, z.literal('null')]).optional(),
   depth: z.enum(['auto', 'fast', 'thorough']).optional(),
   max_chunks: z.number().int().min(1).max(20).optional(),
   entity_types: z.array(EntityKindSchema).optional(),

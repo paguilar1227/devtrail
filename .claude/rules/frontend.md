@@ -33,7 +33,7 @@ Loads when working in `frontend/`. Drawer composition pattern, compact-row patte
 
 ## Drawer composition — body vs chrome
 
-Drawers (`components/primitives.tsx` → `Drawer`) wrap a body. When a drawer's body might be embedded inside ANOTHER drawer's body (e.g. `DocReaderBody` inside `DocListDrawer`'s detail view), extract the body into its own component and keep the standalone `*Drawer` as a thin wrapper:
+Drawers (`components/primitives.tsx` → `Drawer`) wrap a body. When a drawer's body might be embedded inside ANOTHER drawer's body, extract the body into its own component and keep the standalone `*Drawer` as a thin wrapper:
 
 ```tsx
 export function DocReaderBody({ doc, onClose, onBack, onRoute }) {
@@ -58,7 +58,19 @@ export function DocReaderDrawer({ doc, onClose, onRoute }) {
 - `onBack` (optional) = return to a parent view within the same drawer (renders a back button)
 - `onRoute` (optional) = navigate routes; passed through to nested body
 
-This pattern is in `components/modals/DocReaderDrawer.tsx`. NoteListDrawer / TodoListDrawer don't follow it yet — they bounce to a new modal when a row is clicked, which loses list state. Worth propagating.
+This pattern is in `components/modals/DocReaderDrawer.tsx` (the `*ListDrawer`s that used to embed these bodies were retired in the Home-tabs consolidation — the pattern still applies to any future embedded-body drawer).
+
+## Shared browse panels (`components/panels/`)
+
+`TodosPanel`, `NotesPanel`, `DocumentsPanel` are THE browse surfaces, parameterized by a
+scope (`'personal' | 'all' | <project uuid>`). Home's tabs and the project page's tabs both
+render them — do not fork a per-surface list again; extend the panel. TodosPanel is the one
+todo-list implementation (SectionedTodoList: durable `section` + `manual_order`, drag,
+quick-add, Done group). Home folds ask-the-brain into its search box (Enter → `/rag` over
+the effective scope, answer card above results) — there is deliberately no separate chat
+surface on Home. The standalone Todos page (sidebar → Todos) survives as a thin shell —
+heading + scope dropdown — over TodosPanel; the Notes folder browser page remains a
+distinct surface.
 
 ## Compact row pattern (`.prow`)
 

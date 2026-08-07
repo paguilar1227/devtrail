@@ -5,9 +5,9 @@
 //    formatted value; clicking opens a popover with month nav, day
 //    grid, hour/minute inputs, AM/PM toggle, and Clear/Today/Done.
 //  - Picker commits on Done — the new ISO round-trips to the backend.
-//  - The column renders a time-aware due meta when the time component
-//    is set ('today 3pm' / 'tomorrow 9am' / 'Tue 4:30pm') instead of
-//    the date-only relative format.
+//  - The Todos-tab panel row renders a time-aware due meta when the
+//    time component is set ('today 3pm' / 'tomorrow 9am' / 'Tue 4:30pm')
+//    instead of the date-only relative format.
 //
 // We control time-relative assertions by creating a todo whose due
 // date falls within ~7 days so the formatter's time-aware branch
@@ -17,7 +17,7 @@ import { createTodo, listTodos } from '../../helpers/api';
 import { test, expect, stamp } from '../../helpers/setup';
 import { waitForAppReady } from '../../helpers/utils';
 
-const TODOS_COL = '.home-personal-grid .pcol:has(h3:text-is("Todos"))';
+const TODOS_COL = '.todos-panel';
 
 // Returns a Date that's `days` from now at the given local hour:minute.
 function dueAt(days: number, hour: number, minute = 0): Date {
@@ -27,7 +27,7 @@ function dueAt(days: number, hour: number, minute = 0): Date {
   return d;
 }
 
-test('todo detail: DateTimePicker commits a new time, column displays time-aware due', async ({ page }) => {
+test('todo detail: DateTimePicker commits a new time, panel row displays time-aware due', async ({ page }) => {
   const content = stamp() + ' Due time';
   // Pick a slot 2 days out at 3:30 PM local — within the 7-day
   // window that triggers time-aware display, and avoids the
@@ -38,7 +38,7 @@ test('todo detail: DateTimePicker commits a new time, column displays time-aware
   await page.reload();
   await waitForAppReady(page);
 
-  // Column should show a time-aware due — "<weekday> 3:30pm".
+  // The panel row should show a time-aware due — "<weekday> 3:30pm".
   const expectedWeekday = target.toLocaleDateString('en-US', { weekday: 'short' });
   const row = page.locator(`${TODOS_COL} .prow`, { hasText: content });
   await expect(row).toBeVisible();
@@ -74,7 +74,7 @@ test('todo detail: DateTimePicker commits a new time, column displays time-aware
     return { h: d.getHours(), m: d.getMinutes() };
   }).toEqual({ h: 16, m: 30 });
 
-  // Column updates to reflect the new time after refetch.
+  // The row updates to reflect the new time after refetch.
   await expect(row.locator('.ti-sub')).toContainText(`${expectedWeekday} 4:30pm`);
 });
 
