@@ -16,6 +16,8 @@ export function useTagSuggestions(
   const { data } = useQuery({
     queryKey: ['tags', project_id ?? null, scope ?? null],
     queryFn: () => listTags({ project_id, scope }),
+    // Another browser or agent may have saved tags since the last surface opened.
+    refetchOnMount: 'always',
   });
   // Scope the suggestion AND its count to the surface. A personal-notes drawer
   // wants tags that actually live on personal NOTES (by_type.note within the
