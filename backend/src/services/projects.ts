@@ -1,3 +1,4 @@
+import { listSessions, deleteSession } from './sessions.js';
 import type { ServiceDeps } from './index.js';
 import {
   insertProject, listProjects as dbListProjects, getProjectById,
@@ -65,5 +66,16 @@ export async function unarchiveProject(deps: ServiceDeps, id: string): Promise<v
  * array, sets todos.project_id to NULL (via FK cascade), and removes the project row.
  */
 export async function deleteProjectHard(deps: ServiceDeps, id: string): Promise<void> {
+  // A previous attempt may have removed the session but left a retriable
+  // blob cleanup job. Its project association must outlive the session row.
+  const pending = await deps.db.query('SELECT DISTINCT session_id FROM session_file_cleanup WHERE project_id=$1', [id]);
+  for (const row of pending.rows) {
+    const cleanup = await deleteSession(deps, row.session_id);
+    if (cleanup.pending_files) throw new Error('Session file cleanup is pending. Retry project deletion.');
+  }
+  for (const session of await listSessions(deps, id)) {
+    const cleanup = await deleteSession(deps, session.id);
+    if (cleanup.pending_files) throw new Error('Session file cleanup is pending. Retry project deletion.');
+  }
   await dbDeleteHard(deps.db, id);
 }

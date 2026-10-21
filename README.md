@@ -33,6 +33,14 @@ npm run dev:up
 - **Entity graph layer:** Haiku 4.5 extracts entities at ingest, resolved against a canonical registry (exact name, alias, embedding similarity). `find_mentions` returns every chunk that mentions a given entity.
 - **RAG with auto-depth routing:** Haiku classifier picks fast (Azure GPT-5.4, ~3-5s) or thorough (Azure GPT-5.4 Pro Responses API, 15-60s) per question. Per-stage `timings_ms` in every response.
 
+### Sessions and timelines
+
+- **Session workspaces:** create or resume by a stable key, keep notes/documents/todos together, and optionally assign a project. Moving a session moves its owned work and history.
+- **Session handoffs:** factual summaries, decisions, and next steps remain in session context and a searchable source note.
+- **Durable timelines:** project history includes child sessions; session history is independently browsable. Search matches, cursor pagination, and shared AND/OR tag filters work across both. Deleted artifacts retain event metadata, never copied bodies. Existing data is marked as reconstructed history.
+- **Navigation:** Sessions is available in the desktop sidebar and mobile More menu; each project has Sessions and Timeline tabs.
+- **Cloud compatibility:** existing Easy Auth, Bearer API access, Azure Blob storage, 3072-dimensional embeddings, shared browse panels, folders, and root-only todo tags are retained.
+
 ### Tasks
 
 - **Hierarchical todos** with subtasks, comments, status (`not_started` / `in_progress` / `paused` / `done`), priority (P1/P2/P3), due dates, tags.
@@ -40,9 +48,11 @@ npm run dev:up
 - **Soft delete + restore + pin/unpin:** archive/unarchive on every entity, pin to the top of any list.
 - **Bulk operations:** `POST /api/v1/{content,todos}/bulk` for archive/delete/tag-edit across many ids in one call.
 
-### MCP server (21 tools)
+### MCP server (32 tools)
 
-Read tools: `list_projects`, `list`, `get`, `search`, `find_mentions`, `list_tags`, `list_comments`, `list_activity`, `ask`. Write tools: `create_project`, `create`, `update`, `replace`, `archive`, `restore`, `add_comment`, `update_comment`, `save_from_url`, `retry`, `reprocess`, `rename_tag`. Stateless: a fresh server + transport per request, mounted at `/mcp`. The server includes an `INSTRUCTIONS` string that Claude.ai / Claude Code apply automatically — covers project membership asymmetry (`project_id` vs `project_ids`), prefer-search-before-creating discipline, and the entity model.
+Read tools: `list_projects`, `list`, `get`, `search`, `find_mentions`, `list_tags`, `list_comments`, `list_activity`, `ask`. Write tools: `create_project`, `create`, `update`, `replace`, `archive`, `restore`, `add_comment`, `update_comment`, `save_from_url`, `retry`, `reprocess`, `rename_tag`. Session tools: `list_sessions`, `create_session`, `update_session`, `get_session_context`, `get_project_context`, `save_session`, `session_timeline`, `project_timeline`, `delete_session`, `retry_session_cleanup`. Browse and search accept session scope and expose the shared filtering options.
+
+Stateless: a fresh server + transport per request, mounted at `/mcp`. The server includes an `INSTRUCTIONS` string that Claude.ai / Claude Code apply automatically — covers project membership asymmetry (`project_id` vs `project_ids`), prefer-search-before-creating discipline, and the entity model.
 
 ## Architecture
 
@@ -94,7 +104,7 @@ npm run build:all     # production build
 
 ## Schema
 
-7 migrations under `migrations/`, applied idempotently on backend startup:
+13 migrations under `migrations/`, applied idempotently on backend startup:
 
 | File | What |
 |------|------|
@@ -105,6 +115,13 @@ npm run build:all     # production build
 | `005_backfill_control_chars.sql` | strip C0/DEL bytes from old content rows |
 | `006_ingest_completed_at.sql` | `ingest_completed_at` for the polling endpoint |
 | `007_pinned.sql` | `pinned_at` TIMESTAMPTZ + partial indexes on content_items, todos, projects |
+| `008_manual_order.sql` | Per-sibling todo ordering |
+| `009_content_folder.sql` | First-class content folders |
+| `010_subtask_tags_cleanup.sql` | Root-only todo tags |
+| `011_project_memory.sql` | Durable project sessions and handoff storage |
+| `012_project_timeline.sql` | Transactional timeline capture and honest historical backfill |
+| `013_session_workspaces.sql` | Session ownership, moves, cascading cleanup, and session timelines |
+
 
 ## API documentation
 

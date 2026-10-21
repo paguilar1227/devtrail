@@ -181,3 +181,16 @@ describe('BlobStorage.getDownloadSasUrl', () => {
     expect(mockGenerateBlobSAS).not.toHaveBeenCalled();
   });
 });
+
+describe('encoded blob names', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it.each(['preview', 'download'])('signs the decoded original name for %s', async (mode) => {
+    const { createBlobStorage } = await import('../../../src/storage/blob.js');
+    const storage = createBlobStorage(VALID_CONN, 'test-container');
+    const name = 'session:design notes + résumé.txt';
+    const url = ACCOUNT_HOST_PREFIX + encodeURIComponent(name);
+    const signed = mode === 'preview' ? storage.getReadSasUrl(url) : storage.getDownloadSasUrl(url, name);
+    expect(signed).toContain(url + '?');
+    expect(mockGenerateBlobSAS).toHaveBeenCalledWith(expect.objectContaining({ blobName: name }), expect.anything());
+  });
+});

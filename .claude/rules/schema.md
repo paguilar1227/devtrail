@@ -8,7 +8,7 @@ paths:
 
 Loads when touching `migrations/` or `backend/src/db/`. Migration list, pgvector handling, B1ms / HNSW constraint.
 
-## Migrations (10 total)
+## Migrations (13 total)
 
 - `001_schema.sql` — projects, content_items, chunks, todos, todo_comments
 - `002_source_url.sql` — adds `source_url` column to content_items for URL-ingested content
@@ -36,3 +36,8 @@ Auto-migration runs on container startup (`runMigrations()` in `backend/src/serv
 2. Forwards to `pool.query`
 
 Per-table modules under `backend/src/db/` import the client and own their SQL. No ORM. Keep raw SQL in these files; services compose them.
+
+
+- `011_project_memory.sql` creates `project_sessions` and project memory storage.
+- `012_project_timeline.sql` creates transactional timeline capture and reconstructs known legacy creation/latest-edit timestamps.
+- `013_session_workspaces.sql` makes sessions standalone or project-owned, adds names and ownership FKs, derives artifact project membership, propagates task/session moves, and queues original-file cleanup. All new migrations have startup probes in `server.ts`. Existing embedding dimensions remain 3072.

@@ -1,3 +1,5 @@
+import { SessionsPage } from './pages/SessionsPage';
+import { SessionPage } from './pages/SessionPage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabbar } from './components/MobileTabbar';
@@ -147,6 +149,8 @@ export default function App() {
     switch (route.route) {
       case 'home':
         return [{ label: 'Home' }];
+      case 'sessions': return [{ label: 'Sessions' }];
+      case 'session': return [{ label: 'Sessions', onClick: () => navigate({ route: 'sessions' }) }, { label: 'Session' }];
       case 'projects':
         return [{ label: 'Projects' }];
       case 'project':
@@ -201,6 +205,8 @@ export default function App() {
               searchFocusNonce={searchFocusNonce}
             />
           )}
+          {route.route === 'sessions' && <SessionsPage onRoute={navigate} />}
+          {route.route === 'session' && <SessionPage key={route.session} sessionId={route.session} onRoute={navigate} onAction={onAction} />}
           {route.route === 'projects' && <ProjectsPage onRoute={navigate} onAction={onAction} />}
           {route.route === 'project' && <ProjectPage projectId={route.project} onAction={onAction} onRoute={navigate} />}
           {route.route === 'activity' && <ActivityPage onAction={onAction} />}
@@ -219,8 +225,8 @@ export default function App() {
       </main>
       {isMobile && <MobileTabbar route={route} onRoute={navigate} onAction={onAction} />}
 
-      {modal?.kind === 'upload' && <UploadModal project={modal.payload} onClose={() => setModal(null)} />}
-      {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} projectId={modal.projectId} initialFolder={modal.folder} onClose={() => setModal(null)} />}
+      {modal?.kind === 'upload' && <UploadModal project={modal.payload} sessionId={modal.sessionId} onClose={() => setModal(null)} />}
+      {modal?.kind === 'note-edit' && <NoteEditorModal note={modal.payload} sessionId={modal.sessionId} projectId={modal.projectId} initialFolder={modal.folder} onClose={() => setModal(null)} />}
       {modal?.kind === 'doc-read' && <DocReaderDrawer doc={modal.payload} onClose={() => setModal(null)} onRoute={navigate} />}
       {modal?.kind === 'todo-detail' && <TodoDetailDrawer key={modal.payload.id} todo={modal.payload} onClose={() => setModal(null)} onAction={onAction} />}
       {modal?.kind === 'bulk-confirm' && (

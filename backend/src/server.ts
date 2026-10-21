@@ -229,6 +229,21 @@ async function runMigrations(): Promise<void> {
       console.log('Migration 010 complete.');
     }
 
+    for (const [table, column, file] of [
+      ['project_sessions', null, '011_project_memory.sql'],
+      ['project_timeline_events', null, '012_project_timeline.sql'],
+      ['project_sessions', 'name', '013_session_workspaces.sql'],
+    ] as const) {
+      const check = column
+        ? await deps.db.pool.query("SELECT count(*) AS count FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2", [table, column])
+        : await deps.db.pool.query("SELECT count(*) AS count FROM pg_tables WHERE schemaname='public' AND tablename=$1", [table]);
+      if (Number(check.rows[0].count) === 0) {
+        console.log('Running migration', file);
+        await deps.db.pool.query(readFileSync(migration(file), 'utf-8'));
+        console.log('Migration complete', file);
+      }
+    }
+
     console.log('All migrations up to date.');
   } catch (err) {
     console.error('Migration failed:', err);

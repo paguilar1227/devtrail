@@ -30,6 +30,7 @@ import {
 import { newTrace, recordStage, addNote, type IngestTrace } from '../capture/ingest-trace.js';
 
 export interface IngestFromUrlInput {
+  sessionId?: string | null;
   projectIds?: string[];
   tags?: string[];
   title?: string;
@@ -91,7 +92,7 @@ export async function ingestFromUrl(
   // Dedup by source_url. On hit: merge incoming project_ids and tags into the
   // existing item (previously we silently dropped them — user thought their
   // save scoped to a project, but the item's project_ids stayed as-is).
-  const existing = await findByUrl(deps.db, normalized);
+  const existing = await findByUrl(deps.db, normalized, opts.sessionId);
   if (existing) {
     // Cheap URL-type detection for the response (no HEAD, just the pattern match).
     const urlTypeByPattern = detectUrlTypeByPattern(normalized) ?? 'html';
@@ -185,7 +186,7 @@ async function handleYoutube(
     type: 'document',
     content: transcript,
     title: opts.title, // auto-generated via metadata LLM if omitted
-    projectIds: opts.projectIds,
+    projectIds: opts.projectIds, sessionId: opts.sessionId,
     tags: opts.tags,
     sourceUrl: url,
     trace,
@@ -241,7 +242,7 @@ async function handleXThread(
     type: 'document',
     content,
     title: opts.title ?? fetchedTitle,
-    projectIds: opts.projectIds,
+    projectIds: opts.projectIds, sessionId: opts.sessionId,
     tags: opts.tags,
     sourceUrl: url,
     trace,
@@ -301,7 +302,7 @@ async function handleHtml(
     type: 'document',
     content: markdown,
     title: opts.title ?? title,
-    projectIds: opts.projectIds,
+    projectIds: opts.projectIds, sessionId: opts.sessionId,
     tags: opts.tags,
     sourceUrl: url,
     trace,
@@ -365,7 +366,7 @@ async function handleBinary(
   const started = await createContentItem(deps, {
     type: 'document',
     title: opts.title,
-    projectIds: opts.projectIds,
+    projectIds: opts.projectIds, sessionId: opts.sessionId,
     tags: opts.tags,
     sourceUrl: url,
     file: { data: buf, mimeType, filename },

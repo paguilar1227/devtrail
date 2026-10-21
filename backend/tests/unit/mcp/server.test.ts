@@ -122,7 +122,7 @@ describe('MCP server', () => {
     expect(result.body.result.capabilities.tools).toBeDefined();
   });
 
-  it('lists all 22 tools on tools/list', async () => {
+  it('lists all 32 tools on tools/list', async () => {
     const deps = mockDeps();
 
     // MCP requires initialize before other calls; use stateful session flow
@@ -185,7 +185,7 @@ describe('MCP server', () => {
       'replace',
       'save_from_url',
     ]));
-    expect(toolNames).toHaveLength(22);
+    expect(toolNames).toHaveLength(32);
   });
 
   it('calls create_project and returns the created project', async () => {

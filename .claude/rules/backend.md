@@ -61,7 +61,7 @@ src/
 
 Adapters (REST in `app.ts`, MCP in `mcp/server.ts`) are thin: parse input → call a service function → format response. **All business logic lives in `backend/src/services/`.** Service functions take `ServiceDeps` (the DI container with db, providers, blob, config) as their first argument. Direction of dependency: adapters → services → db/providers. Never import adapter code from services.
 
-## MCP tools (22 total — defined in `backend/src/mcp/server.ts`)
+## MCP tools (32 total — defined in `backend/src/mcp/server.ts`)
 
 Read:
 1. `list_projects` — list all (filter by status optional)
@@ -122,3 +122,10 @@ Run a single backend file (from `backend/`):
 ```bash
 cd backend && npx vitest run tests/integration/rest-api.test.ts
 ```
+
+
+## Session and timeline parity
+
+`services/sessions.ts` owns session creation/resume, context, moves, handoff capture, and deletion. `mcp/session-tools.ts` exposes ten session/context/timeline tools. `workspace-routes.ts` registers their REST browse/lifecycle/timeline surfaces and OpenAPI entries. Content and todos accept `session_id`; database ownership triggers derive project membership and propagate moves to descendants. Direct project content retains the existing membership model.
+
+`db/timeline.ts` serves project and session timelines with keyset pagination, search and AND/OR tag matching. Events and the mutation that creates them commit together. Existing artifacts use current tags; deleted artifacts retain their final tags. Only event titles/field names survive deletion, not content bodies. Legacy rows are marked reconstructed. Azure Blob cleanup is queued transactionally with session deletion and can be retried.

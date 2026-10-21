@@ -11,7 +11,7 @@ import { expect, type Page } from '@playwright/test';
 import { MORE_SHEET, TABBAR, navTo, openMoreSheet, projectTo } from './setup';
 import { isMobileViewport } from './utils';
 
-export type ViewLabel = 'Home' | 'Projects' | 'Notes' | 'Todos' | 'Activity' | 'Tags' | 'Archived';
+export type ViewLabel = 'Home' | 'Projects' | 'Notes' | 'Todos' | 'Sessions' | 'Activity' | 'Tags' | 'Archived';
 
 const TABBAR_VIEWS: ReadonlySet<ViewLabel> = new Set<ViewLabel>(['Home', 'Projects']);
 

@@ -7,6 +7,7 @@ import {
 } from '@azure/storage-blob';
 
 export interface BlobStorage {
+  delete?(blobUrlOrName: string): Promise<void>;
   upload(blobName: string, data: Buffer, contentType: string): Promise<string>;
   exists(blobName: string): Promise<boolean>;
   getUrl(blobName: string): string;
@@ -106,6 +107,9 @@ export function createBlobStorage(connectionString: string, containerName: strin
   };
 
   return {
+    async delete(blobUrlOrName) {
+      await containerClient.getBlockBlobClient(resolveBlobName(blobUrlOrName, 'delete')).deleteIfExists();
+    },
     async upload(blobName, data, contentType) {
       const blockBlobClient = containerClient.getBlockBlobClient(blobName);
       await blockBlobClient.upload(data, data.length, {
@@ -147,7 +151,7 @@ export function createBlobStorage(connectionString: string, containerName: strin
       // Don't sign URLs we don't own (different storage account / container).
       if (!blobUrl.startsWith(accountHostPrefix)) return blobUrl;
 
-      const blobName = blobUrl.slice(accountHostPrefix.length);
+      const blobName = resolveBlobName(blobUrl, 'sign');
       const sas = generateBlobSASQueryParameters(
         {
           containerName,
@@ -165,7 +169,7 @@ export function createBlobStorage(connectionString: string, containerName: strin
       if (blobUrl.includes('sig=')) return blobUrl;
       if (!blobUrl.startsWith(accountHostPrefix)) return blobUrl;
 
-      const blobName = blobUrl.slice(accountHostPrefix.length);
+      const blobName = resolveBlobName(blobUrl, 'sign');
       // RFC 5987 / 6266 — wrap the filename in quotes and use filename*=UTF-8''
       // for anything non-ASCII so unicode titles survive the round-trip.
       const asciiSafe = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');

@@ -1,3 +1,5 @@
+import { registerSessionTools } from './session-tools.js';
+import * as sessions from '../services/sessions.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ServiceDeps } from '../services/index.js';
@@ -18,140 +20,34 @@ const PROJECT_STATUSES = ['active', 'archived', 'completed'] as const;
 
 const INSTRUCTIONS = `# Open Brain — Personal Knowledge Base + Productivity Tool
 
-Open Brain is a single-user personal knowledge system. Think NotebookLM crossed with a task manager. The user organizes knowledge into **projects**, each containing documents, notes, and todos. Semantic search spans everything.
+Open Brain is a single-user project and session workspace. Search relevant saved material before answering questions about past work; never invent entity UUIDs. Resolve projects with list_projects and sessions with list_sessions or get.
 
-Use these tools actively. The user expects you to save conversation artifacts on their request, surface relevant prior knowledge before making things up, and turn intents into todos.
+## Sessions and scope
+- create_session creates or resumes a workspace using a stable session_key. A session optionally belongs to one project.
+- Supply session_id on content and todo writes to give the session ownership. Its project membership is inherited automatically.
+- get_session_context loads the handoff, artifacts and todos. get_project_context includes the project's child sessions and open todos.
+- search and ask accept session_id for one session, project_id for a project including its sessions, or neither for global scope. Standalone sessions are included globally. Explicit null project scope selects personal items.
+- update_session can rename or move a session. Moving it also moves its owned artifacts, todos and timeline.
+- save_session records factual progress, explicit decisions and next steps in the session and a searchable note. Use a stable session_key for retries; the source is committed before asynchronous indexing.
+- project_timeline and session_timeline retain creation, edits, archive, restore and deletion events. Reconstructed history has only known creation and last-update timestamps. Use both cursor fields for older pages.
 
-## Entity model
+## Membership and tags
+- Documents, notes and quick_notes use project_ids (array); todos use project_id (single, nullable). A session owns both types and overrides membership.
+- Tags are user-supplied. Never invent or silently infer tags. Omitted or empty tags are valid. Do not ask again when the user already authorized the save.
+- Use list_tags for the existing inventory. Tags belong on root todos; subtasks inherit their parent's context.
+- search supports tag_match=all (AND) or any (OR), exclusions, type and content-ID filters. Timeline tags share names across a project and its sessions. No selected tags means no tag restriction.
 
-- **Project** — top-level container. Has name, description, status (active/archived/completed). Most content belongs to 1+ projects.
-- **Document** — uploaded reference material (PDFs, images, audio, video, long-form text someone else wrote). Chunked for search.
-- **Note** — content the user authored themselves. Can be long-form. Chunked for search.
-- **Quick note** — a fast-captured thought. Stored as a note with an AI-generated title. Use this for mid-conversation saves when the user says "jot down…" / "save this idea…".
-- **Todo** — actionable item with status, priority (P1/P2/P3), optional due_date, optional parent for subtasks.
+## Capture and retrieval
+- create makes notes, documents or todos; save_from_url captures supported URLs and preserves source_url.
+- Content ingestion is asynchronous on REST. Poll processing_status until ready or failed before relying on indexing. get returns full content; list returns compact summaries.
+- search retrieves evidence; ask synthesizes a cited answer. find_mentions resolves exact entity mentions.
+- download returns a temporary link to the original uploaded file; get reads extracted text.
+- update edits metadata and text-only bodies. Binary-backed bodies require replace. retry restarts a failed ingest; reprocess rebuilds its index.
+- archive and restore are reversible. Existing content/todo/project permanent deletion stays in the web UI.
+- delete_session requires explicit confirmation of the session and ALL its owned notes, files, todos, comments and timeline. Inspect get_session_context first and repeat its exact name. If pending_files remains, retry_session_cleanup retries deletion of files for an already-deleted session.
 
-## Project membership (asymmetric — important)
-
-- Documents, notes, quick_notes use **\`project_ids\`** (array) — can belong to multiple projects or zero (empty array = personal/global scope).
-- Todos use **\`project_id\`** (single string) — belongs to one project or \`null\` (personal Inbox).
-- Content with no project membership is "personal" and lives in the Inbox.
-
-## Tags — IMPORTANT, READ CAREFULLY
-
-Tags are flat, **global**, **lowercase kebab-case** labels (\`reference\`, \`meeting-notes\`, \`reading\`). They are the user's primary filter for finding things later — the better the user's tags, the better their retrieval. Optional on all entities, but **bias hard toward attaching them**.
-
-### Hard rules
-
-1. **NEVER invent tags.** Do not infer them, do not auto-suggest them silently, do not pass tags the user did not name. Tags are the user's filing system — making one up corrupts their namespace.
-2. **ALWAYS ask before saving anything.** Every \`create\`, \`save_from_url\`, and \`update\` that touches tags must be preceded by a short prompt to the user. *No exceptions, even for short or "obvious" saves.*
-3. **Tag-less saves are valid.** If the user says "skip", "no tags", "just save it", or ignores the question, save with \`tags: []\` (or omit the field) and move on. Don't badger.
-4. **If the user pre-supplies tags** ("save this with tags work, reading"), use exactly those tags. Don't add more.
-
-### How to ask
-
-Keep it short and offer light help. Format your prompt like one of these:
-
-- *"Tags? (I can suggest: reading, react, hooks — or none)"*
-- *"Want any tags? Existing ones include #work, #personal — or new."*
-- *"Tagging?"*
-
-You may surface up to 3 suggestions derived from the content **only as proposals for the user to confirm, edit, or replace**. If the user accepts them verbatim, great. If they change them, use their version. If they say nothing, save tag-less.
-
-### Why this matters
-
-We removed AI-side tag generation. Tags now ONLY exist when the user adds them. If you skip the prompt, the user's tag namespace will silently decay — which kills future search and the dashboard's "what am I working on" surface. Treat asking as part of the save action, not optional polish.
-
-### Worked example
-
-**User:** "Save this article: https://example.com/rust-async-deep-dive"
-**You:** *"Tagging? Maybe \`rust\`, \`async\`, \`reading\` — or none?"*
-**User:** "Yes, rust and reading."
-**You:** \`save_from_url(url: '...', tags: ['rust', 'reading'])\`
-**You:** *"Saved with tags rust + reading."*
-
-If the user had said "skip" — you'd call \`save_from_url(url: '...')\` (no tags arg), confirm "Saved.", and move on.
-
-## When to use which tool
-
-**Retrieval (always try this first when the user asks a question):**
-- Any "what did I save / read / note about X" → \`search(query)\`
-- In a project context → \`search(query, project_id)\`
-- Restrict to one entity type → \`search(query, entity_types: ['document'])\`
-- Filter by tag → \`search(query, tags: ['urgent'])\`
-
-**Creation (when the user explicitly wants to save):** ALWAYS ask the user for tags before calling these tools — see the Tags section above.
-- "Save this idea…" / "remember this…" → \`create(type: 'quick_note', content: …)\`
-- "Save this article / meeting notes / writeup…" → \`create(type: 'note' or 'document', content, title?, project_ids?)\`
-- "Add a todo / remind me / I need to…" → \`create(type: 'todo', content, project_id?, priority?, due_date?)\`
-- "Save this URL / this YouTube video / this article link / this tweet thread…" → \`save_from_url(url, project_ids?, tags?)\` — backend fetches content, preserves URL as source. Prefer this over \`create\` for URL content; avoids approval-size issues on large pages.
-
-**Browse and lookup:**
-- "What projects do I have?" → \`list_projects\`
-- "Show me todos in project X" → \`list(entity_type: 'todo', project_id: X)\`
-- "List my documents" → \`list(entity_type: 'document')\`
-- You have a UUID from a previous result → \`get(id)\` (auto-detects project / content / todo)
-
-## Project resolution
-
-If the user mentions a project by name ("save this to my 'Learning Rust' project"):
-1. Call \`list_projects()\` to find the ID by matching the name.
-2. If no match, offer to create it with \`create_project\` — confirm with the user first.
-3. Then use that project_id in your create / search call.
-
-Don't invent project UUIDs. Always get them from \`list_projects\` or a prior search result.
-
-## Concrete examples
-
-**User:** "Save this conversation about Rust async to my Learning Rust project."
-→ \`list_projects()\` to find "Learning Rust" ID
-→ \`create(type: 'note', title: 'Rust async patterns', content: <summary>, project_ids: [<that ID>])\`
-
-**User:** "Remind me to email John tomorrow."
-→ \`create(type: 'todo', content: 'Email John', due_date: '<tomorrow ISO>', priority: 'P2')\`
-→ Confirm: "Added to your todos with P2 priority, due tomorrow."
-
-**User:** "What did I save about pgvector?"
-→ \`search(query: 'pgvector', limit: 5)\`
-→ Summarize the top hits, cite them by title.
-
-**User (in Learning Rust context):** "What have I read about async?"
-→ \`search(query: 'async programming', project_id: <Learning Rust ID>)\`
-
-**User:** "Jot down that I hated the last meeting."
-→ \`create(type: 'quick_note', content: 'Hated the last meeting')\` — no project, personal scope.
-
-**User:** "Save this YouTube video to my Learning Rust project: https://www.youtube.com/watch?v=..."
-→ \`list_projects()\` to find "Learning Rust" ID
-→ \`save_from_url(url: 'https://...', project_ids: ['<that ID>'])\`
-→ Confirm: "Saved — transcript captured, source URL preserved."
-
-**User:** "Grab this tweet thread: https://x.com/jason/status/..."
-→ \`save_from_url(url: 'https://x.com/...')\` — no project, personal scope. Thread fetched via xAI's x_search tool.
-
-## Proactive behavior
-
-- When the user generates something worth keeping ("this is great" / "this is the plan"), offer to save it.
-- Before answering from training data, check Open Brain with \`search\` — the user's own notes are authoritative for questions about their work, preferences, decisions.
-- Scope to the current project when the conversation is project-specific.
-- After creating anything, confirm back with a short summary ("Saved to Learning Rust as 'Rust async patterns'.").
-
-## Anti-patterns
-
-- **Never fabricate UUIDs.** Only \`get(id)\` IDs you got from \`list_projects\`, \`list\`, or \`search\`.
-- **Don't create duplicate projects.** Always \`list_projects\` first; match by name.
-- **Don't auto-save trivial chatter.** Save only when the user asks or when the artifact clearly has durable value (and they confirm).
-- **Don't mix membership models.** \`project_ids\` (array) is for documents/notes/quick_notes. \`project_id\` (string) is for todos. Using the wrong one breaks the call.
-
-## Known limitations
-
-- **MCP surface (20 tools).** Read: \`list_projects\`, \`list\`, \`get\`, \`search\`, \`find_mentions\`, \`list_tags\`, \`list_comments\`, \`list_activity\`, \`ask\` (RAG synthesis). Write: \`create_project\`, \`create\` (document/note/quick_note/todo), \`update\` (metadata across kinds), \`archive\` / \`restore\` (soft delete + undo), \`add_comment\` / \`update_comment\`, \`save_from_url\`, \`retry\` (failed ingest), \`reprocess\` (regenerate chunks/embeddings/metadata), \`rename_tag\` (corpus-wide).
-- **No hard delete via MCP.** Hard deletion is UI-only by design. Use \`archive\` for soft delete (reversible via \`restore\`).
-- **Body edits — partial.** \`update\` accepts \`content\` for body edits when the row is text-only (no binary file backing it: notes, markdown documents, URL-ingested articles). Triggers an async re-chunk + re-embed; the call awaits completion. Items with a blob (PDF, audio, video, image) refuse body edits with code BODY_IMMUTABLE — use the \`replace\` tool to archive the old row and create a v2.
-- **Replace tool.** Use \`replace\` when you have a new version of an item and want to preserve v1 in the archive (rather than overwriting via edit-body). Common case: you generated a markdown doc, the user iterates with you, and you push v2 to supersede v1.
-- **No bulk MCP ops.** MCP tools work on one entity at a time. Bulk archive / retag / reassign live in the REST API for the web UI's multi-select.
-- **No pin/unpin via MCP.** Pinning is a UI affordance; the AI doesn't need to manage it.
-- **URL ingestion — currently supported:** YouTube videos (transcripts), X/Twitter threads (via xAI x_search), PDFs, HTML articles (incl. Reddit, blogs, Substack), direct image/audio links.
-- **URL ingestion — not yet supported:** Notion docs, Google Docs, Medium paywalls, Vimeo/Twitch — these need per-site auth or dedicated handlers.`;
+Use authorized project tracking proactively. Do not save trivial conversation or publish/share content without the user's authorization.
+`;
 
 export function createMcpServer(deps: ServiceDeps): McpServer {
   const server = new McpServer(
@@ -214,27 +110,44 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
     'Browse/filter entities by type and optional filters. Use when the user wants a structured view ("show me all my todos in project X" / "list my documents"). For freeform "what did I save about Y" use `search` instead — it does semantic retrieval across content. list is exact-filter-based; search is meaning-based.',
     {
       entity_type: z.enum(['document', 'note', 'todo']).describe('Which entity type to list'),
-      project_id: z.string().optional().describe('Scope to a specific project UUID'),
+      session_id: z.string().uuid().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
+      project_id: z.string().uuid().nullable().optional().describe('Project UUID, null for personal/standalone, omitted for all'),
       tags: z.array(z.string()).optional().describe('Filter by tags (AND — item must have all listed tags)'),
       status: z.enum(['not_started', 'in_progress', 'paused', 'done']).optional()
         .describe('Todo status filter (ignored for document/note)'),
       limit: z.number().int().positive().default(50).describe('Max items to return'),
+      parent_id: z.string().uuid().nullable().optional().describe('Todos: parent UUID; null for top-level only.'),
+      priority: z.enum(['P1', 'P2', 'P3']).optional(),
+      due_before: z.string().datetime({ offset: true }).optional(),
+      due_after: z.string().datetime({ offset: true }).optional(),
+      processing_status: z.array(z.enum(['pending', 'ready', 'failed'])).optional(),
+      pinned: z.boolean().optional(),
+      include_archived: z.boolean().optional(),
+      before: z.string().datetime({ offset: true }).optional().describe('Pagination: created_at of the last item from the previous page.'),
+      q: z.string().optional().describe('Case-insensitive substring in title/body or todo text.'),
     },
-    async ({ entity_type, project_id, tags, status, limit }) => {
+    async ({ entity_type, session_id, project_id, tags, status, limit, parent_id, priority, due_before, due_after, processing_status, pinned, include_archived, before, q }) => {
       let rows: Array<Record<string, unknown>>;
       if (entity_type === 'todo') {
         rows = await todosSvc.listTodos(deps, {
-          project_id: project_id ?? undefined,
+          session_id,
+          project_id,
           status,
           tags,
           limit,
+          parent_id, priority, pinned, include_archived, q,
+          due_before: due_before ? new Date(due_before) : undefined,
+          due_after: due_after ? new Date(due_after) : undefined,
+          before: before ? new Date(before) : undefined,
         }) as unknown as Array<Record<string, unknown>>;
       } else {
         rows = await contentSvc.listContentItems(deps, {
           type: entity_type,
-          project_id,
+          session_id, project_id,
           tags,
           limit,
+          processing_status, pinned, include_archived, q,
+          before: before ? new Date(before) : undefined,
         }) as unknown as Array<Record<string, unknown>>;
       }
       // Strip embeddings (3072-dim vectors) and truncate content bodies.
@@ -271,6 +184,8 @@ export function createMcpServer(deps: ServiceDeps): McpServer {
       if (td) return { content: [{ type: 'text', text: JSON.stringify(td, null, 2) }] };
       const pr = await projectsSvc.getProject(deps, id);
       if (pr) return { content: [{ type: 'text', text: JSON.stringify(pr, null, 2) }] };
+      const session = await sessions.getSession(deps, id);
+      if (session) return { content: [{ type: 'text', text: JSON.stringify(session) }] };
       return { content: [{ type: 'text', text: `No entity found with id ${id}` }] };
     },
   );
@@ -358,7 +273,8 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         .describe('The primary text. For todos: task description. For documents/notes/quick_notes: the body to save.'),
       title: z.string().optional()
         .describe('Optional. Used by document/note only. Auto-generated by an LLM if omitted.'),
-      project_id: z.string().optional()
+      session_id: z.string().uuid().nullable().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
+      project_id: z.string().uuid().nullable().optional()
         .describe('TODO ONLY. Single project UUID this todo belongs to. Use null/omit for personal Inbox todos.'),
       project_ids: z.array(z.string()).optional()
         .describe('DOCUMENT/NOTE/QUICK_NOTE ONLY. Array of project UUIDs. Item can belong to multiple projects, or none (personal/global).'),
@@ -381,6 +297,7 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         try {
           const result = await todosSvc.createTodo(deps, {
             content: input.content,
+            sessionId: input.session_id,
             projectId: input.project_id ?? null,
             parentId: input.parent_id ?? null,
             section: input.section ?? null,
@@ -405,6 +322,7 @@ Returns the created entity's id. For documents/notes, also returns chunkCount (h
         content: input.content,
         title: input.title,
         projectIds: input.project_ids,
+        sessionId: input.session_id,
         tags: input.tags,
         folder: input.folder,
       });
@@ -471,6 +389,7 @@ Returns the updated record.`,
         .describe('TODO ONLY. UUID of parent todo, or null to detach into a top-level todo.'),
       section: z.string().nullable().optional()
         .describe('TODO ONLY. Free-text section label, or null to clear.'),
+      session_id: z.string().uuid().nullable().optional().describe('Owning session UUID; null detaches from the session.'),
       project_id: z.string().nullable().optional()
         .describe('TODO ONLY (single UUID). Move to a different project, or null for personal Inbox.'),
       tags: z.array(z.string()).optional()
@@ -525,6 +444,7 @@ Returns the updated record.`,
         try {
           const updated = await todosSvc.updateTodo(deps, input.id, {
             content: input.content,
+            sessionId: input.session_id,
             projectId: input.project_id,
             section: input.section,
             parentId: input.parent_id,
@@ -552,11 +472,12 @@ Returns the updated record.`,
         let row: Awaited<ReturnType<typeof contentSvc.updateContentItem>> | null = null;
         const hasMetadataChange =
           input.title !== undefined || input.project_ids !== undefined
-          || input.tags !== undefined || input.folder !== undefined;
+          || input.tags !== undefined || input.folder !== undefined || input.session_id !== undefined;
         if (hasMetadataChange) {
           row = await contentSvc.updateContentItem(deps, input.id, {
             title: input.title,
             projectIds: input.project_ids,
+        sessionId: input.session_id,
             tags: input.tags,
             folder: input.folder,
           });
@@ -814,8 +735,9 @@ Scoping:
     {
       query: z.string()
         .describe('Natural-language search query. Full sentences work well; no need for keyword-only formatting.'),
-      project_id: z.string().optional()
-        .describe('Optional. Scope results to a single project. Omit for global search.'),
+      session_id: z.string().uuid().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
+      project_id: z.union([z.string().uuid(), z.literal('null')]).nullable().optional()
+        .describe('Scope to a project UUID; null for personal/standalone; omit for global search.'),
       entity_types: z.array(z.enum(['document', 'note', 'todo'])).optional()
         .describe('Optional. Restrict result types. Omit to include all types.'),
       tags: z.array(z.string()).optional()
@@ -826,12 +748,19 @@ Scoping:
         .describe('Minimum cosine similarity for vector-path hits (0-1). Default 0.65. Graph-expanded hits are not subject to this threshold.'),
       graph: z.boolean().default(true)
         .describe('Enable graph expansion via entity edges. Default true. Set false to get vector-only results.'),
+      tag_match: z.enum(['all', 'any']).optional(),
+      content_item_ids: z.array(z.string().uuid()).optional(),
+      excluded_tags: z.array(z.string()).optional(),
+      excluded_entity_types: z.array(z.enum(['document', 'note', 'todo'])).optional(),
+      excluded_content_item_ids: z.array(z.string().uuid()).optional(),
     },
-    async ({ query, project_id, entity_types, tags, limit, threshold, graph }) => {
+    async ({ query, session_id, project_id, entity_types, tags, limit, threshold, graph, tag_match, content_item_ids, excluded_tags, excluded_entity_types, excluded_content_item_ids }) => {
       const hits = await searchSvc.search(deps, query, {
-        projectId: project_id,
+        sessionId: session_id, projectId: project_id === 'null' ? null : project_id,
         entityTypes: entity_types,
-        tags,
+        tags, tagMatch: tag_match, contentItemIds: content_item_ids,
+        excludedTags: excluded_tags, excludedEntityTypes: excluded_entity_types,
+        excludedContentItemIds: excluded_content_item_ids,
         limit,
         threshold,
         graph,
@@ -852,14 +781,15 @@ If no entity matches the input name (as canonical or alias), returns { entity: n
       entity: z.string().describe('Entity name to look up. Matches canonical names and aliases case-insensitively.'),
       type: z.enum(['person', 'org', 'concept', 'tool', 'paper']).optional()
         .describe('Optional. Restrict the lookup to a specific entity type. Omit to search all types.'),
+      session_id: z.string().uuid().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
       project_id: z.string().optional()
         .describe('Optional. Restrict mentions to a single project.'),
       limit: z.number().int().positive().default(20).describe('Max mentions to return. Default 20.'),
     },
-    async ({ entity, type, project_id, limit }) => {
+    async ({ entity, type, session_id, project_id, limit }) => {
       const result = await searchSvc.findMentions(deps, entity, {
         type,
-        projectId: project_id,
+        sessionId: session_id, projectId: project_id,
         limit,
       });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -993,6 +923,7 @@ Depth control:
 Returns: { answer, citations[], used_chunks, meta { depth_used, timings_ms } }`,
     {
       question: z.string().describe('The natural-language question to answer.'),
+      session_id: z.string().uuid().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
       project_id: z.string().optional()
         .describe('Optional. Scope retrieval to a single project. Omit for global search across all content.'),
       depth: z.enum(['auto', 'fast', 'thorough']).optional()
@@ -1006,10 +937,10 @@ Returns: { answer, citations[], used_chunks, meta { depth_used, timings_ms } }`,
       reasoning_effort: z.enum(['low', 'medium', 'high']).optional()
         .describe('Optional. Override gpt-5-4-pro reasoning effort on the thorough path. Ignored on fast.'),
     },
-    async ({ question, project_id, depth, max_chunks, tags, entity_types, reasoning_effort }) => {
+    async ({ question, session_id, project_id, depth, max_chunks, tags, entity_types, reasoning_effort }) => {
       try {
         const result = await ragSvc.ragQuery(deps, question, {
-          projectId: project_id,
+          sessionId: session_id, projectId: project_id,
           tags,
           entityTypes: entity_types,
           maxChunks: max_chunks,
@@ -1227,6 +1158,7 @@ Supported URLs:
 Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
     {
       url: z.string().describe('The URL to fetch. Any http(s) URL to YouTube, X, a PDF, an article, a blog post, etc.'),
+      session_id: z.string().uuid().optional().describe('Owning session UUID; inherits its project or standalone scope.'),
       project_ids: z.array(z.string()).optional()
         .describe('Multi-project membership (array of project UUIDs). Omit for personal/global scope.'),
       tags: z.array(z.string()).optional()
@@ -1234,10 +1166,10 @@ Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
       title: z.string().optional()
         .describe('Optional title override. If omitted, uses the page/video title or AI-generated from content.'),
     },
-    async ({ url, project_ids, tags, title }) => {
+    async ({ url, session_id, project_ids, tags, title }) => {
       try {
         const started = await urlIngestSvc.ingestFromUrl(deps, url, {
-          projectIds: project_ids,
+          projectIds: project_ids, sessionId: session_id,
           tags,
           title,
         });
@@ -1275,6 +1207,7 @@ Returns \`{ id, title, type, source_url, deduped, chunkCount, url_type }\`.`,
     },
   );
 
+  registerSessionTools(server, deps);
   return server;
 }
 

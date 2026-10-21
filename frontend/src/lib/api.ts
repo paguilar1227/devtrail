@@ -14,6 +14,7 @@
 //     authenticates browser calls in prod.
 
 import {
+  SessionSchema, type Session, SessionCreateSchema, SessionUpdateSchema,
   ActivityListQuerySchema,
   ActivityListResponseSchema,
   ContentGetResponseSchema,
@@ -75,6 +76,10 @@ import {
   type Todo,
   type TodoComment,
   type TodoListQuery,
+  TimelineResponseSchema,
+  type TimelineCursor,
+  type TimelineResponse,
+  type TimelineTagMatch,
 } from '@open-brain/shared';
 import { z } from 'zod';
 import { apiOrigin, clearServerOrigin, fetchCredentials, isNativeApp, saveServerOrigin, storedServerOrigin } from './nativeConfig';
@@ -109,6 +114,14 @@ function resolveInitialApiKey(): string {
     typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '';
   if (isNativeApp()) return stored;
   return import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? stored;
+}
+
+
+export function listProjectTimeline(projectId: string, search: string, cursor: TimelineCursor | null, signal?: AbortSignal, tags: string[] = [], tagMatch: TimelineTagMatch = 'all'): Promise<TimelineResponse> {
+  const params = new URLSearchParams({ search, tag_match: tagMatch });
+  tags.forEach(tag => params.append('tag', tag));
+  if (cursor) { params.set('before_at', cursor.at); params.set('before_id', cursor.id); }
+  return request(`/projects/${projectId}/timeline?${params}`, TimelineResponseSchema, { signal });
 }
 
 // Drop the cached Bearer key and end the session. In prod this kicks
@@ -497,12 +510,14 @@ export async function reprocessContent(id: string): Promise<void> {
 // async pending.
 export async function uploadFile(opts: {
   file: File;
+  sessionId?: string;
   projectIds?: string[];
   tags?: string[];
   title?: string;
 }): Promise<ContentCreateResponse> {
   const fd = new FormData();
   fd.set('type', 'document');
+  if(opts.sessionId) fd.set('session_id',opts.sessionId);
   fd.set('file', opts.file);
   if (opts.title) fd.set('title', opts.title);
   if (opts.projectIds && opts.projectIds.length > 0) fd.set('project_ids', opts.projectIds.join(','));
@@ -527,6 +542,7 @@ export async function uploadFile(opts: {
 
 export async function saveFromUrl(opts: {
   url: string;
+  sessionId?: string;
   projectIds?: string[];
   tags?: string[];
   title?: string;
@@ -534,6 +550,7 @@ export async function saveFromUrl(opts: {
   const body = JSON.stringify({
     url: opts.url,
     project_ids: opts.projectIds,
+    session_id: opts.sessionId,
     tags: opts.tags,
     title: opts.title,
   });
@@ -586,4 +603,26 @@ export async function listActivity(query: ActivityListQuery = {}): Promise<Activ
   const qs = toQueryString(parsed);
   const data = await request(`/activity${qs}`, ActivityListResponseSchema);
   return data.events;
+}
+
+export async function listSessions(projectId?: string | null): Promise<Session[]> {
+  const query=projectId===undefined?'':`?project_id=${projectId??'null'}`;
+  return (await request(`/sessions${query}`,z.object({sessions:z.array(SessionSchema)}))).sessions;
+}
+export async function getSession(id: string): Promise<Session> {
+  return (await request(`/sessions/${id}`,z.object({session:SessionSchema}))).session;
+}
+export async function createSession(input: z.infer<typeof SessionCreateSchema>): Promise<Session> {
+  return (await request('/sessions',z.object({session:SessionSchema}),{method:'POST',body:JSON.stringify(SessionCreateSchema.parse(input))})).session;
+}
+export async function updateSession(id:string,input:z.infer<typeof SessionUpdateSchema>):Promise<Session> {
+  return (await request(`/sessions/${id}`,z.object({session:SessionSchema}),{method:'PUT',body:JSON.stringify(SessionUpdateSchema.parse(input))})).session;
+}
+export async function deleteSession(id:string):Promise<{ok:boolean;pending_files:number}> {
+  return request(`/sessions/${id}`,z.object({ok:z.boolean(),pending_files:z.number()}),{method:'DELETE'});
+}
+export function listSessionTimeline(sessionId:string,search:string,cursor:TimelineCursor|null,signal?:AbortSignal,tags:string[]=[],tagMatch:TimelineTagMatch='all'):Promise<TimelineResponse> {
+  const params=new URLSearchParams({search,tag_match:tagMatch});tags.forEach(tag=>params.append('tag',tag));
+  if(cursor){params.set('before_at',cursor.at);params.set('before_id',cursor.id);}
+  return request(`/sessions/${sessionId}/timeline?${params}`,TimelineResponseSchema,{signal});
 }

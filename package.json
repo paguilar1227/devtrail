@@ -36,18 +36,19 @@
   },
   "comment:overrides": "Pin patched versions of transitive CVE deps whose parents (firecrawl-js, @modelcontextprotocol/sdk, @azure/*, ajv, wait-on) haven't shipped the fix yet. Exact versions (no caret) so npm forces nested/exact pins. All within-major. Drop an entry once its parent upgrades past the advisory. See CI.md.",
   "overrides": {
-    "axios": "1.18.0",
-    "@grpc/grpc-js": "1.14.4",
-    "fast-uri": "3.1.5",
-    "shell-quote": "1.10.0",
+    "axios": "1.20.0",
+    "@grpc/grpc-js": "1.14.5",
+    "fast-uri": "3.1.8",
+    "shell-quote": "1.11.0",
     "fast-xml-builder": "1.2.0",
     "express-rate-limit": "8.5.2",
     "qs": "6.15.2",
     "ip-address": "10.3.1",
-    "joi": "18.2.1",
+    "joi": "18.2.9",
     "esbuild": "0.28.1",
     "xcode": {
       "uuid": "11.1.1"
-    }
+    },
+    "tinypool": "2.2.0"
   }
 }

@@ -1,7 +1,9 @@
+import { addWorkspaceRoutes } from './workspace-routes.js';
 import { Hono } from 'hono';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import {
   ActivityListQuerySchema,
+  UuidSchema,
   ActivityListResponseSchema,
   BulkResponseSchema,
   ContentBulkRequestSchema,
@@ -103,6 +105,12 @@ export function createApp(deps: ServiceDeps) {
   });
 
   app.use('*', cors({ origin: '*' }));
+  app.onError((error, c) => {
+    if (error instanceof z.ZodError) return c.json({ error: error.issues.map(issue => issue.message).join('; ') }, 400);
+    if ('code' in error && ['23503', '23514', '23505'].includes(String(error.code))) return c.json({ error: error.message }, 400);
+    console.error('[api]', error);
+    return c.json({ error: 'Internal server error' }, 500);
+  });
 
   // ----- auth -----
   // /api/v1/* and /api/openapi.json + /api/docs use Bearer (Authorization
@@ -171,6 +179,8 @@ export function createApp(deps: ServiceDeps) {
       principalName: c.req.header('x-ms-client-principal-name') ?? null,
     });
   });
+
+  addWorkspaceRoutes(app, deps);
 
   // ----- health -----
   app.get('/health', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
@@ -469,6 +479,7 @@ export function createApp(deps: ServiceDeps) {
       // project-less rows.
       const items = await contentSvc.listContentItems(deps, {
         type: q.type,
+        session_id: q.session_id,
         project_id: q.project_id === 'null' ? null : q.project_id,
         tags,
         processing_status,
@@ -521,6 +532,7 @@ export function createApp(deps: ServiceDeps) {
       let content: string | undefined;
       let title: string | undefined;
       let projectIds: string[] | undefined;
+      let sessionId: string | null | undefined;
       let tags: string[] | undefined;
       let folder: string | null | undefined;
       let file: { data: Buffer; mimeType: string; filename: string } | undefined;
@@ -530,6 +542,7 @@ export function createApp(deps: ServiceDeps) {
         type = body.type as 'document' | 'note';
         content = typeof body.content === 'string' ? body.content : undefined;
         title = typeof body.title === 'string' ? body.title : undefined;
+        sessionId = typeof body.session_id === 'string' ? UuidSchema.parse(body.session_id) : undefined;
         const pids = typeof body.project_ids === 'string' ? body.project_ids : undefined;
         projectIds = pids ? pids.split(',').filter(Boolean) : undefined;
         const tgs = typeof body.tags === 'string' ? body.tags : undefined;
@@ -548,6 +561,7 @@ export function createApp(deps: ServiceDeps) {
           type: 'document' | 'note';
           content?: string;
           title?: string;
+          session_id?: string | null;
           project_ids?: string[];
           tags?: string[];
           folder?: string | null;
@@ -556,6 +570,7 @@ export function createApp(deps: ServiceDeps) {
         content = body.content;
         title = body.title;
         projectIds = body.project_ids;
+        sessionId = body.session_id;
         tags = body.tags;
         folder = body.folder ?? undefined;
       }
@@ -568,7 +583,7 @@ export function createApp(deps: ServiceDeps) {
       }
 
       const started = await contentSvc.createContentItem(deps, {
-        type, content, title, projectIds, tags, folder, file,
+        type, content, title, projectIds, sessionId, tags, folder, file,
       });
       return c.json(
         { id: started.id, status: started.status },
@@ -598,6 +613,7 @@ export function createApp(deps: ServiceDeps) {
       try {
         const result = await urlIngestSvc.ingestFromUrl(deps, body.url, {
           projectIds: body.project_ids,
+          sessionId: body.session_id,
           tags: body.tags,
           title: body.title,
         });
@@ -748,6 +764,7 @@ export function createApp(deps: ServiceDeps) {
       const body = await c.req.json<{
         title?: string;
         content?: string;
+        session_id?: string | null;
         project_ids?: string[];
         tags?: string[];
         folder?: string | null;
@@ -760,6 +777,7 @@ export function createApp(deps: ServiceDeps) {
       const item = await contentSvc.updateContentItem(deps, id, {
         title: body.title,
         projectIds: body.project_ids,
+        sessionId: body.session_id,
         tags: body.tags,
         folder: body.folder,
       });
@@ -1051,6 +1069,7 @@ export function createApp(deps: ServiceDeps) {
       }
 
       const todos = await todosSvc.listTodos(deps, {
+        session_id: q.session_id,
         project_id: q.project_id === 'null' ? null : q.project_id ?? undefined,
         parent_id,
         status: q.status,
@@ -1086,6 +1105,7 @@ export function createApp(deps: ServiceDeps) {
       try {
         const todo = await todosSvc.createTodo(deps, {
           content: body.content,
+          sessionId: body.session_id,
           projectId: body.project_id ?? null,
           section: body.section ?? null,
           parentId: body.parent_id ?? null,
@@ -1148,6 +1168,7 @@ export function createApp(deps: ServiceDeps) {
       try {
         const todo = await todosSvc.updateTodo(deps, id, {
           content: body.content,
+          sessionId: body.session_id,
           projectId: body.project_id === null ? null : body.project_id,
           // Distinguish "clear to Ungrouped" (null) from "don't touch"
           // (undefined) — `?? undefined` collapsed null and silently dropped
@@ -1483,6 +1504,7 @@ export function createApp(deps: ServiceDeps) {
       // Translate the wire-level 'null' sentinel into the internal `null`
       // the search service understands — same shape as /content list uses.
       const hits = await searchSvc.search(deps, body.query, {
+        sessionId: body.session_id,
         projectId: body.project_id === 'null' ? null : body.project_id,
         entityTypes: body.entity_types,
         tags: body.tags,
@@ -1663,6 +1685,7 @@ export function createApp(deps: ServiceDeps) {
       const body = c.req.valid('json');
       const result = await searchSvc.findMentions(deps, body.entity, {
         type: body.type,
+        sessionId: body.session_id,
         projectId: body.project_id,
         limit: body.limit ?? 20,
       });
@@ -1686,7 +1709,7 @@ export function createApp(deps: ServiceDeps) {
     async (c) => {
       const body = c.req.valid('json');
       const result = await ragSvc.ragQuery(deps, body.question, {
-        // 'null' literal → null (personal scope), matching the search route.
+        sessionId: body.session_id,
         projectId: body.project_id === 'null' ? null : body.project_id,
         tags: body.tags,
         entityTypes: body.entity_types,

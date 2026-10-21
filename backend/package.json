@@ -30,6 +30,8 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-pgvector": "^0.0.11",
     "@types/node": "^22.0.0",
     "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.11.0",

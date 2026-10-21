@@ -1,3 +1,5 @@
+import { SessionsPage } from './SessionsPage';
+import { TimelineTab } from './project/TimelineTab';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Icons } from '../components/Icons';
@@ -31,7 +33,7 @@ interface Props {
   onRoute: (r: import('../types').Route) => void;
 }
 
-type TabId = 'chat' | 'documents' | 'notes' | 'todos';
+type TabId = 'timeline' | 'sessions' | 'chat' | 'documents' | 'notes' | 'todos';
 
 export function ProjectPage({ projectId, onAction, onRoute }: Props) {
   const [tab, setTab] = useState<TabId>('chat');
@@ -164,6 +166,8 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
   }
 
   const tabs = [
+    { id: 'timeline', label: 'Timeline', icon: <Icons.Activity /> },
+    { id: 'sessions', label: 'Sessions', icon: <Icons.Chat /> },
     { id: 'chat', label: 'Chat', icon: <Icons.Chat />, count: 0 },
     { id: 'documents', label: 'Documents', icon: <Icons.Doc />, count: project.counts.docs },
     { id: 'notes', label: 'Notes', icon: <Icons.Note />, count: project.counts.notes },
@@ -274,6 +278,8 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
         </div>
       </div>
 
+      {tab === 'timeline' && <TimelineTab projectId={projectId} />}
+      {tab === 'sessions' && <SessionsPage projectId={projectId} onRoute={onRoute} />}
       {tab === 'chat' && <ChatTab project={project} onAction={onAction} />}
       {tab === 'documents' && <DocumentsTab project={project} onAction={onAction} />}
       {tab === 'notes' && <NotesTab project={project} onAction={onAction} />}
@@ -285,7 +291,7 @@ export function ProjectPage({ projectId, onAction, onRoute }: Props) {
       {dialog === 'delete' ? (
         <ConfirmModal
           title={`Delete "${project.name}"?`}
-          message="This permanently deletes the project and all of its documents, notes, and todos. This can't be undone — to keep it recoverable, Archive instead."
+          message="This permanently deletes the project and its sessions, including their notes, documents, todos, files, and timeline. Direct project items are moved to personal scope. This can't be undone — to keep it recoverable, Archive instead."
           confirmLabel="Delete forever"
           requireType={project.name}
           danger

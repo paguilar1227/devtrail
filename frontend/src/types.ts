@@ -151,8 +151,9 @@ export type Route =
   // q + scope seed the inline search on HomePage when present (and the
   // URL writes ?q= / ?scope= so bookmarks / back-forward replay
   // naturally). Both default to undefined = no search-mode seed.
-  // `tab` deep-links a Home tab (sidebar "Todos" → tab: 'todos').
   | { route: 'home'; q?: string; scope?: 'personal' | 'all' | string; tab?: 'todos' | 'notes' | 'documents' | 'activity' }
+  | { route: 'sessions' }
+  | { route: 'session'; session: string }
   | { route: 'projects'; action?: 'new' }
   | { route: 'project'; project: string }
   | { route: 'tags'; name?: string }
@@ -168,8 +169,8 @@ export type Route =
 export type RouteName = Route['route'];
 
 export type ModalKind =
-  | { kind: 'upload'; payload: Project | null }
-  | { kind: 'note-edit'; payload: Note | null; projectId?: string; folder?: string | null }
+  | { kind: 'upload'; payload: Project | null; sessionId?: string }
+  | { kind: 'note-edit'; payload: Note | null; projectId?: string; sessionId?: string; folder?: string | null }
   | { kind: 'doc-read'; payload: DocumentItem }
   | { kind: 'todo-detail'; payload: Todo }
   | { kind: 'bulk-confirm'; payload: { kind: string; count: number } }
