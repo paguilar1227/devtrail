@@ -69,6 +69,7 @@ export default defineConfig({
       name: 'webkit-mobile',
       testMatch: [
         /[\\/]mobile[\\/]tabbar[\\/]navigation\.spec\.ts$/,
+        /[\\/]mobile[\\/]theme[\\/]lite-theme\.spec\.ts$/,
         /[\\/]mobile[\\/]home[\\/]home\.spec\.ts$/,
         /[\\/]mobile[\\/]home[\\/]personal-todos\.spec\.ts$/,
         /[\\/]mobile[\\/]todos[\\/]todos-view\.spec\.ts$/,

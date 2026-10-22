@@ -28,9 +28,9 @@ import { TrashPage } from './pages/TrashPage';
 import type { ModalKind, Route, SidebarMode, Theme } from './types';
 
 function readInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'light';
   const v = localStorage.getItem('ob.theme');
-  return v === 'light' ? 'light' : 'dark';
+  return v === 'dark' ? 'dark' : 'light';
 }
 
 function readInitialSidebarMode(): SidebarMode {
@@ -49,6 +49,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151715' : '#ffffff');
     localStorage.setItem('ob.theme', theme);
   }, [theme]);
 

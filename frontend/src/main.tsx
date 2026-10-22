@@ -7,6 +7,7 @@ import { queryClient } from './lib/queryClient';
 import { bootAuth, NativeSetupRequired } from './lib/api';
 import { ConnectScreen } from './components/ConnectScreen';
 import './styles.css';
+import './theme.css';
 
 // bootAuth resolves the Bearer key in production by exchanging the Easy Auth
 // session cookie via /api/auth/token. In local dev (VITE_OPEN_BRAIN_API_KEY
@@ -40,7 +41,7 @@ bootAuth()
     console.error('[bootAuth] failed', err);
     const root = document.getElementById('root');
     if (root) {
-      root.innerHTML = `<div style="padding:2rem;color:#fff;font-family:system-ui">
+      root.innerHTML = `<div style="padding:2rem;color:var(--fg);font-family:system-ui">
         <h1>Open Brain</h1>
         <p>Could not authenticate. ${String(err?.message ?? err)}</p>
       </div>`;
