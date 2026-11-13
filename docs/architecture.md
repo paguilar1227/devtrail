@@ -86,7 +86,7 @@ Wired in `src/server.ts`. The `ServiceDeps` interface is in `src/services/index.
 
 ## 4. Data Architecture
 
-11 tables: 5 core, 2 for the entity graph and 4 for sessions and timelines (`project_sessions`, `project_timeline_events`, `session_file_cleanup`, `project_memory`). The diagram shows the core and graph tables. No ORM — raw SQL via the `pg` driver, with one `db/*.ts` module per table.
+11 tables: 5 core, 2 for the entity graph and 4 for sessions and timelines (`project_sessions`, `project_timeline_events`, `session_file_cleanup`, `project_memory`). The diagram shows the core and graph tables. No ORM — raw SQL via the `pg` driver, with `db/*.ts` modules for the core and graph tables; the session and timeline SQL lives in `db/timeline.ts` and the session and project services.
 
 ```
 projects
@@ -319,7 +319,7 @@ Implementation: `src/services/search.ts`, exposed via `POST /api/v1/search` and 
 1. Embed query (Gemini Embedding 2)
 2. Seeds, run in parallel with the same filters (project_id, tags, entity_types):
    - Vector: pgvector cosine scan against chunks + todos, above the threshold
-   - Lexical: ILIKE keyword match against chunks + todos, ranked by title match then recency
+   - Lexical: ILIKE keyword match against chunks (ranked by title match, then recency) and todos (by recency)
      (catches exact names and IDs that embeddings miss)
 3. (If graph: true) Graph expansion:
    - For each query entity, find entities matching by canonical name / alias / embedding similarity
@@ -532,7 +532,7 @@ Vitest for unit and integration tests, Playwright for workflow e2e.
 | Frontend e2e | `frontend/tests/e2e/**` | Desktop and mobile workflows (Chromium) plus core mobile flows on WebKit |
 | iOS smoke | `scripts/ios-smoke.sh` | Local simulator: install, connect, create a todo, verify via REST |
 
-As of this writing: 340 backend tests in 26 files and 108 frontend unit tests in 10 files, all with stub providers (no network or model spend). Mocks live in `backend/tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
+As of this writing: 340 backend tests in 26 files and 109 frontend unit tests in 10 files, all with stub providers (no network or model spend). Mocks live in `backend/tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
 
 For live-system validation, [testing/live-e2e-plan.md](testing/live-e2e-plan.md) has 64 reproducible tests across 11 phases against a real deployment. It is not part of the automated suite (model nondeterminism, cost, and it needs real keys).
 

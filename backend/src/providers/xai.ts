@@ -32,7 +32,7 @@ export class XaiClient {
     // it doesn't fetch by post ID directly. Strategy:
     //   1. Parse URL → extract @handle and post ID
     //   2. Decode post ID → timestamp (Twitter snowflakes encode millis since 2010-11-04)
-    //   3. Build a search prompt that scopes to this user + a ±1 day window around
+    //   3. Build a search prompt that scopes to this user + a ±6 hour window around
     //      the timestamp so Grok can find the specific post via keyword search
     const parsed = parseXUrl(url);
     if (!parsed) {

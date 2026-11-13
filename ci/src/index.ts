@@ -57,7 +57,7 @@ export class Ci {
     return dag
       .container()
       .from(NODE)
-      .withMountedCache("/root/.npm", dag.cacheVolume("ob-npm-cache"))
+      .withMountedCache("/root/.npm", dag.cacheVolume("devtrail-npm-cache"))
       .withDirectory("/app", source)
       .withWorkdir("/app")
       .withExec(["npm", "ci"])
