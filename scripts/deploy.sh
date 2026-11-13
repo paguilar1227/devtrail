@@ -1,5 +1,6 @@
 #!/bin/bash
-# scripts/deploy.sh — Build, push to ACR, deploy Container App + run migrations
+# scripts/deploy.sh — Build, push to ACR and roll the Container App to the new image.
+# Migrations apply automatically when the container starts.
 set -euo pipefail
 
 # Configuration
@@ -26,15 +27,6 @@ az containerapp update \
   --resource-group "${RESOURCE_GROUP}" \
   --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
-# Run migration if DATABASE_URL is set (first deploy or schema changes)
-if [ -n "${DATABASE_URL:-}" ]; then
-  echo "=== Running schema migration ==="
-  psql "${DATABASE_URL}" -f migrations/001_initial_schema.sql
-  echo "Migration complete."
-else
-  echo "=== Skipping migration (set DATABASE_URL to run) ==="
-fi
-
 echo ""
 echo "=== Deploy complete! ==="
 FQDN=$(az containerapp show \
@@ -42,4 +34,4 @@ FQDN=$(az containerapp show \
   --resource-group "${RESOURCE_GROUP}" \
   --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "App URL: https://${FQDN}"
-echo "MCP URL: https://${FQDN}/mcp?key=<your-api-key>"
+echo "MCP URL: https://${FQDN}/mcp (send Authorization: Bearer <DEVTRAIL_API_KEY>)"

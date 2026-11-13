@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "prod" },
+    "acrName": { "value": "<your-registry-name>" },
+    "acrResourceGroup": { "value": "<your-registry-resource-group>" },
+    "azureOpenAIEndpoint": { "value": "https://<your-resource>.openai.azure.com" },
+    "authMode": { "value": "api-key" },
+    "mcpAllowUrlKey": { "value": false },
+    "timezone": { "value": "UTC" }
+  }
+}

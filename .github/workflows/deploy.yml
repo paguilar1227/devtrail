@@ -2,8 +2,9 @@
 name: Deploy to Azure
 
 on:
-  # Auto-deploy on every merge to main. Manual dispatch stays available as a
-  # fallback (and for re-deploys without a new commit).
+  # Auto-deploy on every merge to main once the repository variables below are
+  # set (forks and fresh clones without Azure config skip the job). Manual
+  # dispatch stays available for re-deploys without a new commit.
   push:
     branches: [main]
   workflow_dispatch:
@@ -23,6 +24,7 @@ env:
 
 jobs:
   build-and-deploy:
+    if: ${{ vars.AZURE_RESOURCE_GROUP != '' && vars.CONTAINER_APP_NAME != '' && vars.ACR_NAME != '' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -92,7 +94,8 @@ jobs:
   #     - /api/v1/projects (no key)     (rejected at middleware)
   #     - /api/v1/projects (with key)   (Postgres SELECT only)
   #     - /mcp initialize               (returns server capabilities)
-  #     - / as a browser                (Easy Auth redirect)
+  #     - / as a browser                (Easy Auth redirect, AUTH_MODE=easyauth)
+  #     - /api/auth/token               (404 unless AUTH_MODE=easyauth)
   #
   #   DO NOT add: /rag, /search, POST /content (any file/url), /find-mentions,
   #   or any path that triggers ingest, embeddings, or LLM completions. Those
@@ -156,7 +159,17 @@ jobs:
             "${{ needs.build-and-deploy.outputs.app_url }}/mcp" \
             | jq -e '.result.serverInfo.name == "devtrail"'
 
+      - name: Smoke — token exchange is off outside Easy Auth (404)
+        if: ${{ vars.AUTH_MODE != 'easyauth' }}
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'x-ms-client-principal-id: smoke' \
+            "${{ needs.build-and-deploy.outputs.app_url }}/api/auth/token")
+          echo "token exchange code=$CODE"
+          test "$CODE" = "404"
+
       - name: Smoke — UI is auth-gated (browser request → 302 to login)
+        if: ${{ vars.AUTH_MODE == 'easyauth' }}
         run: |
           REDIRECT=$(curl -s -o /dev/null -w '%{redirect_url}' \
             -H 'Accept: text/html' \

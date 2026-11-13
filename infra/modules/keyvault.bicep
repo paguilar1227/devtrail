@@ -9,14 +9,17 @@ param geminiApiKey string
 @secure()
 param anthropicApiKey string
 @secure()
-param telegramBotToken string
+param azureOpenAIKey string
 @secure()
-param telegramWebhookSecret string
+param xaiApiKey string
+@secure()
+param firecrawlApiKey string
+@secure()
+param supadataApiKey string
 @secure()
 param dbConnectionString string
 @secure()
 param storageConnectionString string
-param telegramChatId string
 
 var vaultName = replace('${prefix}-kv', '-', '')
 
@@ -35,16 +38,16 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// Store all secrets
 var secrets = [
   { name: 'devtrail-api-key', value: apiKey }
   { name: 'gemini-api-key', value: geminiApiKey }
   { name: 'anthropic-api-key', value: anthropicApiKey }
-  { name: 'telegram-bot-token', value: telegramBotToken }
-  { name: 'telegram-webhook-secret', value: telegramWebhookSecret }
+  { name: 'azure-openai-key', value: azureOpenAIKey }
+  { name: 'xai-api-key', value: xaiApiKey }
+  { name: 'firecrawl-api-key', value: firecrawlApiKey }
+  { name: 'supadata-api-key', value: supadataApiKey }
   { name: 'database-url', value: dbConnectionString }
   { name: 'storage-connection-string', value: storageConnectionString }
-  { name: 'telegram-chat-id', value: telegramChatId }
 ]
 
 resource keyVaultSecrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [
