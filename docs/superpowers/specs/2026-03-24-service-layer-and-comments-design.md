@@ -2,7 +2,7 @@
 
 ## 1. Goal
 
-Refactor Open Brain v2 into a **hexagonal architecture** (ports and adapters):
+Refactor DevTrail into a **hexagonal architecture** (ports and adapters):
 
 1. **Service layer** — centralized business logic for all operations
 2. **Comprehensive REST API** — exposes every operation over HTTP (supports future Web UI + iOS app)

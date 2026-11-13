@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { OpenAPIHono } from '@hono/zod-openapi';
-import { SessionCreateSchema, SessionUpdateSchema, SessionSchema, TimelineQuerySchema, TimelineResponseSchema } from '@open-brain/shared';
+import { SessionCreateSchema, SessionUpdateSchema, SessionSchema, TimelineQuerySchema, TimelineResponseSchema } from '@devtrail/shared';
 import type { ServiceDeps } from './services/index.js';
 import * as sessions from './services/sessions.js';
 import { listProjectTimeline, listSessionTimeline } from './db/timeline.js';

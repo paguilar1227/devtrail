@@ -28,7 +28,7 @@ Open `http://localhost:5173`.
 | # | Steps | Expected |
 |---|---|---|
 | A1 | Type `#chore` in home search. Click the **card body** of "Tax docs checklist" (anywhere except the title) | Note editor modal opens with full body |
-| A2 | Click the **title text** of "Renew domain (openbrain.local)" | Todo detail drawer opens with P1/status chips |
+| A2 | Click the **title text** of "Renew domain (devtrail.local)" | Todo detail drawer opens with P1/status chips |
 | A3 | Type `in:document`. Click any document card | Doc reader drawer opens |
 | A4 | Type `#chore`. Click-drag to **select text in an excerpt** ("Charitable receipts"), release mouse on the card | No modal opens — selection stays highlighted, drag-to-copy preserved |
 | A5 | Tab to a result card, hit Enter | Modal opens (keyboard accessibility) |

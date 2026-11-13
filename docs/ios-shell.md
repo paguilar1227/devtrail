@@ -2,7 +2,7 @@
 
 **Branch:** `feat/ios-app` · **Date:** 2026-07-30 · **Status:** built, simulator-verified end-to-end
 
-Open Brain now runs as a native iOS app. The same `frontend/` codebase — literally the same
+DevTrail now runs as a native iOS app. The same `frontend/` codebase — literally the same
 Vite `dist/` bundle Hono serves on the web — is wrapped in a **Capacitor 8** WKWebView shell
 (`frontend/ios/`, Swift Package Manager, no CocoaPods). Nothing about the web app changed
 behaviorally; the native shell adds a thin runtime-config layer.

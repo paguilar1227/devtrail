@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import type { TimelineCursor, TimelineEvent, TimelineTagMatch } from '@open-brain/shared';
+import type { TimelineCursor, TimelineEvent, TimelineTagMatch } from '@devtrail/shared';
 import { listProjectTimeline, listSessionTimeline } from '../../lib/api';
 import { Icons } from '../../components/Icons';
 

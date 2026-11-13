@@ -9,7 +9,7 @@ import { listProjectTimeline } from '../../src/db/timeline.js';
 import { createApp } from '../../src/app.js';
 import type { DbClient } from '../../src/db/client.js';
 import type { ServiceDeps } from '../../src/services/index.js';
-import { TimelineResponseSchema } from '@open-brain/shared';
+import { TimelineResponseSchema } from '@devtrail/shared';
 
 let pg: PGlite;
 let directory: string;

@@ -2,7 +2,7 @@
 -- Graph foundation: entities + chunk → entity edges.
 -- Also adds published_at on content_items for content-time (vs ingest-time)
 -- aware retrieval (e.g. "papers published after 2023" irrespective of when
--- they were saved to Open Brain).
+-- they were saved to DevTrail).
 -- ============================================================================
 
 -- Canonical entity registry. Entity resolution (Gemini Embedding 2 vs

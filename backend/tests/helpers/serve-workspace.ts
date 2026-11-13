@@ -1,5 +1,5 @@
 // Isolated browser fixture: real PostgreSQL semantics and Azure Blob emulator.
-// Run from repository root after starting Azurite, with OPEN_BRAIN_TEST_FIXTURE=1.
+// Run from repository root after starting Azurite, with DEVTRAIL_TEST_FIXTURE=1.
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
@@ -15,8 +15,8 @@ import { createBlobStorage } from '../../src/storage/blob.js';
 import type { DbClient } from '../../src/db/client.js';
 import type { ServiceDeps } from '../../src/services/index.js';
 
-if (process.env.OPEN_BRAIN_TEST_FIXTURE !== '1') throw new Error('Only run with an explicit isolated-test opt-in.');
-const directory = await mkdtemp(join(tmpdir(), 'open-brain-browser-'));
+if (process.env.DEVTRAIL_TEST_FIXTURE !== '1') throw new Error('Only run with an explicit isolated-test opt-in.');
+const directory = await mkdtemp(join(tmpdir(), 'devtrail-browser-'));
 const pg = new PGlite(join(directory, 'db'), { extensions: { vector, uuid_ossp } });
 const query = async (sql: string, params?: unknown[]) => {
   const result = await pg.query(sql, params);
@@ -40,7 +40,7 @@ if (!connection.includes('127.0.0.1:10010')) throw new Error('Fixture must use t
 await BlobServiceClient.fromConnectionString(connection).getContainerClient(config.AZURE_STORAGE_CONTAINER).createIfNotExists();
 const llm = new StubLLMProvider();
 const deps = {
-  db, config: { apiKey: config.OPEN_BRAIN_API_KEY, llmProvider: 'stub' },
+  db, config: { apiKey: config.DEVTRAIL_API_KEY, llmProvider: 'stub' },
   embeddingProvider: new StubEmbeddingProvider(), metadataLLM: llm, mediaMetadataLLM: llm,
   ragFastLLM: llm, ragDeepLLM: llm, queryDepthLLM: llm,
   blobStorage: createBlobStorage(connection, config.AZURE_STORAGE_CONTAINER),

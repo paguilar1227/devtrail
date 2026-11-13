@@ -46,17 +46,17 @@ jobs:
       - name: Build and push Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
-          docker build -t ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
-          docker tag ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
-          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG} .
+          docker tag ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/devtrail:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/devtrail:latest
 
       - name: Deploy Container App
         run: |
           az containerapp update \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${{ github.sha }}
+            --image ${{ env.ACR_NAME }}.azurecr.io/devtrail:${{ github.sha }}
 
       - name: Resolve Container App URL
         id: app_url
@@ -125,7 +125,7 @@ jobs:
 
       - name: Smoke — REST API with key → 200
         env:
-          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
+          KEY: ${{ secrets.DEVTRAIL_API_KEY }}
         run: |
           curl -fsS \
             -H "Authorization: Bearer $KEY" \
@@ -145,7 +145,7 @@ jobs:
 
       - name: Smoke — MCP initialize → 200 with serverInfo
         env:
-          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
+          KEY: ${{ secrets.DEVTRAIL_API_KEY }}
         run: |
           curl -fsS \
             -X POST \
@@ -154,7 +154,7 @@ jobs:
             -H "Authorization: Bearer $KEY" \
             --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deploy-smoke","version":"1"}}}' \
             "${{ needs.build-and-deploy.outputs.app_url }}/mcp" \
-            | jq -e '.result.serverInfo.name == "open-brain"'
+            | jq -e '.result.serverInfo.name == "devtrail"'
 
       - name: Smoke — UI is auth-gated (browser request → 302 to login)
         run: |
@@ -171,7 +171,7 @@ jobs:
       # live database in production.
       - name: Smoke — create / verify / delete a transient project
         env:
-          KEY: ${{ secrets.OPEN_BRAIN_API_KEY }}
+          KEY: ${{ secrets.DEVTRAIL_API_KEY }}
           APP_URL: ${{ needs.build-and-deploy.outputs.app_url }}
         run: |
           set -euo pipefail

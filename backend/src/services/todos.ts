@@ -1,5 +1,5 @@
 import type { ServiceDeps } from './index.js';
-import { MAX_TODO_DEPTH as SHARED_MAX_TODO_DEPTH } from '@open-brain/shared';
+import { MAX_TODO_DEPTH as SHARED_MAX_TODO_DEPTH } from '@devtrail/shared';
 import { countCommentsByTodoIds } from '../db/todo-comments.js';
 import {
   insertTodo, listTodos as dbListTodos, getTodoById,

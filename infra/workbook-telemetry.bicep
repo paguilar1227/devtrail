@@ -7,10 +7,10 @@
 //
 // Deploy standalone (does not touch any other infra):
 //   az deployment group create \
-//     -g openbrain-rg \
+//     -g devtrail-rg \
 //     -f infra/workbook-telemetry.bicep \
 //     --parameters appInsightsId=$(az monitor app-insights component show \
-//       -g openbrain-rg --app openbrain-prod-insights --query id -o tsv)
+//       -g devtrail-rg --app devtrail-prod-insights --query id -o tsv)
 
 targetScope = 'resourceGroup'
 
@@ -29,7 +29,7 @@ var workbookContent = {
     {
       type: 1
       content: {
-        json: '# Open Brain — Telemetry Overview\n\nLive view of custom spans, request latency, errors, and our own telemetry-volume budget.\n\nDefault window: **last 24 hours**. Use the time-range picker at the top to widen.'
+        json: '# DevTrail — Telemetry Overview\n\nLive view of custom spans, request latency, errors, and our own telemetry-volume budget.\n\nDefault window: **last 24 hours**. Use the time-range picker at the top to widen.'
       }
       name: 'header'
     }
@@ -194,11 +194,11 @@ var workbookContent = {
 }
 
 resource workbook 'Microsoft.Insights/workbooks@2023-06-01' = {
-  name: guid(resourceGroup().id, 'open-brain-telemetry-overview')
+  name: guid(resourceGroup().id, 'devtrail-telemetry-overview')
   location: location
   kind: 'shared'
   properties: {
-    displayName: 'Open Brain — Telemetry Overview'
+    displayName: 'DevTrail — Telemetry Overview'
     serializedData: string(workbookContent)
     version: 'Notebook/1.0'
     sourceId: appInsightsId

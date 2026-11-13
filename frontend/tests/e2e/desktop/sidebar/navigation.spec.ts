@@ -19,12 +19,12 @@ test('sidebar: collapse button toggles the sidebar mode and persists to localSto
   // Labels are hidden via CSS in collapsed mode — visual sanity that the
   // mode transition actually changed what the user sees.
   await expect(page.locator(`${SIDEBAR} .sb-item .label`).first()).toBeHidden();
-  expect(await page.evaluate(() => localStorage.getItem('ob.sidebarMode'))).toBe('collapsed');
+  expect(await page.evaluate(() => localStorage.getItem('devtrail.sidebarMode'))).toBe('collapsed');
 
   await collapseBtn.click();
   await expect(page.locator('.app[data-sb="expanded"]')).toBeVisible();
   await expect(page.locator(`${SIDEBAR} .sb-item .label`).first()).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('ob.sidebarMode'))).toBe('expanded');
+  expect(await page.evaluate(() => localStorage.getItem('devtrail.sidebarMode'))).toBe('expanded');
 });
 
 test('sidebar: every Workspace nav row routes to the right page', async ({ page }) => {

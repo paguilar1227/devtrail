@@ -1,6 +1,6 @@
 # E2E Coverage Plan — Desktop ↔ Mobile Parity Audit
 
-> Audit date: 2026-07-02 · App: Open Brain v2 web UI (Vite + React) · Runner: Playwright,
+> Audit date: 2026-07-02 · App: DevTrail web UI (Vite + React) · Runner: Playwright,
 > projects `chromium-desktop` (1440×900) + `chromium-mobile` (Pixel 7), local stack
 > (Postgres 5434 + Azurite + stub LLM), seeded via `scripts/seed-local.ts`.
 >

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { SearchHit } from '@open-brain/shared';
+import type { SearchHit } from '@devtrail/shared';
 import { createTodo, deleteSession, getContent, getSession, getTodo, listContent, listTodos, search, updateSession, updateTodo } from '../lib/api';
 import { toUiDocument, toUiNote, toUiProject, toUiTodo } from '../lib/view';
 import { useProjects } from '../lib/useProjects';

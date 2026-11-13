@@ -28,8 +28,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BASE = process.env.OPEN_BRAIN_BASE_URL ?? 'http://localhost:3001';
-const KEY = process.env.OPEN_BRAIN_API_KEY ?? 'local-dev-key-not-secret';
+const BASE = process.env.DEVTRAIL_BASE_URL ?? 'http://localhost:3001';
+const KEY = process.env.DEVTRAIL_API_KEY ?? 'local-dev-key-not-secret';
 
 // Fixtures shared with the e2e test plan — checked-in bytes are deterministic
 // given the sources in backend/tests/fixtures/e2e/. Same files cover seed +
@@ -97,7 +97,7 @@ async function ensureBlobContainer(): Promise<void> {
   // Bootstrap it here so seeding from a wiped local DB just works.
   const conn = process.env.AZURE_STORAGE_CONNECTION_STRING ??
     'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10010/devstoreaccount1;';
-  const name = process.env.AZURE_STORAGE_CONTAINER ?? 'open-brain-content';
+  const name = process.env.AZURE_STORAGE_CONTAINER ?? 'devtrail-content';
   const { BlobServiceClient } = await import('@azure/storage-blob');
   const svc = BlobServiceClient.fromConnectionString(conn);
   const result = await svc.getContainerClient(name).createIfNotExists();
@@ -123,7 +123,7 @@ async function main() {
   const projectDefs = [
     { name: 'ClaudePit', description: 'Self-hosted control surface for Claude Code — agent cockpit wrapping the official `claude` CLI in headless mode.', pin: true },
     { name: 'Copilot CLI App', description: 'Personal app (web first, eventually mobile) leveraging the GitHub Copilot SDK for an agentic surface across devices.', pin: true },
-    { name: 'Open Brain 2.5', description: "Field notes on Open Brain 2.5's entity model and the migration path from v2.", pin: false },
+    { name: 'DevTrail 2.5', description: "Field notes on DevTrail 2.5's entity model and the migration path from v2.", pin: false },
     { name: 'RAG Research', description: 'Hybrid retrieval comparisons — vector vs graph vs reranker, with a benchmark harness.', pin: false },
     { name: 'Homelab', description: 'Tailscale mesh, NAS storage, on-prem inference notes.', pin: false },
     { name: 'Old MCP Spike (archived)', description: 'Original MCP exploration before the v2 rewrite. Kept for reference — should not appear in the active list.', pin: false, archive: true },
@@ -148,7 +148,7 @@ async function main() {
 
   const claudepit = projectIds['ClaudePit'];
   const copilot = projectIds['Copilot CLI App'];
-  const ob25 = projectIds['Open Brain 2.5'];
+  const ob25 = projectIds['DevTrail 2.5'];
   const rag = projectIds['RAG Research'];
   const homelab = projectIds['Homelab'];
   const oldMcp = projectIds['Old MCP Spike (archived)'];
@@ -157,8 +157,8 @@ async function main() {
   // NOTES — cross-project entities for graph search:
   //   "Tailscale"      → ClaudePit, Homelab
   //   "Claude"         → ClaudePit, Copilot CLI App
-  //   "RAG"            → Open Brain 2.5, RAG Research
-  //   "pgvector"       → Open Brain 2.5, RAG Research
+  //   "RAG"            → DevTrail 2.5, RAG Research
+  //   "pgvector"       → DevTrail 2.5, RAG Research
   // Every project has at least 2 notes, totals are realistic-feeling.
   // ============================================================
   type NoteSpec = { project: string; title: string; content: string; tags: string[]; pin?: boolean; archive?: boolean };
@@ -210,7 +210,7 @@ async function main() {
       tags: ['architecture'],
     },
 
-    // ---- Open Brain 2.5 ----
+    // ---- DevTrail 2.5 ----
     {
       project: ob25,
       title: 'OB 2.5 — entity model decisions',
@@ -244,7 +244,7 @@ async function main() {
       tags: ['rag', 'research'],
     },
 
-    // ---- Open Brain 2.5 — one archived to exercise the Archived view ----
+    // ---- DevTrail 2.5 — one archived to exercise the Archived view ----
     {
       project: ob25,
       title: 'Old chunking strategy (superseded)',
@@ -416,7 +416,7 @@ async function main() {
       tags: ['reference', 'rag'],
       file: { name: 'sample.pdf', mime: 'application/pdf' },
     },
-    // PNG → Open Brain 2.5: image-only, no extractable text in stub mode,
+    // PNG → DevTrail 2.5: image-only, no extractable text in stub mode,
     // exercises the future image-preview path in the doc reader
     {
       kind: 'binary',
@@ -433,7 +433,7 @@ async function main() {
       pin: true,
       file: { name: 'sample.wav', mime: 'audio/wav' },
     },
-    // Markdown body → Open Brain 2.5: text-only document, exercises the
+    // Markdown body → DevTrail 2.5: text-only document, exercises the
     // MarkdownPreview render path in the drawer. Cross-kind tag `reference`
     // on this + the PDF means the Tags page shows both note and doc counts.
     {
@@ -602,7 +602,7 @@ async function main() {
     { project: copilot, content: 'OAuth flow + token storage', priority: 'P2', status: 'not_started', tags: ['auth'] },                                                                  // 10
     { project: copilot, content: 'Tool registry MVP', priority: 'P2', status: 'not_started', pin: true },                                                                                // 11
 
-    // Open Brain 2.5
+    // DevTrail 2.5
     { project: ob25, content: 'Document the entity-resolution algorithm', priority: 'P2', status: 'not_started', tags: ['rag'] },                                                        // 12
     { project: ob25, content: 'Profile RAG depth=auto vs forced fast', priority: 'P3', status: 'paused', tags: ['rag'] },                                                                // 13
 
@@ -705,7 +705,7 @@ async function main() {
     // standalones — variety on status, due, tags
     { content: 'Reply to Sebastian about the dataset request', priority: 'P2', status: 'not_started',
       due_date: daysFromNow(-1) },                                                                                 // 5 overdue
-    { content: 'Renew domain (openbrain.local) — expires in 12 days', priority: 'P1',
+    { content: 'Renew domain (devtrail.local) — expires in 12 days', priority: 'P1',
       status: 'not_started', due_date: daysFromNow(12), tags: ['chore'] },                                         // 6 upcoming
     { content: "Read 'On the Measure of Intelligence' (Chollet)", priority: 'P3', status: 'paused',
       tags: ['reading'] },                                                                                          // 7 paused

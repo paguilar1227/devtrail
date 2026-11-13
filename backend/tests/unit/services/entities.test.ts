@@ -46,7 +46,7 @@ describe('mapMentionsToChunks', () => {
     // pgvector again but with different surrounding text.
     const chunks = [
       { id: 'c0', content: 'pgvector is a Postgres extension that adds vector similarity search.' },
-      { id: 'c1', content: 'Open Brain v2 uses pgvector with 3072-dim Gemini embeddings.' },
+      { id: 'c1', content: 'DevTrail uses pgvector with 3072-dim Gemini embeddings.' },
     ];
 
     const edges = mapMentionsToChunks([r], [e], chunks);
@@ -62,7 +62,7 @@ describe('mapMentionsToChunks', () => {
     const e = entity('ent-1', 'pgvector', ['pgvector']);
     const chunks = [
       { id: 'c0', content: 'pgvector is a Postgres extension that adds vector similarity search.' },
-      { id: 'c1', content: 'Open Brain v2 uses pgvector ...' },
+      { id: 'c1', content: 'DevTrail uses pgvector ...' },
     ];
 
     const edges = mapMentionsToChunks([r], [e], chunks);

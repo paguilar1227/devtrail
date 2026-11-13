@@ -20,7 +20,7 @@ export interface RagOptions {
 }
 
 // Must stay a superset of the wire contract (RagCitationSchema in
-// @open-brain/shared): the frontend Zod-parses the REST response and
+// @devtrail/shared): the frontend Zod-parses the REST response and
 // REQUIRES `id`, `content_item_id`, `title`, `excerpt`; `type` is an
 // optional schema field that survives the parse — the Chat tab's
 // "Open source" routing (note/document/todo) depends on it, so don't

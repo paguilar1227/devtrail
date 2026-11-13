@@ -136,7 +136,7 @@ Based on your saved notes:
 - **HNSW** gives **better recall** than IVFFlat, but costs more in **build time** and **memory** [1], [6].
 - **IVFFlat** is **faster to build** and generally lighter on memory, but its recall depends heavily on tuning, especially the **`lists`** parameter and **probe count** at query time [6].
 - For **3072-dimensional embeddings** like **Gemini Embedding 2** or **OpenAI text-embedding-3-large**, **HNSW initialization may exceed memory limits on small Postgres tiers** [1], [6].
-- In your notes, for **Open Brain v2**, the choice was to **avoid HNSW** and use **sequential scan only**, because the corpus is small enough that latency stays **well below 100ms/query**; adding HNSW would require **upsizing the DB tier or reducing embedding dimensions** [5], [6].
+- In your notes, for **DevTrail**, the choice was to **avoid HNSW** and use **sequential scan only**, because the corpus is small enough that latency stays **well below 100ms/query**; adding HNSW would require **upsizing the DB tier or reducing embedding dimensions** [5], [6].
 - You also noted that a **graph layer** was added to help recover recall that HNSW might otherwise improve, instead of paying the memory/infrastructure cost at the vector index layer [5], [6].
 
 So the practical tradeoff in your setup is:
@@ -177,7 +177,7 @@ Based on your saved notes:
 - It works by partitioning vectors into **Voronoi cells** and searching only the closest cells to the query [6].
 - Its downside is **lower / more tuning-sensitive recall**: results depend heavily on the **`lists`** setting and **probe count** at query time [6].
 
-**Practical takeaway from your setup:** for Open Brain v2's current scale (low thousands of chunks), you saved that **sequential scan stays well under 100ms/query**, so adding HNSW was avoided because it would likely require **a bigger DB tier or lower embedding dimensions** [5][6]. To make up for the recall gap, you added a **graph layer** that expands retrieval along entity edges [5][6].
+**Practical takeaway from your setup:** for DevTrail's current scale (low thousands of chunks), you saved that **sequential scan stays well under 100ms/query**, so adding HNSW was avoided because it would likely require **a bigger DB tier or lower embedding dimensions** [5][6]. To make up for the recall gap, you added a **graph layer** that expands retrieval along entity edges [5][6].
 ```
 
 ### Q3 — "Across all my saved material, summarize the embedding-model vs index-type design choices and their tradeoffs."
@@ -201,7 +201,7 @@ Your material mentions three pgvector retrieval modes:
 - **HNSW** [5]
 
 #### 1. Sequential scan
-Used in **Open Brain v2** with **3072-dim Gemini embeddings** and **no HNSW** [5].
+Used in **DevTrail** with **3072-dim Gemini embeddings** and **no HNSW** [5].
 Tradeoff:
 - **Pros:** simple, no index memory issue, acceptable at current scale
 - **Cons:** less scalable as corpus grows
@@ -222,7 +222,7 @@ Tradeoff:
 
 This is the main reason it was avoided for 3072-dim embeddings on small DB tiers: **HNSW init may exceed memory limits** [1] [5].
 
-### Design decision reflected in Open Brain v2
+### Design decision reflected in DevTrail
 Your saved material indicates a clear architecture choice:
 - Keep **3072-dim Gemini embeddings**
 - Use **pgvector sequential scan only**
@@ -282,7 +282,7 @@ Your saved material points to a fairly consistent design:
 
 ### Current design choice in the notes
 
-For **Open Brain v2**, the chosen setup is:
+For **DevTrail**, the chosen setup is:
 
 - **pgvector**
 - **3072-dim Gemini embeddings**
@@ -336,7 +336,7 @@ Across your saved material, the main design axis is **3072-dimensional embedding
 
 - **Sequential scan tradeoff:** no ANN index overhead, and your notes say it is still fine at current scale: **single user, low thousands of chunks, well below 100ms/query**.[3][5]
 
-- **Actual design choice documented:** **Open Brain v2** uses **3072-dim Gemini embeddings** with **pgvector sequential scan only**—**no HNSW**. The stated reason is that adding HNSW would require either **upsizing the database tier** or **reducing embedding dimensions**, both of which have tradeoffs.[3][5]
+- **Actual design choice documented:** **DevTrail** uses **3072-dim Gemini embeddings** with **pgvector sequential scan only**—**no HNSW**. The stated reason is that adding HNSW would require either **upsizing the database tier** or **reducing embedding dimensions**, both of which have tradeoffs.[3][5]
 
 - **How recall is recovered without HNSW:** a **graph layer** (`entities` + `chunk_entities`, migration 003) expands seed hits along entity edges, to catch semantic matches that vector cosine alone can miss.[3][5]
 

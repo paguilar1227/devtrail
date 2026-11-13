@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MAX_TODO_DEPTH, type TodoComment } from '@open-brain/shared';
+import { MAX_TODO_DEPTH, type TodoComment } from '@devtrail/shared';
 import { DateTimePicker } from '../DateTimePicker';
 import { Icons } from '../Icons';
 import { Drawer, Checkbox, EntityLink, Priority, Tag } from '../primitives';

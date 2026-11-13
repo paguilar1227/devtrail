@@ -96,7 +96,7 @@ export const test = base.extend({
     }
 
     await page.addInitScript(() => {
-      window.localStorage.setItem('ob.sidebarMode', 'expanded');
+      window.localStorage.setItem('devtrail.sidebarMode', 'expanded');
     });
     await page.goto('/');
     await waitForAppReady(page);

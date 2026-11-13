@@ -4,14 +4,14 @@ services:
     ports:
       - "5434:5432"
     environment:
-      POSTGRES_USER: openbrain
-      POSTGRES_PASSWORD: openbrain
-      POSTGRES_DB: openbrain
+      POSTGRES_USER: devtrail
+      POSTGRES_PASSWORD: devtrail
+      POSTGRES_DB: devtrail
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openbrain -d openbrain"]
+      test: ["CMD-SHELL", "pg_isready -U devtrail -d devtrail"]
       interval: 2s
       timeout: 5s
       retries: 15

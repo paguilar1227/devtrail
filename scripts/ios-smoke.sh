@@ -26,7 +26,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEVICE_NAME="${DEVICE_NAME:-iPhone 17e}"
-BUNDLE_ID="com.example.openbrain"
+BUNDLE_ID="com.example.devtrail"
 SERVER_URL="${SERVER_URL:-http://localhost:3001}"
 # Per-invocation artifact dir (screenshots + backend log) so a failing run's
 # evidence survives later runs; the 10 newest are kept.
@@ -60,8 +60,8 @@ case "$SERVER_URL" in
 esac
 
 [ -f "$REPO_ROOT/backend/.env" ] || fail "backend/.env not found (cp backend/.env.example backend/.env)"
-API_KEY="$(grep '^OPEN_BRAIN_API_KEY=' "$REPO_ROOT/backend/.env" | cut -d= -f2-)"
-[ -n "$API_KEY" ] || fail "OPEN_BRAIN_API_KEY missing from backend/.env"
+API_KEY="$(grep '^DEVTRAIL_API_KEY=' "$REPO_ROOT/backend/.env" | cut -d= -f2-)"
+[ -n "$API_KEY" ] || fail "DEVTRAIL_API_KEY missing from backend/.env"
 
 mkdir -p "$ARTIFACTS"
 ls -dt "$REPO_ROOT/.ios-smoke"/run-* 2>/dev/null | tail -n +11 | xargs rm -rf 2>/dev/null || true

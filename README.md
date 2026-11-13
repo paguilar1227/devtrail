@@ -1,8 +1,8 @@
-# Open Brain v2
+# DevTrail
 
 Personal knowledge base + productivity tool. Single user. NotebookLM-style: organize knowledge into **projects**, dump documents/notes/todos into them, run hybrid semantic + entity-graph search across everything.
 
-Open Brain runs as a single Hono process serving three surfaces — REST API, MCP server, and a Vite/React web UI — backed by PostgreSQL + pgvector and Azure Blob Storage. Multimedia ingestion (PDF/image/audio) and URL ingestion (YouTube/X/HTML) flow through the same chunking + embedding + entity-extraction pipeline.
+DevTrail runs as a single Hono process serving three surfaces — REST API, MCP server, and a Vite/React web UI — backed by PostgreSQL + pgvector and Azure Blob Storage. Multimedia ingestion (PDF/image/audio) and URL ingestion (YouTube/X/HTML) flow through the same chunking + embedding + entity-extraction pipeline.
 
 ## Quick start
 
@@ -79,7 +79,7 @@ The Container App hosts all three surfaces in a single process. Adapters are thi
 ```
 backend/                  # Hono API + MCP server (Node 20)
 frontend/                 # Vite + React web client
-shared/                   # @open-brain/shared — Zod schemas + TS types shared on the wire
+shared/                   # @devtrail/shared — Zod schemas + TS types shared on the wire
 migrations/               # SQL migrations applied on backend startup
 scripts/                  # dev-up.sh, dev-down.sh, dev-reset.sh, deploy.sh, seed-local.ts
 docs/                     # design docs, plans, UI build brief
@@ -159,11 +159,11 @@ RESOURCE_GROUP=<rg> ACR_NAME=<acr> ./scripts/deploy.sh
 | | |
 |--|--|
 | App URL | `https://your-app.your-env.region.azurecontainerapps.io` |
-| Health | `<app-url>/health` returns `{"ok":true,"service":"open-brain","version":"2.0.0"}` |
+| Health | `<app-url>/health` returns `{"ok":true,"service":"devtrail","version":"2.0.0"}` |
 | Web UI | Easy Auth gated — sign in with Microsoft Entra ID (restricted to one user) |
 | API | `<app-url>/api/v1/*` — Bearer auth (excluded from Easy Auth) |
 | MCP | `<app-url>/mcp?key=<api-key>` — stateless, per-request server |
-| API key | Azure Key Vault: `your-keyvault/open-brain-api-key` |
+| API key | Azure Key Vault: `your-keyvault/devtrail-api-key` |
 | Database | `your-pg-server.postgres.database.azure.com` |
 | Storage | Azure Blob; `Allow Blob Public Access = false`; API generates short-lived SAS read URLs in responses |
 

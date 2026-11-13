@@ -34,7 +34,7 @@ export function loadConfig(): Config {
 
   return configSchema.parse({
     databaseUrl: process.env.DATABASE_URL,
-    apiKey: process.env.OPEN_BRAIN_API_KEY,
+    apiKey: process.env.DEVTRAIL_API_KEY,
     azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
     azureStorageContainer: process.env.AZURE_STORAGE_CONTAINER,
     geminiApiKey: orStub(process.env.GEMINI_API_KEY),

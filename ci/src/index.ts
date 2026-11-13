@@ -1,5 +1,5 @@
 /**
- * Open Brain v2 — CI gate.
+ * DevTrail — CI gate.
  *
  * One Dagger module that runs identically on a laptop and on GitHub. Each gate
  * wraps the command the repo already runs (see the Makefile); `ci` composes
@@ -49,7 +49,7 @@ const IGNORE = [
 @object()
 export class Ci {
   /**
-   * Node container with all workspace deps installed and @open-brain/shared
+   * Node container with all workspace deps installed and @devtrail/shared
    * built — the backend tsc + both vitest suites + the frontend build all
    * resolve through the workspace symlink, so dist/ must exist first.
    */
@@ -61,7 +61,7 @@ export class Ci {
       .withDirectory("/app", source)
       .withWorkdir("/app")
       .withExec(["npm", "ci"])
-      .withExec(["npm", "run", "build", "--workspace=@open-brain/shared"])
+      .withExec(["npm", "run", "build", "--workspace=@devtrail/shared"])
   }
 
   /** Backend type-check (the frontend is type-checked by its build via tsc -b). */

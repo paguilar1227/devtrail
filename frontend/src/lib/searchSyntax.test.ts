@@ -81,7 +81,7 @@ describe('parseSearchSyntax — basics', () => {
   });
 
   it('tag with hyphen is valid; trailing punctuation invalidates it', () => {
-    expect(parseSearchSyntax('#open-brain').tags).toEqual(['open-brain']);
+    expect(parseSearchSyntax('#devtrail').tags).toEqual(['devtrail']);
     expect(parseSearchSyntax('#nope,').text).toBe('#nope,');
   });
 });
@@ -123,14 +123,14 @@ describe('parseSearchSyntax — mentions (@name)', () => {
 
 describe('parseSearchSyntax — projects (project:name)', () => {
   it('bare project:name moves to .projects, case preserved', () => {
-    const p = parseSearchSyntax('project:openbrain');
-    expect(p.projects).toEqual(['openbrain']);
+    const p = parseSearchSyntax('project:devtrail');
+    expect(p.projects).toEqual(['devtrail']);
     expect(p.text).toBe('');
   });
 
   it('quoted project:"multi word" allows whitespace', () => {
-    const p = parseSearchSyntax('project:"Open Brain v2"');
-    expect(p.projects).toEqual(['Open Brain v2']);
+    const p = parseSearchSyntax('project:"DevTrail"');
+    expect(p.projects).toEqual(['DevTrail']);
     expect(p.text).toBe('');
   });
 
@@ -160,7 +160,7 @@ describe('parseSearchSyntax — exclusion (-prefix on any sigil)', () => {
   });
 
   it('-project:name routes to excludedProjects', () => {
-    expect(parseSearchSyntax('-project:openbrain').excludedProjects).toEqual(['openbrain']);
+    expect(parseSearchSyntax('-project:devtrail').excludedProjects).toEqual(['devtrail']);
   });
 
   it('-@"multi word" exclusion handles quotes', () => {
@@ -198,12 +198,12 @@ describe('stringifySearchSyntax — round-trip + ordering', () => {
       stringifySearchSyntax(parsed({ mentions: ['Q1 report'] })),
     ).toBe('@"Q1 report"');
     expect(
-      stringifySearchSyntax(parsed({ projects: ['Open Brain v2'] })),
-    ).toBe('project:"Open Brain v2"');
+      stringifySearchSyntax(parsed({ projects: ['Side Project'] })),
+    ).toBe('project:"Side Project"');
   });
 
   it('round-trip stable for the full predicate set', () => {
-    const input = '#home in:todo @"Q1 report" project:openbrain -#archive -in:document -@Drafts -project:"old proj" find me';
+    const input = '#home in:todo @"Q1 report" project:devtrail -#archive -in:document -@Drafts -project:"old proj" find me';
     const reparsed = parseSearchSyntax(stringifySearchSyntax(parseSearchSyntax(input)));
     expect(reparsed).toEqual(parseSearchSyntax(input));
   });
@@ -225,7 +225,7 @@ describe('toggle / remove helpers', () => {
   });
 
   it('removeProjectFromQuery is case-insensitive', () => {
-    expect(removeProjectFromQuery('project:openbrain q', 'OPENBRAIN')).toBe('q');
+    expect(removeProjectFromQuery('project:devtrail q', 'DEVTRAIL')).toBe('q');
   });
 
   it('removeExcludedFromQuery drops the right negative bucket entry', () => {

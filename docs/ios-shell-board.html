@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Open Brain — iOS shell (feat/ios-app)</title>
+  <title>DevTrail — iOS shell (feat/ios-app)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -90,7 +90,7 @@
 <header class="surface border-b divider sticky top-0 z-10 no-print">
   <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-bold">Open Brain — iOS shell</h1>
+      <h1 class="text-2xl font-bold">DevTrail — iOS shell</h1>
       <p class="text-sm t-dim">One codebase, two targets: the web app now also ships as a native iOS app. Branch <code>feat/ios-app</code> · 2026-07-30.</p>
     </div>
     <div class="text-xs t-dim flex gap-3">
@@ -149,7 +149,7 @@
 sequenceDiagram
   participant App as iOS shell
   participant CS as Connect screen
-  participant API as Open Brain server
+  participant API as DevTrail server
   App->>App: bootAuth() — no stored config
   App->>CS: render (NativeSetupRequired)
   CS->>API: GET /api/v1/stats (Bearer key, no credentials)

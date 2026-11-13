@@ -1,6 +1,6 @@
-# Open Brain v2 — UI Build Brief
+# DevTrail — UI Build Brief
 
-You are picking up the **web client** for Open Brain v2. The backend API is finished, deployed, and verified end-to-end. Your job is to evolve the existing minimal web UI (`frontend/`) into a complete client that exercises the full API surface.
+You are picking up the **web client** for DevTrail. The backend API is finished, deployed, and verified end-to-end. Your job is to evolve the existing minimal web UI (`frontend/`) into a complete client that exercises the full API surface.
 
 This is a **single-user** personal knowledge base + productivity tool (NotebookLM crossed with a task manager, owned by Alex). No multi-tenancy, no signup flow — just one API key in `localStorage`. Design for that scale: **clarity, speed, keyboard-friendly** beats heavy onboarding or "social" patterns.
 

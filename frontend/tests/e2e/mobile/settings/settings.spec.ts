@@ -38,7 +38,7 @@ test('settings mobile: theme toggle inside the modal flips the document data-the
 });
 
 test('settings mobile: clicking Log out clears the cached token and redirects', async ({ page }) => {
-  await page.evaluate(() => localStorage.setItem('ob.api_key', 'sentinel-to-clear'));
+  await page.evaluate(() => localStorage.setItem('devtrail.api_key', 'sentinel-to-clear'));
 
   const more = page.locator('.mobile-tabbar .mtab', { hasText: 'More' });
   await expect(more).toBeVisible();
@@ -50,7 +50,7 @@ test('settings mobile: clicking Log out clears the cached token and redirects', 
   // Post-logout reload re-boots the whole SPA — allow extra headroom on a
   // loaded host (matches the desktop twin).
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible({ timeout: 30000 });
-  const stored = await page.evaluate(() => localStorage.getItem('ob.api_key'));
+  const stored = await page.evaluate(() => localStorage.getItem('devtrail.api_key'));
   expect(stored).toBeNull();
 });
 

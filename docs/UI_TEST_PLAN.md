@@ -1,4 +1,4 @@
-# Open Brain v2 — Frontend UI Test Plan
+# DevTrail — Frontend UI Test Plan
 
 Comprehensive coverage outline for the React/Vite UI in `frontend/`. Each leaf is written as `Action => Expected outcome` and is intended to map 1:1 to a Playwright test once approved. The UI currently runs against `lib/mock.ts`; assertions about specific data values reference that fixture.
 
@@ -6,7 +6,7 @@ Conventions:
 - "Desktop" = viewport ≥ 820px wide. "Mobile" = viewport < 820px.
 - "Default route" = `home`.
 - All routes are managed in component state, no URL changes.
-- All persistence is `localStorage` (`ob.theme`, `ob.sidebarMode`).
+- All persistence is `localStorage` (`devtrail.theme`, `devtrail.sidebarMode`).
 
 Breakpoints exercised: **360 × 640** (small phone), **390 × 844** (iPhone), **768 × 1024** (tablet), **1024 × 768** (laptop landscape), **1440 × 900** (desktop).
 
@@ -15,14 +15,14 @@ Breakpoints exercised: **360 × 640** (small phone), **390 × 844** (iPhone), **
 ## 1. App shell & global behavior
 
 ### 1.1 Boot
-- Load `/` with no localStorage => Home page renders, `<html>` has `data-theme="dark"`, `data-sb` is set, sidebar shows brand "Open Brain 2.5"
-- Load `/` with `ob.theme=light` => `<html data-theme="light">` and Topbar sun button has `.active`
-- Load `/` with `ob.theme=dark` => `<html data-theme="dark">` and Topbar moon button has `.active`
-- Load `/` with `ob.sidebarMode=expanded` => sidebar wide, labels visible
-- Load `/` with `ob.sidebarMode=collapsed` => sidebar narrow, only icons visible
-- Load `/` with `ob.sidebarMode=hidden` (and desktop) => `data-sb="hidden"`, sidebar not rendered
-- Load `/` with bogus `ob.theme=banana` => falls back to `dark`
-- Load `/` with bogus `ob.sidebarMode=foo` => falls back to `collapsed`
+- Load `/` with no localStorage => Home page renders, `<html>` has `data-theme="dark"`, `data-sb` is set, sidebar shows brand "DevTrail 2.5"
+- Load `/` with `devtrail.theme=light` => `<html data-theme="light">` and Topbar sun button has `.active`
+- Load `/` with `devtrail.theme=dark` => `<html data-theme="dark">` and Topbar moon button has `.active`
+- Load `/` with `devtrail.sidebarMode=expanded` => sidebar wide, labels visible
+- Load `/` with `devtrail.sidebarMode=collapsed` => sidebar narrow, only icons visible
+- Load `/` with `devtrail.sidebarMode=hidden` (and desktop) => `data-sb="hidden"`, sidebar not rendered
+- Load `/` with bogus `devtrail.theme=banana` => falls back to `dark`
+- Load `/` with bogus `devtrail.sidebarMode=foo` => falls back to `collapsed`
 - No console errors on cold load => `console.error` count is 0
 
 ### 1.2 Theme toggle
@@ -677,7 +677,7 @@ These actions intentionally have no behavior wired in the mock-only build. Tests
 
 These cases caused real bugs during build-out and are worth keeping forever.
 
-- Sidebar collapse toggle persists across reload => localStorage `ob.sidebarMode`
+- Sidebar collapse toggle persists across reload => localStorage `devtrail.sidebarMode`
 - Cmd-Shift-L works regardless of focus location
 - Mobile sheet does not stay open after viewport resize beyond 820
 - Hierarchy todos render the correct number of children (parent + descendants), no orphans

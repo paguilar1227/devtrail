@@ -1,4 +1,4 @@
-# CLAUDE.md — Open Brain v2
+# CLAUDE.md — DevTrail
 
 Project-wide instructions for AI sessions. Path-scoped rules live in `.claude/rules/` and auto-load when working in matching subtrees — those are the place for backend internals, schema details, LLM gotchas, and frontend patterns. Keep this file lean.
 
@@ -22,7 +22,7 @@ Before trusting anything in this file, the rules, prior session notes, or your a
 
 If a memory or doc references a file path, function, or entity name that no longer exists in the repo, treat the doc as stale and update it. **Don't chase a phantom architecture.** Past pivots have completely replaced the entity model and code layout.
 
-## What Open Brain v2 is
+## What DevTrail is
 
 A NotebookLM-style personal knowledge base + productivity tool. Single user. No multi-tenancy.
 
@@ -69,7 +69,7 @@ frontend/                 # Vite + React web client
 ├── tests/e2e/             # Playwright workflow suite
 └── package.json
 
-shared/                   # @open-brain/shared — Zod schemas + TS types on the wire
+shared/                   # @devtrail/shared — Zod schemas + TS types on the wire
 └── src/schemas.ts         # Single source of truth for request/response shapes
 
 migrations/               # SQL migrations (applied at backend startup; see schema rule)
@@ -155,11 +155,11 @@ cd frontend && npm run build && npx cap sync ios
 cd ios/App && xcodebuild -project App.xcodeproj -scheme App -sdk iphonesimulator \
   -destination 'platform=iOS Simulator,name=iPhone 17e' -derivedDataPath ./DerivedData build
 xcrun simctl install booted DerivedData/Build/Products/Debug-iphonesimulator/App.app
-xcrun simctl launch booted com.example.openbrain
+xcrun simctl launch booted com.example.devtrail
 ```
 
 First launch asks for server URL + API key (local dev: `http://localhost:3001` + the
-`OPEN_BRAIN_API_KEY` from `backend/.env`; Info.plist ATS allows plain-http to local hosts
+`DEVTRAIL_API_KEY` from `backend/.env`; Info.plist ATS allows plain-http to local hosts
 only). `npx cap sync ios` re-copies `dist/` into the shell — run it after any web build
 you want reflected natively. `ios/App/App/public/` and `capacitor.config.json` are
 generated (gitignored); `Info.plist` and the Xcode project are source.
@@ -201,14 +201,14 @@ If you find yourself about to `git push origin main` mid-session without explici
 For when GitHub Actions is down, billing-suspended, or you need to deploy faster than CI can finish. Bypasses the Deploy workflow entirely.
 
 ```bash
-RESOURCE_GROUP=openbrain-rg ACR_NAME=yourregistry bash scripts/deploy.sh
+RESOURCE_GROUP=devtrail-rg ACR_NAME=yourregistry bash scripts/deploy.sh
 ```
 
 (a) builds the Docker image locally for `linux/amd64` (~5-10 min on Apple Silicon for the cross-build), (b) pushes to ACR (~1-3 min, mostly cached), (c) rolls a new Container App revision (~1-2 min). Tags with the short HEAD SHA so revisions are traceable.
 
-Requires Docker running + `az login` already done. ACR lives in `shared-rg` (not `openbrain-rg`) — it's shared across projects.
+Requires Docker running + `az login` already done. ACR lives in `shared-rg` (not `devtrail-rg`) — it's shared across projects.
 
-If `docker push` to ACR times out mid-manifest (proxy / network glitch), the layers are usually already uploaded; retry just `docker push yourregistry.azurecr.io/open-brain-v2:<tag>` instead of re-running the whole script.
+If `docker push` to ACR times out mid-manifest (proxy / network glitch), the layers are usually already uploaded; retry just `docker push yourregistry.azurecr.io/devtrail:<tag>` instead of re-running the whole script.
 
 ### After pushing — poll for CI + Deploy
 
@@ -216,7 +216,7 @@ Only relevant for pushes to `main`. PR-branch CI is one run, not two.
 
 ```bash
 while true; do
-  RESULT=$(gh run list --repo paguilar1227/open-brain-v2 --limit 2 --json status,conclusion,name --jq '.[] | "\(.status) \(.conclusion) \(.name)"')
+  RESULT=$(gh run list --repo paguilar1227/devtrail --limit 2 --json status,conclusion,name --jq '.[] | "\(.status) \(.conclusion) \(.name)"')
   CI=$(echo "$RESULT" | grep "^completed.*CI$" | head -1)
   DEPLOY=$(echo "$RESULT" | grep "^completed.*Deploy" | head -1)
   if [ -n "$CI" ] && [ -n "$DEPLOY" ]; then
@@ -256,17 +256,17 @@ Bug fixes get a regression test at the surface where the bug appeared.
 
 - **App URL:** `https://your-app.your-env.region.azurecontainerapps.io`
 - **MCP URL:** `<app-url>/mcp?key=<api-key>` (stateless, per-request server)
-- **Health:** `<app-url>/health` returns `{"ok":true,"service":"open-brain","version":"2.0.0"}`
-- **API key:** Azure Key Vault `your-keyvault/open-brain-api-key`
+- **Health:** `<app-url>/health` returns `{"ok":true,"service":"devtrail","version":"2.0.0"}`
+- **API key:** Azure Key Vault `your-keyvault/devtrail-api-key`
 - **PostgreSQL:** `your-pg-server.postgres.database.azure.com` (Azure Postgres Flexible Server)
-- **Azure Container App:** resource group `openbrain-rg`, name `openbrain-prod-api`
-- **Container Registry:** `yourregistry.azurecr.io` in resource group `shared-rg` (shared across projects — NOT in `openbrain-rg`)
-- **Image name:** `yourregistry.azurecr.io/open-brain-v2:<short-sha>` (plus a rolling `:latest` tag)
+- **Azure Container App:** resource group `devtrail-rg`, name `devtrail-prod-api`
+- **Container Registry:** `yourregistry.azurecr.io` in resource group `shared-rg` (shared across projects — NOT in `devtrail-rg`)
+- **Image name:** `yourregistry.azurecr.io/devtrail:<short-sha>` (plus a rolling `:latest` tag)
 - **Local dev Postgres:** port 5434 (so it doesn't clash with other projects on 5432)
 
 Check the currently-running revision + its image tag:
 ```bash
-az containerapp show --name openbrain-prod-api --resource-group openbrain-rg \
+az containerapp show --name devtrail-prod-api --resource-group devtrail-rg \
   --query "{revision: properties.latestRevisionName, image: properties.template.containers[0].image}" -o json
 ```
 

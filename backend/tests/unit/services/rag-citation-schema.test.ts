@@ -10,7 +10,7 @@
 // hit kinds, including the lexical-only null-similarity shape.
 
 import { describe, it, expect } from 'vitest';
-import { RagCitationSchema } from '@open-brain/shared';
+import { RagCitationSchema } from '@devtrail/shared';
 import { hitToCitation } from '../../../src/services/rag.js';
 
 const chunkHit = {

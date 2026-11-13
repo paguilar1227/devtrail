@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/dev-up.sh — one-shot local dev bring-up.
 #
-# Idempotent: safe to re-run. Brings Open Brain to a working state from any
+# Idempotent: safe to re-run. Brings DevTrail to a working state from any
 # starting point (fresh clone, partial install, missing .env, empty DB).
 #
 # What it does, in order:
@@ -66,8 +66,8 @@ ok "postgres + azurite healthy"
 #   (b) table present but empty → seed.
 #   (c) table has rows → skip.
 SEED=0
-PROJECT_COUNT=$(docker exec open-brain-v2-postgres-1 \
-  psql -U openbrain openbrain -tAc "SELECT count(*) FROM projects" 2>/dev/null || echo "missing")
+PROJECT_COUNT=$(docker exec devtrail-postgres-1 \
+  psql -U devtrail devtrail -tAc "SELECT count(*) FROM projects" 2>/dev/null || echo "missing")
 case "$PROJECT_COUNT" in
   missing) warn "projects table not present yet (backend will run migrations on first boot)"; SEED=1 ;;
   0)       warn "DB empty"; SEED=1 ;;

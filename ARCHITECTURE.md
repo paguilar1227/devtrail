@@ -1,4 +1,4 @@
-# Open Brain v2 — Architecture
+# DevTrail — Architecture
 
 Authoritative reference for the V2 codebase. Written for AI agents and humans who want a complete, factual picture of what is *actually built* — not what was designed in the V1 era.
 
@@ -17,7 +17,7 @@ Authoritative reference for the V2 codebase. Written for AI agents and humans wh
 
 ## 1. Purpose
 
-Open Brain v2 is a **single-user, NotebookLM-style personal knowledge base + productivity tool**. The user organizes knowledge into **projects**; each project contains documents (uploaded reference material), notes (self-authored), and todos (with subtasks + comments). Hybrid semantic + entity-graph search spans everything. A retrieval-augmented Q&A surface routes between a fast model and a reasoning model based on the question.
+DevTrail is a **single-user, NotebookLM-style personal knowledge base + productivity tool**. The user organizes knowledge into **projects**; each project contains documents (uploaded reference material), notes (self-authored), and todos (with subtasks + comments). Hybrid semantic + entity-graph search spans everything. A retrieval-augmented Q&A surface routes between a fast model and a reasoning model based on the question.
 
 There is **no multi-tenancy**. There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine** — those existed in the pre-V2 architecture and were deleted in the April 2026 rewrite. Vestigial Bicep parameters and the `functions/consolidation-trigger/` folder still exist as cleanup candidates (see §16).
 
@@ -441,7 +441,7 @@ Defined in `src/app.ts`. Auth: `Authorization: Bearer <api-key>` or `?key=<api-k
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/health` | `{"ok":true,"service":"open-brain","version":"2.0.0"}` (no auth) |
+| GET | `/health` | `{"ok":true,"service":"devtrail","version":"2.0.0"}` (no auth) |
 | GET / POST / PUT / DELETE | `/api/v1/projects[/:id]` | Project CRUD |
 | POST | `/api/v1/projects/:id/restore` | Unarchive |
 | GET / POST / PUT / DELETE | `/api/v1/content[/:id]` | Content item CRUD (POST accepts JSON or `multipart/form-data` with `file` field) |
@@ -524,7 +524,7 @@ Every LLM-JSON path in the service layer routes through this. When you add a new
 
 ### Why ACR role assignment is CLI-only
 
-The shared ACR lives in `shared-rg`; the Container App lives in `openbrain-rg`. Cross-resource-group role assignment can't be expressed in Bicep at resource-group scope, so SETUP.md does it via `az role assignment create` after Bicep deploys.
+The shared ACR lives in `shared-rg`; the Container App lives in `devtrail-rg`. Cross-resource-group role assignment can't be expressed in Bicep at resource-group scope, so SETUP.md does it via `az role assignment create` after Bicep deploys.
 
 ### Auto-migration on startup
 
@@ -586,7 +586,7 @@ For full live-system validation, see `E2E_TEST_PLAN.md` — 52 reproducible test
 
 - **240s response timeout on Container App.** URL ingestion can exceed this when fallbacks chain. Server completes the work; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
 - **Image tag uniqueness for revisions.** Container Apps only creates a new revision when the image *reference* changes. Push under git SHA tags, not just `:latest`.
-- **Cross-RG role assignment must be CLI.** ACR lives in `shared-rg`; Container App in `openbrain-rg`. Bicep at RG-scope can't express it.
+- **Cross-RG role assignment must be CLI.** ACR lives in `shared-rg`; Container App in `devtrail-rg`. Bicep at RG-scope can't express it.
 - **Apple Silicon platform flag.** `docker build --platform linux/amd64`. Default arm64 won't run on Azure x86-64.
 
 ### URL ingest
@@ -623,7 +623,7 @@ When you do the cleanup, also strip references from `SETUP.md`, this doc, and an
 ## 17. File Map
 
 ```
-open-brain-v2/
+devtrail/
 ├── src/
 │   ├── server.ts                       Entry point: deps wiring + migrations + serve
 │   ├── app.ts                          Hono app: REST routes + MCP mount + static web
@@ -739,7 +739,7 @@ Validated by `loadConfig()` in `src/config.ts` on startup. All required values t
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `OPEN_BRAIN_API_KEY` | Yes | — | API key for REST + MCP auth |
+| `DEVTRAIL_API_KEY` | Yes | — | API key for REST + MCP auth |
 | `AZURE_STORAGE_CONNECTION_STRING` | Yes | — | Blob Storage connection string |
 | `AZURE_STORAGE_CONTAINER` | Yes | — | Blob container name |
 | `GEMINI_API_KEY` | Yes | — | Google Gemini API key (embeddings + audio/video metadata) |

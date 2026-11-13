@@ -1,4 +1,4 @@
-# Open Brain v2 — First-Time Azure Deployment Guide
+# DevTrail — First-Time Azure Deployment Guide
 
 This walks you from zero to a running production deployment, including the gotchas hit during the initial deploy. Subsequent deploys are handled by GitHub Actions on every push to `main` (`.github/workflows/deploy.yml`).
 
@@ -19,7 +19,7 @@ You will need API keys/values for everything below before running Bicep:
 | Value | Where to get it |
 |-------|-----------------|
 | `dbAdminPassword` | Generate a strong password; store somewhere safe |
-| `apiKey` (Open Brain) | Generate any random string — this is your bearer token for `/api/v1/*` and `?key=` for `/mcp` |
+| `apiKey` (DevTrail) | Generate any random string — this is your bearer token for `/api/v1/*` and `?key=` for `/mcp` |
 | `geminiApiKey` | Google AI Studio → https://aistudio.google.com/app/apikey |
 | `anthropicApiKey` | Anthropic Console → https://console.anthropic.com/account/keys |
 | `xaiApiKey` | xAI console (used for X/Twitter live search via Grok) |
@@ -35,11 +35,11 @@ The Azure OpenAI resource doesn't have to live in the same resource group — po
 
 ```bash
 az group create \
-  --name openbrain-rg \
+  --name devtrail-rg \
   --location eastus
 ```
 
-Use whatever region you prefer. The name `openbrain-rg` matches what's referenced in the rest of this doc.
+Use whatever region you prefer. The name `devtrail-rg` matches what's referenced in the rest of this doc.
 
 ---
 
@@ -54,14 +54,14 @@ IMAGE_TAG=$(git rev-parse --short HEAD)
 # linux/amd64 is required when building on Apple Silicon — Docker defaults to arm64
 # on M-series Macs, which fails to run on Azure's x86-64 infra.
 docker build --platform linux/amd64 \
-  -t ${ACR_NAME}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
+  -t ${ACR_NAME}.azurecr.io/devtrail:${IMAGE_TAG} .
 
-docker tag ${ACR_NAME}.azurecr.io/open-brain-v2:${IMAGE_TAG} \
-           ${ACR_NAME}.azurecr.io/open-brain-v2:latest
+docker tag ${ACR_NAME}.azurecr.io/devtrail:${IMAGE_TAG} \
+           ${ACR_NAME}.azurecr.io/devtrail:latest
 
 az acr login --name ${ACR_NAME}
-docker push ${ACR_NAME}.azurecr.io/open-brain-v2:${IMAGE_TAG}
-docker push ${ACR_NAME}.azurecr.io/open-brain-v2:latest
+docker push ${ACR_NAME}.azurecr.io/devtrail:${IMAGE_TAG}
+docker push ${ACR_NAME}.azurecr.io/devtrail:latest
 ```
 
 > **Gotcha — use git SHA tags, not just `latest`.**
@@ -75,12 +75,12 @@ Secrets are passed via CLI — they are intentionally absent from `parameters.js
 
 ```bash
 az deployment group create \
-  --resource-group openbrain-rg \
+  --resource-group devtrail-rg \
   --template-file infra/main.bicep \
   --parameters @infra/parameters.json \
   --parameters \
     dbAdminPassword="<postgres-admin-password>" \
-    apiKey="<your-open-brain-api-key>" \
+    apiKey="<your-devtrail-api-key>" \
     geminiApiKey="<your-gemini-api-key>" \
     anthropicApiKey="<your-anthropic-api-key>" \
     telegramBotToken="unused" \
@@ -98,12 +98,12 @@ The non-secret values (`environment`, `acrName`, `acrResourceGroup`, `consolidat
 
 ## 5. Assign AcrPull to the Container App's Managed Identity (cross-RG)
 
-The Container App pulls images from the ACR using its managed identity. Because the ACR lives in a different resource group (`shared-rg`) than the Container App (`openbrain-rg`), this role assignment can't be expressed in Bicep at resource-group scope. Do it via CLI right after Bicep deploys, before the first revision tries to pull.
+The Container App pulls images from the ACR using its managed identity. Because the ACR lives in a different resource group (`shared-rg`) than the Container App (`devtrail-rg`), this role assignment can't be expressed in Bicep at resource-group scope. Do it via CLI right after Bicep deploys, before the first revision tries to pull.
 
 ```bash
 PRINCIPAL_ID=$(az containerapp show \
-  --name openbrain-prod-api \
-  --resource-group openbrain-rg \
+  --name devtrail-prod-api \
+  --resource-group devtrail-rg \
   --query "identity.principalId" -o tsv)
 
 ACR_ID=$(az acr show \
@@ -125,7 +125,7 @@ The Bicep template predates the V2 stack and doesn't wire the Azure OpenAI / xAI
 
 ```bash
 az containerapp secret set \
-  --name openbrain-prod-api --resource-group openbrain-rg \
+  --name devtrail-prod-api --resource-group devtrail-rg \
   --secrets \
     azure-openai-endpoint="https://<your-foundry-resource>.openai.azure.com" \
     azure-openai-key="<azure-openai-key>" \
@@ -134,7 +134,7 @@ az containerapp secret set \
     supadata-api-key="<supadata-key>"
 
 az containerapp update \
-  --name openbrain-prod-api --resource-group openbrain-rg \
+  --name devtrail-prod-api --resource-group devtrail-rg \
   --set-env-vars \
     AZURE_OPENAI_ENDPOINT=secretref:azure-openai-endpoint \
     AZURE_OPENAI_KEY=secretref:azure-openai-key \
@@ -202,9 +202,9 @@ CI + CD authenticate to Azure via OIDC — no stored credentials. CI runs typech
 ### App registration + service principal (one-time)
 
 ```bash
-az ad app create --display-name "open-brain-v2-cicd"
+az ad app create --display-name "devtrail-cicd"
 
-APP_ID=$(az ad app list --display-name "open-brain-v2-cicd" --query "[0].appId" -o tsv)
+APP_ID=$(az ad app list --display-name "devtrail-cicd" --query "[0].appId" -o tsv)
 az ad sp create --id "${APP_ID}"
 SP_OBJECT_ID=$(az ad sp show --id "${APP_ID}" --query id -o tsv)
 ```
@@ -215,9 +215,9 @@ SP_OBJECT_ID=$(az ad sp show --id "${APP_ID}" --query id -o tsv)
 az ad app federated-credential create \
   --id "${APP_ID}" \
   --parameters '{
-    "name": "open-brain-github-main",
+    "name": "devtrail-github-main",
     "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:<your-github-username>/open-brain-v2:ref:refs/heads/main",
+    "subject": "repo:<your-github-username>/devtrail:ref:refs/heads/main",
     "audiences": ["api://AzureADTokenExchange"]
   }'
 ```
@@ -226,7 +226,7 @@ az ad app federated-credential create \
 
 ```bash
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-RG_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/openbrain-rg"
+RG_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/devtrail-rg"
 ACR_ID=$(az acr show --name yourregistry --resource-group shared-rg --query id -o tsv)
 
 # Contributor on the project RG (update Container App + Function App)
@@ -256,9 +256,9 @@ az role assignment create \
 | Variable | Value |
 |----------|-------|
 | `ACR_NAME` | `yourregistry` |
-| `AZURE_RESOURCE_GROUP` | `openbrain-rg` |
-| `CONTAINER_APP_NAME` | `openbrain-prod-api` |
-| `FUNCTION_APP_NAME` | `openbrain-prod-func` (still referenced by the Functions step — see §11) |
+| `AZURE_RESOURCE_GROUP` | `devtrail-rg` |
+| `CONTAINER_APP_NAME` | `devtrail-prod-api` |
+| `FUNCTION_APP_NAME` | `devtrail-prod-func` (still referenced by the Functions step — see §11) |
 
 ---
 
@@ -281,7 +281,7 @@ When you do the cleanup, also remove `Function App` references from this doc and
 ## 12. MCP Connector (Claude.ai / Claude Desktop / Claude Code)
 
 ```
-https://<your-container-app-fqdn>/mcp?key=<your-open-brain-api-key>
+https://<your-container-app-fqdn>/mcp?key=<your-devtrail-api-key>
 ```
 
 Add this URL as a custom MCP connector. The `key` query parameter is equivalent to the `Authorization: Bearer ...` header that the REST API uses, so the same key works for both surfaces. The MCP server is stateless — a fresh `McpServer + WebStandardStreamableHTTPServerTransport` is constructed per request.
@@ -292,11 +292,11 @@ Add this URL as a custom MCP connector. The `key` query parameter is equivalent 
 
 ```bash
 APP_URL=https://<your-container-app-fqdn>
-API_KEY=<your-open-brain-api-key>
+API_KEY=<your-devtrail-api-key>
 
 # Health (no auth)
 curl ${APP_URL}/health
-# expected: {"ok":true,"service":"open-brain","version":"2.0.0"}
+# expected: {"ok":true,"service":"devtrail","version":"2.0.0"}
 
 # Authenticated list
 curl -s -H "Authorization: Bearer ${API_KEY}" "${APP_URL}/api/v1/projects" | jq
@@ -333,7 +333,7 @@ Order matters; getting it wrong leaves you debugging Bicep image-pull failures o
 | `AZURE_RAG_DEPLOYMENT` | `gpt-5-4` | Azure OpenAI deployment name for fast-path RAG (chat completions) |
 | `AZURE_DEEP_RAG_DEPLOYMENT` | `gpt-5-4-pro` | Azure OpenAI deployment name for thorough-path RAG (Responses API) |
 
-All other values (`DATABASE_URL`, `OPEN_BRAIN_API_KEY`, the various `*_API_KEY` and `AZURE_*` keys) are required — `loadConfig()` in `src/config.ts` throws on missing values.
+All other values (`DATABASE_URL`, `DEVTRAIL_API_KEY`, the various `*_API_KEY` and `AZURE_*` keys) are required — `loadConfig()` in `src/config.ts` throws on missing values.
 
 ---
 

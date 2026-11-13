@@ -7,7 +7,7 @@
 // stores them under `obv2.noteSort.<surfaceKey>`.
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ContentItem } from '@open-brain/shared';
+import type { ContentItem } from '@devtrail/shared';
 
 export type NoteSortMode = 'recent' | 'oldest' | 'title_az' | 'title_za';
 

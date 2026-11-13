@@ -3,7 +3,7 @@
  *
  * https://docs.supadata.ai/api-reference/endpoint/youtube/transcript
  *
- * Why this exists: Open Brain v2 used to chain three fetchers for YouTube
+ * Why this exists: DevTrail used to chain three fetchers for YouTube
  * (direct watch-page scrape → Firecrawl stealth → xAI Grok). The chain ran
  * because YouTube rate-limits / CAPTCHAs Azure datacenter IPs. Each tier
  * added 5–60s of latency and the worst case stacked past Azure's 240s

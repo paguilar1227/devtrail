@@ -1,4 +1,4 @@
-# Open Brain 2.0 Implementation Plan
+# DevTrail 2.0 Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -30,7 +30,7 @@ The spec left API framework as TBD (Express, Fastify, or Hono). This plan uses *
 ## File Structure
 
 ```
-open-brain-v2/
+devtrail/
 ├── src/
 │   ├── config.ts                        # Environment variables + Zod validation
 │   ├── app.ts                           # Hono app: routes, middleware, error handling
@@ -178,7 +178,7 @@ open-brain-v2/
 
 ```json
 {
-  "name": "open-brain-v2",
+  "name": "devtrail",
   "version": "2.0.0",
   "private": true,
   "type": "module",
@@ -273,14 +273,14 @@ coverage/
 
 ```bash
 # Database
-DATABASE_URL=postgresql://openbrain:openbrain@localhost:5432/openbrain
+DATABASE_URL=postgresql://devtrail:devtrail@localhost:5432/devtrail
 
 # API Auth
-OPEN_BRAIN_API_KEY=your-api-key-here
+DEVTRAIL_API_KEY=your-api-key-here
 
 # Azure Blob Storage
 AZURE_STORAGE_CONNECTION_STRING=your-connection-string
-AZURE_STORAGE_CONTAINER=open-brain-files
+AZURE_STORAGE_CONTAINER=devtrail-files
 
 # Google Gemini
 GEMINI_API_KEY=your-gemini-key
@@ -321,9 +321,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: openbrain
-      POSTGRES_PASSWORD: openbrain
-      POSTGRES_DB: openbrain
+      POSTGRES_USER: devtrail
+      POSTGRES_PASSWORD: devtrail
+      POSTGRES_DB: devtrail
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
@@ -368,7 +368,7 @@ describe('config', () => {
 
   it('loads valid config from environment', async () => {
     vi.stubEnv('DATABASE_URL', 'postgresql://localhost:5432/test');
-    vi.stubEnv('OPEN_BRAIN_API_KEY', 'test-key');
+    vi.stubEnv('DEVTRAIL_API_KEY', 'test-key');
     vi.stubEnv('AZURE_STORAGE_CONNECTION_STRING', 'DefaultEndpointsProtocol=https;...');
     vi.stubEnv('AZURE_STORAGE_CONTAINER', 'test-container');
     vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
@@ -397,7 +397,7 @@ describe('config', () => {
 
   it('uses defaults for optional values', async () => {
     vi.stubEnv('DATABASE_URL', 'postgresql://localhost:5432/test');
-    vi.stubEnv('OPEN_BRAIN_API_KEY', 'test-key');
+    vi.stubEnv('DEVTRAIL_API_KEY', 'test-key');
     vi.stubEnv('AZURE_STORAGE_CONNECTION_STRING', 'conn-string');
     vi.stubEnv('AZURE_STORAGE_CONTAINER', 'container');
     vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
@@ -450,7 +450,7 @@ export type Config = z.infer<typeof configSchema>;
 export function loadConfig(): Config {
   return configSchema.parse({
     databaseUrl: process.env.DATABASE_URL,
-    apiKey: process.env.OPEN_BRAIN_API_KEY,
+    apiKey: process.env.DEVTRAIL_API_KEY,
     azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
     azureStorageContainer: process.env.AZURE_STORAGE_CONTAINER,
     geminiApiKey: process.env.GEMINI_API_KEY,
@@ -491,7 +491,7 @@ This must match the spec exactly — 5 tables with all columns, types, defaults,
 
 ```sql
 -- migrations/001_initial_schema.sql
--- Open Brain 2.0 — Full schema
+-- DevTrail 2.0 — Full schema
 
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -626,15 +626,15 @@ CREATE INDEX idx_reminders_due_date ON reminders (due_date)
 Run: `docker compose up -d`
 Expected: PostgreSQL container starts with pgvector.
 
-Run: `psql postgresql://openbrain:openbrain@localhost:5432/openbrain -f migrations/001_initial_schema.sql`
+Run: `psql postgresql://devtrail:devtrail@localhost:5432/devtrail -f migrations/001_initial_schema.sql`
 Expected: All CREATE TABLE and CREATE INDEX statements succeed.
 
 - [ ] **Step 3: Verify tables and indexes exist**
 
-Run: `psql postgresql://openbrain:openbrain@localhost:5432/openbrain -c "\dt"`
+Run: `psql postgresql://devtrail:devtrail@localhost:5432/devtrail -c "\dt"`
 Expected: 5 tables listed (captures, facts, insights, consolidation_log, reminders).
 
-Run: `psql postgresql://openbrain:openbrain@localhost:5432/openbrain -c "\di"`
+Run: `psql postgresql://devtrail:devtrail@localhost:5432/devtrail -c "\di"`
 Expected: All HNSW, GIN, and B-tree indexes listed.
 
 - [ ] **Step 4: Commit**
@@ -3292,7 +3292,7 @@ export function createApp(deps: AppDeps) {
   app.use('*', cors());
 
   // Health check (no auth)
-  app.get('/', (c) => c.json({ status: 'ok', service: 'open-brain-v2' }));
+  app.get('/', (c) => c.json({ status: 'ok', service: 'devtrail' }));
 
   // Auth middleware for /api/* routes
   app.use('/api/*', async (c, next) => {
@@ -3400,7 +3400,7 @@ const deps = {
 const app = createApp(deps);
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`Open Brain v2 running on http://localhost:${info.port}`);
+  console.log(`DevTrail running on http://localhost:${info.port}`);
 });
 ```
 
@@ -3798,7 +3798,7 @@ import { registerReminderTools } from './reminder-tools.js';
 
 export function createMcpServer(deps: AppDeps): McpServer {
   const server = new McpServer({
-    name: 'open-brain',
+    name: 'devtrail',
     version: '2.0.0',
   });
 
@@ -5175,7 +5175,7 @@ export async function runPhase3(
     const pending = await getPendingReviewCount(db);
     if (pending.total > 0) {
       await options.sendNotification(
-        `Open Brain: ${pending.total} items need your review (${pending.facts} facts, ${pending.insights} insights). Use /review to see them.`,
+        `DevTrail: ${pending.total} items need your review (${pending.facts} facts, ${pending.insights} insights). Use /review to see them.`,
       );
     }
   }
@@ -5950,7 +5950,7 @@ export interface DigestData {
 export function formatDailyDigest(data: DigestData): string {
   // Matches spec digest format with emojis
   const lines = [
-    '\u{1F9E0} Open Brain Daily Digest',
+    '\u{1F9E0} DevTrail Daily Digest',
     `Processed: ${data.capturesProcessed} captures`,
     `Facts created: ${data.factsCreated} | Updated: ${data.factsUpdated}`,
     `Insights created: ${data.insightsCreated}`,
@@ -6072,7 +6072,7 @@ export function mockBlobStorage(): BlobStorage {
 
 - [ ] **Step 3: Verify Docker builds**
 
-Run: `docker build -t open-brain-v2 .`
+Run: `docker build -t devtrail .`
 Expected: Multi-stage build completes successfully.
 
 - [ ] **Step 4: Run all tests**
@@ -6127,7 +6127,7 @@ param acrResourceGroup string = resourceGroup().name
 @secure()
 param dbAdminPassword string
 
-@description('Open Brain API key')
+@description('DevTrail API key')
 @secure()
 param apiKey string
 
@@ -6153,7 +6153,7 @@ param telegramChatId string
 @description('Consolidation CRON schedule (Azure Functions format). Default: every 30 min.')
 param consolidationSchedule string = '0 */30 * * * *'
 
-var prefix = 'openbrain-${environment}'
+var prefix = 'devtrail-${environment}'
 
 // Log Analytics Workspace (required by Container Apps + App Insights)
 module monitoring 'modules/monitoring.bicep' = {
@@ -6252,7 +6252,7 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
   }
   properties: {
     version: '16'
-    administratorLogin: 'openbrain'
+    administratorLogin: 'devtrail'
     administratorLoginPassword: adminPassword
     storage: {
       storageSizeGB: 32
@@ -6290,10 +6290,10 @@ resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
 // Database
 resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
   parent: postgresServer
-  name: 'openbrain'
+  name: 'devtrail'
 }
 
-output connectionString string = 'postgresql://openbrain:${adminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/openbrain?sslmode=require'
+output connectionString string = 'postgresql://devtrail:${adminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/devtrail?sslmode=require'
 output serverName string = postgresServer.name
 ```
 
@@ -6339,7 +6339,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 
 // Store all secrets
 var secrets = [
-  { name: 'open-brain-api-key', value: apiKey }
+  { name: 'devtrail-api-key', value: apiKey }
   { name: 'gemini-api-key', value: geminiApiKey }
   { name: 'anthropic-api-key', value: anthropicApiKey }
   { name: 'telegram-bot-token', value: telegramBotToken }
@@ -6393,7 +6393,7 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
 resource filesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
-  name: 'open-brain-files'
+  name: 'devtrail-files'
 }
 
 output storageAccountName string = storageAccount.name
@@ -6498,7 +6498,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: [
         { name: 'database-url', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/database-url', identity: identity.id }
-        { name: 'open-brain-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/open-brain-api-key', identity: identity.id }
+        { name: 'devtrail-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/devtrail-api-key', identity: identity.id }
         { name: 'gemini-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/gemini-api-key', identity: identity.id }
         { name: 'anthropic-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/anthropic-api-key', identity: identity.id }
         { name: 'telegram-bot-token', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/telegram-bot-token', identity: identity.id }
@@ -6510,21 +6510,21 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'open-brain'
-          image: '${acr.properties.loginServer}/open-brain-v2:latest'
+          name: 'devtrail'
+          image: '${acr.properties.loginServer}/devtrail:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
           env: [
             { name: 'DATABASE_URL', secretRef: 'database-url' }
-            { name: 'OPEN_BRAIN_API_KEY', secretRef: 'open-brain-api-key' }
+            { name: 'DEVTRAIL_API_KEY', secretRef: 'devtrail-api-key' }
             { name: 'GEMINI_API_KEY', secretRef: 'gemini-api-key' }
             { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }
             { name: 'TELEGRAM_BOT_TOKEN', secretRef: 'telegram-bot-token' }
             { name: 'TELEGRAM_WEBHOOK_SECRET', secretRef: 'telegram-webhook-secret' }
             { name: 'AZURE_STORAGE_CONNECTION_STRING', secretRef: 'storage-connection-string' }
-            { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+            { name: 'AZURE_STORAGE_CONTAINER', value: 'devtrail-files' }
             { name: 'TELEGRAM_CHAT_ID', secretRef: 'telegram-chat-id' }
             { name: 'PORT', value: '3000' }
             { name: 'NODE_ENV', value: 'production' }
@@ -6634,9 +6634,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url)' }
         { name: 'GEMINI_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=gemini-api-key)' }
         { name: 'ANTHROPIC_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=anthropic-api-key)' }
-        { name: 'OPEN_BRAIN_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=open-brain-api-key)' }
+        { name: 'DEVTRAIL_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=devtrail-api-key)' }
         { name: 'AZURE_STORAGE_CONNECTION_STRING', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=storage-connection-string)' }
-        { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+        { name: 'AZURE_STORAGE_CONTAINER', value: 'devtrail-files' }
         { name: 'TELEGRAM_BOT_TOKEN', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-bot-token)' }
         { name: 'TELEGRAM_WEBHOOK_SECRET', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-webhook-secret)' }
         { name: 'TELEGRAM_CHAT_ID', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-chat-id)' }
@@ -6666,7 +6666,7 @@ output functionAppName string = functionApp.name
     "telegramChatId": { "value": "YOUR_CHAT_ID" },
     "consolidationSchedule": { "value": "0 */30 * * * *" },
     "dbAdminPassword": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "db-admin-password" } },
-    "apiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "open-brain-api-key" } },
+    "apiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "devtrail-api-key" } },
     "geminiApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "gemini-api-key" } },
     "anthropicApiKey": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "anthropic-api-key" } },
     "telegramBotToken": { "reference": { "keyVault": { "id": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_KV" }, "secretName": "telegram-bot-token" } },
@@ -6764,8 +6764,8 @@ set -euo pipefail
 # Configuration
 RESOURCE_GROUP="${RESOURCE_GROUP:?Set RESOURCE_GROUP}"
 ACR_NAME="${ACR_NAME:?Set ACR_NAME}"
-CONTAINER_APP_NAME="${CONTAINER_APP_NAME:-openbrain-prod-api}"
-IMAGE_NAME="open-brain-v2"
+CONTAINER_APP_NAME="${CONTAINER_APP_NAME:-devtrail-prod-api}"
+IMAGE_NAME="devtrail"
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
 
 echo "=== Building Docker image ==="
@@ -6784,7 +6784,7 @@ az containerapp update \
   --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
 echo "=== Deploying Azure Function ==="
-FUNCTION_APP_NAME="${FUNCTION_APP_NAME:-openbrain-prod-func}"
+FUNCTION_APP_NAME="${FUNCTION_APP_NAME:-devtrail-prod-func}"
 cd functions/consolidation-trigger
 func azure functionapp publish "${FUNCTION_APP_NAME}" --typescript
 cd ../..
@@ -6893,17 +6893,17 @@ jobs:
       - name: Build and push Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
-          docker build -t ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} .
-          docker tag ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
-          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${IMAGE_TAG}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:latest
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG} .
+          docker tag ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG} ${{ env.ACR_NAME }}.azurecr.io/devtrail:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/devtrail:${IMAGE_TAG}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/devtrail:latest
 
       - name: Deploy Container App
         run: |
           az containerapp update \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/open-brain-v2:${{ github.sha }}
+            --image ${{ env.ACR_NAME }}.azurecr.io/devtrail:${{ github.sha }}
 
       - name: Deploy Azure Function
         uses: Azure/functions-action@v1

@@ -1,6 +1,6 @@
 import { deleteProjectHard } from '../../src/services/projects.js';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
-import {TimelineResponseSchema} from '@open-brain/shared';
+import {TimelineResponseSchema} from '@devtrail/shared';
 import {PGlite} from '@electric-sql/pglite';
 import {vector} from '@electric-sql/pglite-pgvector';
 import {uuid_ossp} from '@electric-sql/pglite/contrib/uuid_ossp';

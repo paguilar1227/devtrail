@@ -38,7 +38,7 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
             <path d="M5 3.5c-1.4 0-2.5 1.1-2.5 2.5 0 .5.2 1 .5 1.4-.6.4-1 1.1-1 1.9 0 1.2.9 2.2 2 2.4M5 3.5c.6-.6 1.4-1 2.3-1 1 0 1.9.5 2.4 1.3M5 3.5v9.4M11 3.5c1.4 0 2.5 1.1 2.5 2.5 0 .5-.2 1-.5 1.4.6.4 1 1.1 1 1.9 0 1.2-.9 2.2-2 2.4M11 3.5c-.6-.6-1.4-1-2.3-1M11 3.5v9.4M5 13c.6.6 1.4 1 2.3 1 1.4 0 2.5-1.1 2.5-2.5M11 13c-.6.6-1.4 1-2.3 1" />
           </svg>
         </div>
-        <div className="name">Open Brain</div>
+        <div className="name">DevTrail</div>
         <div className="ver">2.5</div>
         <button
           className="sb-collapse"

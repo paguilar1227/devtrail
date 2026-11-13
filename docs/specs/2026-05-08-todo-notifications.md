@@ -9,8 +9,8 @@ needs to exist on top of it for actual notifications to fire.
 ## Goal
 
 When a personal todo crosses its due time, Alex gets a notification on
-his current device — even when the Open Brain tab is closed. Tap the
-notification → opens Open Brain at the todo detail drawer for that row.
+his current device — even when the DevTrail tab is closed. Tap the
+notification → opens DevTrail at the todo detail drawer for that row.
 
 Out of scope for this round:
 - Email or SMS reminders (notification channel = browser only)
@@ -70,7 +70,7 @@ or manual injection in `main.tsx`). Two events to handle:
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
   event.waitUntil(
-    self.registration.showNotification(data.title ?? 'Open Brain', {
+    self.registration.showNotification(data.title ?? 'DevTrail', {
       body: data.body,
       data: { todoId: data.todoId },
       tag: data.todoId,        // de-dupe: replaces an earlier reminder for the same todo
@@ -154,7 +154,7 @@ clear `due_notified_at` so the new time gets a new notification.
 ### VAPID keys
 
 Generate once via `web-push generate-vapid-keys`. Store the private
-key in Azure Key Vault (`your-keyvault/openbrain-vapid-private`),
+key in Azure Key Vault (`your-keyvault/devtrail-vapid-private`),
 public key in env var that's safe to ship to the browser.
 
 ### Cron tick (every minute)

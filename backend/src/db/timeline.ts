@@ -1,4 +1,4 @@
-import type { TimelineQuery, TimelineResponse, TimelineEvent } from '@open-brain/shared';
+import type { TimelineQuery, TimelineResponse, TimelineEvent } from '@devtrail/shared';
 import type { DbClient } from './client.js';
 
 export async function listProjectTimeline(db: DbClient, projectId: string, query: TimelineQuery): Promise<TimelineResponse> {

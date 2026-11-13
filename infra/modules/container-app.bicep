@@ -80,7 +80,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: [
         { name: 'database-url', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/database-url', identity: identity.id }
-        { name: 'open-brain-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/open-brain-api-key', identity: identity.id }
+        { name: 'devtrail-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/devtrail-api-key', identity: identity.id }
         { name: 'gemini-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/gemini-api-key', identity: identity.id }
         { name: 'anthropic-api-key', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/anthropic-api-key', identity: identity.id }
         { name: 'telegram-bot-token', keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/telegram-bot-token', identity: identity.id }
@@ -92,21 +92,21 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'open-brain'
-          image: '${acr.properties.loginServer}/open-brain-v2:latest'
+          name: 'devtrail'
+          image: '${acr.properties.loginServer}/devtrail:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
           env: [
             { name: 'DATABASE_URL', secretRef: 'database-url' }
-            { name: 'OPEN_BRAIN_API_KEY', secretRef: 'open-brain-api-key' }
+            { name: 'DEVTRAIL_API_KEY', secretRef: 'devtrail-api-key' }
             { name: 'GEMINI_API_KEY', secretRef: 'gemini-api-key' }
             { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }
             { name: 'TELEGRAM_BOT_TOKEN', secretRef: 'telegram-bot-token' }
             { name: 'TELEGRAM_WEBHOOK_SECRET', secretRef: 'telegram-webhook-secret' }
             { name: 'AZURE_STORAGE_CONNECTION_STRING', secretRef: 'storage-connection-string' }
-            { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+            { name: 'AZURE_STORAGE_CONTAINER', value: 'devtrail-files' }
             { name: 'TELEGRAM_CHAT_ID', secretRef: 'telegram-chat-id' }
             { name: 'PORT', value: '3000' }
             { name: 'NODE_ENV', value: 'production' }

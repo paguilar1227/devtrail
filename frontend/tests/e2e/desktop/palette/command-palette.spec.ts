@@ -37,7 +37,7 @@ test('palette: actions — toggle theme flips data-theme, Create new project ope
   await page.locator('.cmdk-row', { hasText: /Switch to (light|dark) theme/ }).click();
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).not.toBe(initial);
   // Restore for later specs.
-  await page.evaluate((t) => localStorage.setItem('ob.theme', t as string), initial ?? 'dark');
+  await page.evaluate((t) => localStorage.setItem('devtrail.theme', t as string), initial ?? 'dark');
 
   await open(page);
   await page.locator('.cmdk-input input').fill('Create new');

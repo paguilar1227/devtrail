@@ -8,7 +8,7 @@ import { listProjects } from './api';
 // the cache key stable AND collapses the boilerplate.
 //
 // Type is inferred from listProjects() — the API/wire shape from
-// @open-brain/shared, NOT the UI-shape `Project` in ../types. Callers
+// @devtrail/shared, NOT the UI-shape `Project` in ../types. Callers
 // that need the UI shape pipe the result through toUiProjects(...).
 export function useProjects() {
   // Cache key matches the historical App.tsx / CommandPalette key so the

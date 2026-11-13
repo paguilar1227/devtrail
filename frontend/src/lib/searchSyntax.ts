@@ -23,7 +23,7 @@
 // Order is preserved during parse so stringify(parse(s)) is stable up
 // to whitespace normalization (single spaces, no leading/trailing).
 
-import type { EntityKind } from '@open-brain/shared';
+import type { EntityKind } from '@devtrail/shared';
 
 export interface ParsedQuery {
   /** Free-text portion — the actual semantic query passed to the API. */

@@ -27,13 +27,13 @@ afterEach(() => {
 
 describe('normalizeServerOrigin', () => {
   it('accepts a plain https origin unchanged', () => {
-    expect(normalizeServerOrigin('https://openbrain.example.com')).toBe(
-      'https://openbrain.example.com',
+    expect(normalizeServerOrigin('https://devtrail.example.com')).toBe(
+      'https://devtrail.example.com',
     );
   });
 
   it('defaults to https when no scheme is given', () => {
-    expect(normalizeServerOrigin('openbrain.example.com')).toBe('https://openbrain.example.com');
+    expect(normalizeServerOrigin('devtrail.example.com')).toBe('https://devtrail.example.com');
   });
 
   it('keeps http for local development servers', () => {

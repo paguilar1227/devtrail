@@ -1,8 +1,8 @@
-# SPEC: Tags System & Source Arrays (Open Brain v2)
+# SPEC: Tags System & Source Arrays (DevTrail)
 
 ## 1. Goal
 
-Add a **curated tag system** and **source arrays** to Open Brain so that:
+Add a **curated tag system** and **source arrays** to DevTrail so that:
 
 - Every capture, fact, and insight can be semantically classified with curated tags.
 - Tags enable filtered retrieval: "show me my coding preferences" = `search_thoughts("coding", { tags: ["preference"] })`.
@@ -65,7 +65,7 @@ Source describes the plumbing. Tags describe the meaning.
 | `interest` | "What am I into?" | "Really enjoying bouldering lately" |
 | `health` | "What's relevant to my body/wellness?" | "Allergic to penicillin, left knee flares when running downhill" |
 | `dislike` | "What should I avoid / never suggest?" | "Hates writing YAML configuration files" |
-| `milestone` | "What have I accomplished?" | "Launched Open Brain v2 on March 21, 2026" |
+| `milestone` | "What have I accomplished?" | "Launched DevTrail on March 21, 2026" |
 
 ### 3.1 Rules
 
@@ -281,7 +281,7 @@ Updated to teach AI clients:
 - `ARCHITECTURE.md` — updated with tags system, source arrays, tag allowlist
 - `README.md` — updated MCP tool descriptions
 - `CLAUDE.md` — add tags to code organization and known patterns
-- Design spec (`2026-03-13-open-brain-2-design.md`) — updated with tags feature
+- Design spec (`2026-03-13-devtrail-2-design.md`) — updated with tags feature
 
 ## 6. Capture Channels & Tag Flow
 

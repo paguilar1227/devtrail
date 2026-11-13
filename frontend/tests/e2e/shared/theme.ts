@@ -21,6 +21,6 @@ export function defineThemeTests() {
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(target);
 
     // Restore so theme state never leaks into other specs.
-    await page.evaluate((t) => localStorage.setItem('ob.theme', t as string), initial ?? 'dark');
+    await page.evaluate((t) => localStorage.setItem('devtrail.theme', t as string), initial ?? 'dark');
   });
 }

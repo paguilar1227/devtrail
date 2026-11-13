@@ -10,7 +10,7 @@ import './styles.css';
 import './theme.css';
 
 // bootAuth resolves the Bearer key in production by exchanging the Easy Auth
-// session cookie via /api/auth/token. In local dev (VITE_OPEN_BRAIN_API_KEY
+// session cookie via /api/auth/token. In local dev (VITE_DEVTRAIL_API_KEY
 // set) it's a no-op. If the user's session has expired bootAuth performs a
 // hard navigation to the AAD login URL and never resolves — that's why we
 // don't render anything inside the catch.
@@ -42,7 +42,7 @@ bootAuth()
     const root = document.getElementById('root');
     if (root) {
       root.innerHTML = `<div style="padding:2rem;color:var(--fg);font-family:system-ui">
-        <h1>Open Brain</h1>
+        <h1>DevTrail</h1>
         <p>Could not authenticate. ${String(err?.message ?? err)}</p>
       </div>`;
     }

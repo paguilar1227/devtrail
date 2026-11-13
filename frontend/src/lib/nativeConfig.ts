@@ -12,7 +12,7 @@ import { Capacitor } from '@capacitor/core';
 
 // Not exported on purpose: this module OWNS origin persistence. Callers use
 // saveServerOrigin / clearServerOrigin / storedServerOrigin.
-const SERVER_ORIGIN_STORAGE_KEY = 'ob.server_origin';
+const SERVER_ORIGIN_STORAGE_KEY = 'devtrail.server_origin';
 
 export function isNativeApp(): boolean {
   return Capacitor.isNativePlatform();

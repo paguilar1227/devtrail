@@ -9,7 +9,7 @@
 // into helpers; auto-instrumentation already covers HTTP/pg/exceptions.
 import { SpanStatusCode, trace, type Attributes, type Span } from '@opentelemetry/api';
 
-const tracer = trace.getTracer('open-brain-api');
+const tracer = trace.getTracer('devtrail-api');
 
 export async function withSpan<T>(
   name: string,

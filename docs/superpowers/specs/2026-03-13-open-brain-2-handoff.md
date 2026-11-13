@@ -1,6 +1,6 @@
-# Open Brain 2.0 — Session Handoff
+# DevTrail 2.0 — Session Handoff
 
-This document supplements the design spec (`2026-03-13-open-brain-2-design.md`). It captures context, reasoning, and decisions from the brainstorming session that a new session needs to understand before starting implementation.
+This document supplements the design spec (`2026-03-13-devtrail-2-design.md`). It captures context, reasoning, and decisions from the brainstorming session that a new session needs to understand before starting implementation.
 
 ## Who Is Pedro
 
@@ -11,14 +11,14 @@ This document supplements the design spec (`2026-03-13-open-brain-2-design.md`).
 - Already has Azure infrastructure: ACR (shared across projects), static apps, another MCP server running there.
 - Prefers concise, direct communication. Professional friends tone.
 
-## What Open Brain Is (and Isn't)
+## What DevTrail Is (and Isn't)
 
 Pedro originally got this project from an AI blogger's tutorial. He's rearchitecting it to match his own vision. Key mental model shifts from the original:
 
-- **NOT a work context tool.** Pedro has a separate MCP server for structured work context. Open Brain is personal — it's about *him*, not his projects.
+- **NOT a work context tool.** Pedro has a separate MCP server for structured work context. DevTrail is personal — it's about *him*, not his projects.
 - **A living profile, not a journal.** Facts and insights reflect current state. "Dislikes pineapple on pizza" — not "Previously liked but changed his mind." Raw captures preserve history implicitly.
 - **A bonding layer between human and AI.** Not just a profiler — reminders, todos, and future features (calendar, emotions, reflections) are core to the identity. The daily interaction makes the profiler better.
-- **A personal search engine.** The end state is: any AI tool can call Open Brain and instantly understand who Pedro is and what he cares about right now.
+- **A personal search engine.** The end state is: any AI tool can call DevTrail and instantly understand who Pedro is and what he cares about right now.
 
 ## Key Decisions and Why
 
@@ -41,7 +41,7 @@ Pedro's core complaint: storing raw thoughts is "aimless." The consolidation lay
 Pedro didn't want to lose history entirely — he recognizes the data is inherently valuable even though the primary objective is current state. This was his push — he said "I'm almost sure you and I will think of really cool features that use this data down the line." It's a low-cost addition (JSONB column) with future optionality.
 
 ### Why reminders are a core feature
-Pedro explicitly said he needs this personally. More importantly, he didn't want it to feel bolted on — "I want to make sure we design open brain with this feature as a part of what it will be." Reminders feed back into the profiler (what you remind yourself about reveals who you are).
+Pedro explicitly said he needs this personally. More importantly, he didn't want it to feel bolted on — "I want to make sure we design DevTrail with this feature as a part of what it will be." Reminders feed back into the profiler (what you remind yourself about reveals who you are).
 
 ### Why separate tables (not one unified table)
 We briefly explored collapsing everything into a single `entries` table with a `type` column. Pedro's gut said no — concerned about performance over time. He clarified he wanted extensibility conventions (consistent patterns across tables), not a single-table design. The extensibility conventions section in the spec documents the patterns.
@@ -72,7 +72,7 @@ Consolidation Phase 1 commits per-cluster (not one big transaction). If cluster 
 
 ## What to Do Next
 
-1. **Read the spec** — `docs/superpowers/specs/2026-03-13-open-brain-2-design.md`
+1. **Read the spec** — `docs/superpowers/specs/2026-03-13-devtrail-2-design.md`
 2. **Write an implementation plan** — use the `superpowers:writing-plans` skill
 3. **Pick the API framework** — spec says TBD (Express, Fastify, or Hono). Decide before writing code.
 4. **Start with the data layer** — PostgreSQL schema, pgvector setup, provider abstraction interfaces
@@ -85,14 +85,14 @@ Consolidation Phase 1 commits per-cluster (not one big transaction). If cluster 
 
 ## Files That Matter
 
-- `docs/superpowers/specs/2026-03-13-open-brain-2-design.md` — the full spec
+- `docs/superpowers/specs/2026-03-13-devtrail-2-design.md` — the full spec
 - `supabase/functions/ingest-thought/index.ts` — v1 capture logic (reference only, will be rewritten)
-- `supabase/functions/open-brain-mcp/index.ts` — v1 MCP server (reference only, will be rewritten)
+- `supabase/functions/devtrail-mcp/index.ts` — v1 MCP server (reference only, will be rewritten)
 - `guiding-prompt.md` — v1 AI system prompt (needs rewriting for v2)
 
 ## Memory Files
 
-Check `~/.claude/projects/-home-you-src-open-brain/memory/` for persistent context:
+Check `~/.claude/projects/-home-you-src-devtrail/memory/` for persistent context:
 - `user_profile.md` — Pedro's role, credits, preferences
-- `project_open_brain_vision.md` — the vision for Open Brain 2.0
-- `project_open_brain_design_principle.md` — core principle: living profile, not journal
+- `project_devtrail_vision.md` — the vision for DevTrail 2.0
+- `project_devtrail_design_principle.md` — core principle: living profile, not journal

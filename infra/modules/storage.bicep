@@ -25,7 +25,7 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
 resource filesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
-  name: 'open-brain-files'
+  name: 'devtrail-files'
 }
 
 output storageAccountName string = storageAccount.name

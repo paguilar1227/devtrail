@@ -1,7 +1,7 @@
 # gitleaks config for the `security` gate. Extends the built-in ruleset and
 # allowlists the known non-secret local-dev values so the gate flags only real
 # leaks.
-title = "Open Brain v2 gitleaks"
+title = "DevTrail gitleaks"
 
 [extend]
 useDefault = true

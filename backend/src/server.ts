@@ -255,6 +255,6 @@ const app = createApp(deps);
 
 runMigrations().then(() => {
   serve({ fetch: app.fetch, port: config.port }, (info) => {
-    console.log(`Open Brain v2 listening on port ${info.port}`);
+    console.log(`DevTrail listening on port ${info.port}`);
   });
 });

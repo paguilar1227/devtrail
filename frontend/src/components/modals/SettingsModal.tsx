@@ -62,7 +62,7 @@ export function SettingsModal({ theme, onTheme, onClose }: Props) {
         <div className="settings-row">
           <div>
             <div className="settings-row-h">About</div>
-            <div className="page-subtle">Open Brain v{APP_VERSION}</div>
+            <div className="page-subtle">DevTrail v{APP_VERSION}</div>
           </div>
         </div>
       </div>

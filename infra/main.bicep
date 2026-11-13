@@ -17,7 +17,7 @@ param acrResourceGroup string = resourceGroup().name
 @secure()
 param dbAdminPassword string
 
-@description('Open Brain API key')
+@description('DevTrail API key')
 @secure()
 param apiKey string
 
@@ -43,7 +43,7 @@ param telegramChatId string
 @description('Consolidation CRON schedule (Azure Functions format). Default: every 30 min.')
 param consolidationSchedule string = '0 */30 * * * *'
 
-var prefix = 'openbrain-${environment}'
+var prefix = 'devtrail-${environment}'
 
 // Log Analytics Workspace (required by Container Apps + App Insights)
 module monitoring 'modules/monitoring.bicep' = {

@@ -1,6 +1,6 @@
 # ---------- Builder ----------
 # Single workspace-aware builder. Compiles `shared` → `backend` → `frontend`
-# in that order because backend + frontend both consume `@open-brain/shared`.
+# in that order because backend + frontend both consume `@devtrail/shared`.
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -15,14 +15,14 @@ RUN npm ci
 
 # Copy each workspace's sources + tsconfig and build in dependency order.
 COPY shared/ ./shared/
-RUN npm run build --workspace=@open-brain/shared
+RUN npm run build --workspace=@devtrail/shared
 
 COPY backend/tsconfig.json ./backend/
 COPY backend/src/ ./backend/src/
-RUN npm run build --workspace=open-brain-backend
+RUN npm run build --workspace=devtrail-backend
 
 COPY frontend/ ./frontend/
-RUN npm run build --workspace=open-brain-frontend
+RUN npm run build --workspace=devtrail-frontend
 
 # ---------- Runtime ----------
 FROM node:20-alpine AS runner

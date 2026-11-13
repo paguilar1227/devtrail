@@ -1,4 +1,4 @@
-# Open Brain v2 — Async Ingest E2E Plan
+# DevTrail — Async Ingest E2E Plan
 
 End-to-end validation for the async REST ingest refactor (`processing_status` column + 202-on-accept + polling). Ran interactively, phase by phase. Each phase ends with a pass/fail check; do not move to the next phase until the prior one is green.
 
@@ -15,9 +15,9 @@ End-to-end validation for the async REST ingest refactor (`processing_status` co
 ## Prerequisites
 
 ```bash
-cd ~/src/open-brain-v2
+cd ~/src/devtrail
 export API="https://your-app.your-env.region.azurecontainerapps.io"
-export KEY="$(az keyvault secret show --vault-name your-keyvault --name open-brain-api-key --query value -o tsv)"
+export KEY="$(az keyvault secret show --vault-name your-keyvault --name devtrail-api-key --query value -o tsv)"
 export AUTH="Authorization: Bearer $KEY"
 export CT="Content-Type: application/json"
 
@@ -106,7 +106,7 @@ git push
 SHA=$(git rev-parse --short HEAD)
 echo "Polling for $SHA …"
 while true; do
-  R=$(gh run list --repo paguilar1227/open-brain-v2 --limit 4 --json status,conclusion,name,headSha --jq '.[] | "\(.headSha[0:7]) \(.status) \(.conclusion) \(.name)"')
+  R=$(gh run list --repo paguilar1227/devtrail --limit 4 --json status,conclusion,name,headSha --jq '.[] | "\(.headSha[0:7]) \(.status) \(.conclusion) \(.name)"')
   CI=$(echo "$R" | grep "^$SHA completed.*CI$" | head -1)
   DP=$(echo "$R" | grep "^$SHA completed.*Deploy" | head -1)
   if [ -n "$CI" ] && [ -n "$DP" ]; then echo "$CI"; echo "$DP"; break; fi
@@ -119,7 +119,7 @@ done
 ```bash
 curl -s "$API/health" | jq .
 ```
-**Pass:** `{"ok":true,"service":"open-brain","version":"2.0.0"}`.
+**Pass:** `{"ok":true,"service":"devtrail","version":"2.0.0"}`.
 
 ### T1.4 — Verify migration applied: every existing row has `processing_status='ready'`
 ```bash
@@ -325,7 +325,7 @@ The MCP contract did not change. Confirm nothing got broken in transit.
 ### T6.1 — `save_from_url` via MCP still blocks until ready
 Run this in a Claude Code/Desktop session connected to the prod MCP:
 
-> Call the Open Brain MCP tool `save_from_url` with the URL `<YT_URL with a fresh ?_mcp=$(date +%s)>` and project `E2E Async Test`. Report the `id`, the `chunkCount`, the wall-clock duration, and the title returned.
+> Call the DevTrail MCP tool `save_from_url` with the URL `<YT_URL with a fresh ?_mcp=$(date +%s)>` and project `E2E Async Test`. Report the `id`, the `chunkCount`, the wall-clock duration, and the title returned.
 
 **Pass:** the MCP call returns synchronously after the full ingest (~10–15s), reports a real title and chunkCount, no errors. The id it returns must be retrievable via REST and already have `processing_status: 'ready'` when the MCP call completed.
 

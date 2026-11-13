@@ -11,7 +11,7 @@
 #          sample.wav uploaded plus the pinned URL-ingested docs (arXiv,
 #          blog, YouTube). 7 content items total.
 #        - State file at /tmp/e2e-state.sh that exports PROJECT_ID.
-#   2. Auth: az login + Key Vault access for the open-brain-api-key secret.
+#   2. Auth: az login + Key Vault access for the devtrail-api-key secret.
 #   3. Backfilled entity edges (POST /api/v1/diagnostics/backfill-entities)
 #      so the graph layer is populated.
 #
@@ -29,8 +29,8 @@
 #   - Optionally add a new query if exercising a new failure mode
 set -uo pipefail
 
-API="${OPENBRAIN_API:-https://your-app.your-env.region.azurecontainerapps.io}"
-KEY="${OPENBRAIN_KEY:-$(az keyvault secret show --vault-name your-keyvault --name open-brain-api-key --query value -o tsv 2>/dev/null)}"
+API="${DEVTRAIL_API:-https://your-app.your-env.region.azurecontainerapps.io}"
+KEY="${DEVTRAIL_KEY:-$(az keyvault secret show --vault-name your-keyvault --name devtrail-api-key --query value -o tsv 2>/dev/null)}"
 AUTH="Authorization: Bearer $KEY"
 CT="Content-Type: application/json"
 

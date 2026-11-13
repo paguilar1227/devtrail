@@ -111,7 +111,7 @@ describe('MCP endpoint via Hono app', () => {
     expect(text.length).toBeGreaterThan(0);
     const body = JSON.parse(text);
     expect(body.jsonrpc).toBe('2.0');
-    expect(body.result?.serverInfo?.name).toBe('open-brain');
+    expect(body.result?.serverInfo?.name).toBe('devtrail');
     expect(body.result?.capabilities?.tools).toBeDefined();
   });
 
@@ -225,7 +225,7 @@ describe('REST API health + auth', () => {
     const res = await app.fetch(new Request('http://localhost/health'));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ok: true, service: 'open-brain', version: '2.0.0' });
+    expect(body).toEqual({ ok: true, service: 'devtrail', version: '2.0.0' });
   });
 
   it('rejects API calls without auth', async () => {

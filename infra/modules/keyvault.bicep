@@ -37,7 +37,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 
 // Store all secrets
 var secrets = [
-  { name: 'open-brain-api-key', value: apiKey }
+  { name: 'devtrail-api-key', value: apiKey }
   { name: 'gemini-api-key', value: geminiApiKey }
   { name: 'anthropic-api-key', value: anthropicApiKey }
   { name: 'telegram-bot-token', value: telegramBotToken }

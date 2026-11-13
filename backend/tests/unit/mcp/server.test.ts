@@ -116,7 +116,7 @@ describe('MCP server', () => {
     });
 
     expect(result.status).toBe(200);
-    expect(result.body.result.serverInfo.name).toBe('open-brain');
+    expect(result.body.result.serverInfo.name).toBe('devtrail');
     expect(result.body.result.serverInfo.version).toBe('2.0.0');
     expect(result.body.result.instructions).toContain('Personal Knowledge Base');
     expect(result.body.result.capabilities.tools).toBeDefined();
@@ -767,9 +767,9 @@ describe('MCP server', () => {
             id: 'chunk-1',
             content_item_id: 'ci-1',
             chunk_index: 0,
-            content: 'Open Brain is a single-user knowledge base.',
+            content: 'DevTrail is a single-user knowledge base.',
             similarity: 0.92,
-            ci_title: 'Open Brain Overview',
+            ci_title: 'DevTrail Overview',
             ci_type: 'note',
             ci_source_url: null,
             ci_tags: [],
@@ -780,18 +780,18 @@ describe('MCP server', () => {
       return { rows: [] } as any;
     });
     vi.mocked(deps.ragFastLLM.complete).mockResolvedValue({
-      content: 'Open Brain is a personal KB [1].',
+      content: 'DevTrail is a personal KB [1].',
       tokensUsed: { input: 0, output: 0, total: 0 },
     });
 
     const { body } = await callTool(deps, {
-      question: 'What is Open Brain?',
+      question: 'What is DevTrail?',
       depth: 'fast',
     }, 'ask');
 
     expect(body.result?.isError).not.toBe(true);
     const parsed = JSON.parse(body.result.content[0].text);
-    expect(parsed.answer).toBe('Open Brain is a personal KB [1].');
+    expect(parsed.answer).toBe('DevTrail is a personal KB [1].');
     expect(parsed.citations).toBeDefined();
     expect(parsed.meta.depth_used).toBe('fast');
     // Forced fast must skip the classifier (timing == 0).

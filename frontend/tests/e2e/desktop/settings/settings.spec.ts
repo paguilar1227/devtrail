@@ -32,7 +32,7 @@ test('settings desktop: clicking Log out clears the cached token and redirects',
   // Plant a sentinel token so we can prove the logout call cleared it. In
   // local dev /.auth/logout doesn't exist; the dev branch of logout()
   // assigns '/' and bootAuth re-hydrates from the env-var fallback.
-  await page.evaluate(() => localStorage.setItem('ob.api_key', 'sentinel-to-clear'));
+  await page.evaluate(() => localStorage.setItem('devtrail.api_key', 'sentinel-to-clear'));
 
   await page.locator('aside.sidebar .sb-footer').click();
   await expect(page.locator('.modal-head h3', { hasText: 'Settings' })).toBeVisible();
@@ -42,6 +42,6 @@ test('settings desktop: clicking Log out clears the cached token and redirects',
   // The reload re-boots the whole SPA (bootAuth → mount → projects query),
   // which can exceed the 10s default on a loaded host — give it headroom.
   await expect(page.locator('h1', { hasText: /Welcome back/ })).toBeVisible({ timeout: 30000 });
-  const stored = await page.evaluate(() => localStorage.getItem('ob.api_key'));
+  const stored = await page.evaluate(() => localStorage.getItem('devtrail.api_key'));
   expect(stored).toBeNull();
 });

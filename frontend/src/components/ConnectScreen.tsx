@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { probeServer, saveNativeServerConfig } from '../lib/api';
 import { normalizeServerOrigin } from '../lib/nativeConfig';
 
-// First-run screen for the native (iOS) shell: collects the Open Brain
+// First-run screen for the native (iOS) shell: collects the DevTrail
 // server URL + API key, verifies the pair against the live backend, persists
 // it, and reloads so bootAuth picks it up. Web builds never render this —
 // they are same-origin and authenticate via Easy Auth / the dev env key.
@@ -16,7 +16,7 @@ export function ConnectScreen() {
     if (busy) return;
     const origin = normalizeServerOrigin(server);
     if (!origin) {
-      setError('Enter a valid server URL, e.g. https://openbrain.example.com');
+      setError('Enter a valid server URL, e.g. https://devtrail.example.com');
       return;
     }
     setBusy(true);
@@ -34,14 +34,14 @@ export function ConnectScreen() {
   return (
     <div className="connect-screen">
       <div className="connect-card">
-        <div className="connect-title">Open Brain</div>
+        <div className="connect-title">DevTrail</div>
         <div className="page-subtle">Connect to your server to get started.</div>
         <div style={{ height: 20 }} />
         <label className="field-label" htmlFor="connect-server">Server URL</label>
         <input
           id="connect-server"
           className="input"
-          placeholder="https://openbrain.example.com"
+          placeholder="https://devtrail.example.com"
           autoFocus
           autoCapitalize="none"
           autoCorrect="off"

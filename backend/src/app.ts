@@ -64,7 +64,7 @@ import {
   TodoUpdateRequestSchema,
   UrlIngestAckSchema,
   UrlIngestRequestSchema,
-} from '@open-brain/shared';
+} from '@devtrail/shared';
 import { cors } from 'hono/cors';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -183,7 +183,7 @@ export function createApp(deps: ServiceDeps) {
   addWorkspaceRoutes(app, deps);
 
   // ----- health -----
-  app.get('/health', (c) => c.json({ ok: true, service: 'open-brain', version: '2.0.0' }));
+  app.get('/health', (c) => c.json({ ok: true, service: 'devtrail', version: '2.0.0' }));
 
   // ----- OpenAPI spec + Swagger UI (auth-gated by /api/* middleware above) -----
   // The spec is auto-generated from each `app.openapi(...)` route's Zod
@@ -191,7 +191,7 @@ export function createApp(deps: ServiceDeps) {
   app.doc31('/api/openapi.json', {
     openapi: '3.1.0',
     info: {
-      title: 'Open Brain API',
+      title: 'DevTrail API',
       version: '2.0.0',
       description:
         'Personal knowledge base + productivity tool. Single user. ' +

@@ -10,7 +10,7 @@
 // hits land in cache.
 
 import { useQuery } from '@tanstack/react-query';
-import { MAX_TODO_DEPTH } from '@open-brain/shared';
+import { MAX_TODO_DEPTH } from '@devtrail/shared';
 import { getTodo } from './api';
 import type { Todo } from '../types';
 

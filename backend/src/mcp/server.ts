@@ -18,9 +18,9 @@ import { withSpan } from '../observability.js';
 const TODO_STATUSES = ['not_started', 'in_progress', 'paused', 'done'] as const;
 const PROJECT_STATUSES = ['active', 'archived', 'completed'] as const;
 
-const INSTRUCTIONS = `# Open Brain — Personal Knowledge Base + Productivity Tool
+const INSTRUCTIONS = `# DevTrail — Personal Knowledge Base + Productivity Tool
 
-Open Brain is a single-user project and session workspace. Search relevant saved material before answering questions about past work; never invent entity UUIDs. Resolve projects with list_projects and sessions with list_sessions or get.
+DevTrail is a single-user project and session workspace. Search relevant saved material before answering questions about past work; never invent entity UUIDs. Resolve projects with list_projects and sessions with list_sessions or get.
 
 ## Sessions and scope
 - create_session creates or resumes a workspace using a stable session_key. A session optionally belongs to one project.
@@ -51,7 +51,7 @@ Use authorized project tracking proactively. Do not save trivial conversation or
 
 export function createMcpServer(deps: ServiceDeps): McpServer {
   const server = new McpServer(
-    { name: 'open-brain', version: '2.0.0' },
+    { name: 'devtrail', version: '2.0.0' },
     { instructions: INSTRUCTIONS },
   );
 
@@ -1143,7 +1143,7 @@ State: refuses pending rows with IN_FLIGHT (don't replace an in-flight ingest). 
   // ---------- 7. save_from_url ----------
   server.tool(
     'save_from_url',
-    `Fetch a URL and save its content to Open Brain. Handles YouTube videos (transcripts, not the file), X/Twitter threads, PDFs, HTML articles (incl. Reddit/blogs), and direct image/audio links. The original URL is preserved as the item's source and surfaced in search citations.
+    `Fetch a URL and save its content to DevTrail. Handles YouTube videos (transcripts, not the file), X/Twitter threads, PDFs, HTML articles (incl. Reddit/blogs), and direct image/audio links. The original URL is preserved as the item's source and surfaced in search citations.
 
 Use this INSTEAD of \`create\` whenever the user wants to save something they've referenced by URL ("save this article", "save this YouTube video to my project", "grab this tweet thread"). The MCP payload is tiny (just the URL), backend does the fetch — avoids the size/approval-dialog issues with pasting large content through \`create\`.
 

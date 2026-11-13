@@ -1,10 +1,10 @@
-# Open Brain 2.0 — Design Specification
+# DevTrail 2.0 — Design Specification
 
 ## Vision
 
-Open Brain is a **bonding layer between human and AI** — a personal knowledge system that maintains a living profile of the user and supports their daily workflow. Its primary purpose is to help AI tools quickly understand who the user is *right now* — preferences, identity, habits, skills, relationships, opinions — so they can tailor responses and pull relevant context. Its secondary purpose is to serve as a personal productivity layer (reminders, todos) that feeds back into the profile. It is not a journal or historical record, though it passively preserves change history for future use.
+DevTrail is a **bonding layer between human and AI** — a personal knowledge system that maintains a living profile of the user and supports their daily workflow. Its primary purpose is to help AI tools quickly understand who the user is *right now* — preferences, identity, habits, skills, relationships, opinions — so they can tailor responses and pull relevant context. Its secondary purpose is to serve as a personal productivity layer (reminders, todos) that feeds back into the profile. It is not a journal or historical record, though it passively preserves change history for future use.
 
-Open Brain 2.0 transforms the original thought-capture tool into a **personal search engine** powered by three layered improvements: write-time consolidation, retrieval-time synthesis, and multimodal embeddings.
+DevTrail 2.0 transforms the original thought-capture tool into a **personal search engine** powered by three layered improvements: write-time consolidation, retrieval-time synthesis, and multimodal embeddings.
 
 ## Core Design Principle
 
@@ -205,7 +205,7 @@ Every capture, fact, and insight carries a `tags text[]` column for semantic cla
 | `interest` | What am I into? | "Really enjoying bouldering lately" |
 | `health` | What's relevant to my body/wellness? | "Allergic to penicillin, left knee flares when running downhill" |
 | `dislike` | What should I avoid / never suggest? | "Hates writing YAML configuration files" |
-| `milestone` | What have I accomplished? | "Launched Open Brain v2 on March 21, 2026" |
+| `milestone` | What have I accomplished? | "Launched DevTrail on March 21, 2026" |
 
 ### Tag Assignment Flow
 
@@ -371,7 +371,7 @@ Low-confidence response includes `evidence` array with source items and a `note`
 
 ## Service Layer Architecture
 
-Open Brain uses a **hexagonal architecture** (ports and adapters pattern). All business logic lives in `src/services/`. The three adapter surfaces — REST API, MCP server, and Telegram bot — are thin wrappers that parse inputs, call service functions, and format responses.
+DevTrail uses a **hexagonal architecture** (ports and adapters pattern). All business logic lives in `src/services/`. The three adapter surfaces — REST API, MCP server, and Telegram bot — are thin wrappers that parse inputs, call service functions, and format responses.
 
 ### Service Modules
 
@@ -396,7 +396,7 @@ Open Brain uses a **hexagonal architecture** (ports and adapters pattern). All b
 
 ### AI Client Setup
 
-Two mechanisms teach AI clients how to use Open Brain:
+Two mechanisms teach AI clients how to use DevTrail:
 
 - **Server instructions (automatic):** The MCP server sends an `instructions` string on connection. MCP-compliant clients (Claude, etc.) apply it automatically — no user configuration needed.
 - **`get_user_prompt` (portable):** For non-MCP clients (ChatGPT, etc.), this tool returns the same behavioral instructions as a copyable system prompt users paste into custom instructions once.
@@ -444,7 +444,7 @@ When a user edits a fact via `update_fact`:
 
 ## Reminders & Todos
 
-Open Brain is more than a profiler — it's a **bonding layer between human and AI**. Reminders are a core feature, not an add-on. They give the user a reason to interact with Open Brain daily, and the reminders themselves are profile signal (what someone reminds themselves about reveals interests, priorities, and active projects).
+DevTrail is more than a profiler — it's a **bonding layer between human and AI**. Reminders are a core feature, not an add-on. They give the user a reason to interact with DevTrail daily, and the reminders themselves are profile signal (what someone reminds themselves about reveals interests, priorities, and active projects).
 
 ### Reminder Hierarchy
 
@@ -591,7 +591,7 @@ Reminders feed back into the consolidation pipeline:
 Separate from review mode — can be enabled in any mode. Sent via Telegram:
 
 ```
-🧠 Open Brain Daily Digest
+🧠 DevTrail Daily Digest
 Processed: 8 captures
 Facts created: 2 | Updated: 3
 Insights created: 1
@@ -711,7 +711,7 @@ The REST API (`src/app.ts`, Hono framework) provides comprehensive CRUD for all 
 
 All endpoints require authentication:
 
-- **REST API (`/api/v1/*`):** Bearer token via `Authorization` header. A single `OPEN_BRAIN_API_KEY` environment variable. Rate limited to 100 requests/minute per key.
+- **REST API (`/api/v1/*`):** Bearer token via `Authorization` header. A single `DEVTRAIL_API_KEY` environment variable. Rate limited to 100 requests/minute per key.
 - **MCP Server:** `x-brain-key` header or `?key=` query parameter (same as v1, backward compatible).
 - **Telegram Webhook:** verified via Telegram's secret token mechanism (set during webhook registration).
 
@@ -730,11 +730,11 @@ All embeddings use **3072 dimensions** (Gemini Embedding 2's maximum). This must
 
 ## Extensibility Conventions
 
-These conventions ensure new features feel native to Open Brain rather than bolted on. Future contributors (human or AI) should follow these patterns when adding new data types or capabilities.
+These conventions ensure new features feel native to DevTrail rather than bolted on. Future contributors (human or AI) should follow these patterns when adding new data types or capabilities.
 
 ### 1. Core Table Shape
 
-Every content table in Open Brain must share this base shape:
+Every content table in DevTrail must share this base shape:
 
 ```sql
 id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
@@ -751,7 +751,7 @@ Type-specific columns (e.g., `confidence` on facts, `status` on reminders, `due_
 
 ### 2. Everything Gets an Embedding
 
-Every piece of content stored in Open Brain gets a vector embedding. This ensures cross-type semantic search works out of the box. "What am I working on?" should be able to pull from facts, reminders, and future types in a single query.
+Every piece of content stored in DevTrail gets a vector embedding. This ensures cross-type semantic search works out of the box. "What am I working on?" should be able to pull from facts, reminders, and future types in a single query.
 
 ### 3. The Three-Tier Pattern is Reusable
 

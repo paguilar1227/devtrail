@@ -1,4 +1,4 @@
-# Open Brain v2 — E2E Manual Test Plan
+# DevTrail — E2E Manual Test Plan
 
 End-to-end validation of the live production system: REST API, MCP server, search, RAG, graph, multimedia ingest, full CRUD, and cascade behavior.
 
@@ -22,9 +22,9 @@ If a test diverges from the expected outcome, that's the bug — investigate bef
 ### Environment
 
 ```bash
-cd ~/src/open-brain-v2
+cd ~/src/devtrail
 export API="https://your-app.your-env.region.azurecontainerapps.io"
-export KEY="$(az keyvault secret show --vault-name your-keyvault --name open-brain-api-key --query value -o tsv)"
+export KEY="$(az keyvault secret show --vault-name your-keyvault --name devtrail-api-key --query value -o tsv)"
 export AUTH="Authorization: Bearer $KEY"
 export CT="Content-Type: application/json"
 
@@ -40,7 +40,7 @@ export AUDIO_FILE="$PWD/tests/fixtures/e2e/sample.wav"
 
 # Sanity
 curl -s "$API/health" | jq .
-# expect: {"ok": true, "service": "open-brain", "version": "2.0.0"}
+# expect: {"ok": true, "service": "devtrail", "version": "2.0.0"}
 
 # Verify fixtures exist
 for f in "$PDF_FILE" "$IMG_FILE" "$AUDIO_FILE"; do
@@ -110,7 +110,7 @@ export COMMENT_ID=                # T6.1
 ```bash
 curl -si "$API/health" | head -5
 ```
-**Pass:** HTTP 200, body `{"ok":true,"service":"open-brain","version":"2.0.0"}`.
+**Pass:** HTTP 200, body `{"ok":true,"service":"devtrail","version":"2.0.0"}`.
 
 [ ] PASS / [ ] FAIL — Notes: ____
 
@@ -321,7 +321,7 @@ curl -s -H "$AUTH" "$API/api/v1/content/$IMG_DOC_ID" | jq '{title: .item.title, 
 ```
 **Pass:**
 - Document created
-- `content` contains `"pgvector"`, `"HNSW"`, `"IVFFlat"`, `"Anthropic"`, `"Open Brain"` (OCR'd from sample.png)
+- `content` contains `"pgvector"`, `"HNSW"`, `"IVFFlat"`, `"Anthropic"`, `"DevTrail"` (OCR'd from sample.png)
 - `mime_type` starts with `image/`
 
 [ ] PASS / [ ] FAIL — Notes: ____
@@ -339,7 +339,7 @@ curl -s -H "$AUTH" "$API/api/v1/content/$AUDIO_DOC_ID" | jq '{title: .item.title
 ```
 **Pass:**
 - Document created
-- `content` includes "test recording", "Open Brain", and "pgvector" (loose match — Haiku transcription has minor variance)
+- `content` includes "test recording", "DevTrail", and "pgvector" (loose match — Haiku transcription has minor variance)
 - `mime_type` starts with `audio/`
 
 [ ] PASS / [ ] FAIL — Notes: ____
@@ -934,8 +934,8 @@ These are the deterministic outputs anyone running the plan should see. Any dive
 
 - **T2.1** `chunkCount: 1` — the inline content is ~605 chars, ~150 tokens, single chunk.
 - **T3.1** `chunkCount`: 2-4 — sample.pdf is multi-page; the chunker should produce 2-4 chunks at 500-token target.
-- **T3.2** `content` should include OCR'd text mentioning `pgvector`, `HNSW`, `IVFFlat`, `Anthropic`, `Open Brain`. Haiku's exact phrasing varies but those literal strings should appear.
-- **T3.3** `content` should be a transcript of "This is a test recording for Open Brain. The topic is pgvector and Anthropic Haiku."
+- **T3.2** `content` should include OCR'd text mentioning `pgvector`, `HNSW`, `IVFFlat`, `Anthropic`, `DevTrail`. Haiku's exact phrasing varies but those literal strings should appear.
+- **T3.3** `content` should be a transcript of "This is a test recording for DevTrail. The topic is pgvector and Anthropic Haiku."
 - **T4.2** `published_at` for arXiv 1706.03762 should be `2017-06-12` (or similar valid ISO-8601 date in June 2017).
 - **T4.4** `deduped: true` and HTTP 200 (not 201) on re-ingest.
 - **T7.1** Top hit's title should be "pgvector vs HNSW notes" (T2.1's document) for query "vector indexing in postgres".

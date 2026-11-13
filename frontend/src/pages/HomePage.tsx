@@ -60,7 +60,7 @@ import { openEntity } from '../lib/openEntity';
 import { useDebounced } from '../lib/useDebounced';
 import { cls } from '../lib/util';
 import type { ActionDispatch, ActivityEntityKind, Route } from '../types';
-import type { Project as ApiProject, RagResponse } from '@open-brain/shared';
+import type { Project as ApiProject, RagResponse } from '@devtrail/shared';
 
 export type HomeTab = 'todos' | 'notes' | 'documents' | 'activity';
 const HOME_TABS: readonly HomeTab[] = ['todos', 'notes', 'documents', 'activity'];

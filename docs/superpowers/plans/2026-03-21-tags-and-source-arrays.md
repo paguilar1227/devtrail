@@ -967,7 +967,7 @@ git commit -m "test: add E2E tests for tags system"
 - Modify: `ARCHITECTURE.md`
 - Modify: `README.md`
 - Modify: `CLAUDE.md`
-- Modify: `docs/superpowers/specs/2026-03-13-open-brain-2-design.md`
+- Modify: `docs/superpowers/specs/2026-03-13-devtrail-2-design.md`
 
 - [ ] **Step 1: Update ARCHITECTURE.md**
 
@@ -997,7 +997,7 @@ git commit -m "test: add E2E tests for tags system"
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ARCHITECTURE.md README.md CLAUDE.md docs/superpowers/specs/2026-03-13-open-brain-2-design.md
+git add ARCHITECTURE.md README.md CLAUDE.md docs/superpowers/specs/2026-03-13-devtrail-2-design.md
 git commit -m "docs: update all documentation for tags system"
 ```
 

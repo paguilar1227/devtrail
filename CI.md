@@ -10,7 +10,7 @@ workflow. A green local `dagger call ci` means a green GitHub run — same engin
 | Gate | Enabled | Tooling |
 |------|---------|---------|
 | `lint`            | ➖ no    | No formatter/linter configured in-repo (no eslint/biome/prettier). Add here if one is adopted. |
-| `typecheck`       | ✅ yes   | `tsc --noEmit` (backend); the frontend is type-checked by its `tsc -b` build. Runs after `@open-brain/shared` is built. |
+| `typecheck`       | ✅ yes   | `tsc --noEmit` (backend); the frontend is type-checked by its `tsc -b` build. Runs after `@devtrail/shared` is built. |
 | `security`        | ✅ yes   | **gitleaks** (secrets) · **trivy fs** + **npm audit** (dependency CVEs) — **all gating** (see below) |
 | `test-unit`       | ✅ yes   | **vitest** — backend v3 (`backend && npm test`) + frontend v4 (`frontend && npm test`); DB/providers mocked |
 | `test-functional` | ➖ not yet | Playwright e2e exists (`frontend/tests/e2e/**`) but is **deferred** — added as a Dagger gate in the next pass once its flakiness is fixed |

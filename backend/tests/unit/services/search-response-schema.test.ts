@@ -11,7 +11,7 @@
 // next sibling field can't regress silently.
 
 import { describe, it, expect } from 'vitest';
-import { ChunkHitSchema } from '@open-brain/shared';
+import { ChunkHitSchema } from '@devtrail/shared';
 
 // A lexical/graph-only chunk hit: every vector-derived numeric is null.
 const lexicalOnlyHit = {

@@ -5,8 +5,8 @@
 // Mirrors a slice of frontend/src/lib/api.ts but uses Node fetch and accepts
 // the loose JSON shapes returned by the backend (we don't run Zod here).
 
-const BASE = process.env.OPEN_BRAIN_BASE_URL ?? 'http://localhost:3001';
-const KEY = process.env.OPEN_BRAIN_API_KEY ?? 'local-dev-key-not-secret';
+const BASE = process.env.DEVTRAIL_BASE_URL ?? 'http://localhost:3001';
+const KEY = process.env.DEVTRAIL_API_KEY ?? 'local-dev-key-not-secret';
 
 async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

@@ -4,14 +4,14 @@ Living doc. Update checkboxes as you go. Designed so a fresh session can pick up
 
 **Overall goal:** ingest URLs (YouTube transcripts, X threads, PDFs, HTML, media) with `source_url` preserved and surfaced on retrieval. Full stack: backend + REST + MCP + web UI.
 
-**Reference spec:** `~/.claude/projects/-home-you-src-open-brain-v2/memory/feature_url_ingestion.md`
+**Reference spec:** `~/.claude/projects/-home-you-src-devtrail/memory/feature_url_ingestion.md`
 
 ---
 
 ## Status Dashboard
 
 **Phase 0 — Config (Azure side DONE, code pending):**
-- [x] `xai-api-key` and `firecrawl-api-key` copied to `openbrainprodkv`
+- [x] `xai-api-key` and `firecrawl-api-key` copied to `devtrailprodkv`
 - [x] `XAI_API_KEY` and `FIRECRAWL_API_KEY` env vars wired into Container App
 - [x] `src/config.ts` updated to load them
 - [x] N/A — providers instantiated inside url-ingest service
@@ -77,9 +77,9 @@ Living doc. Update checkboxes as you go. Designed so a fresh session can pick up
 
 **Already done (Azure side):**
 ```bash
-# Secrets copied into openbrainprodkv via:
-az keyvault secret set --vault-name openbrainprodkv --name xai-api-key ...
-az keyvault secret set --vault-name openbrainprodkv --name firecrawl-api-key ...
+# Secrets copied into devtrailprodkv via:
+az keyvault secret set --vault-name devtrailprodkv --name xai-api-key ...
+az keyvault secret set --vault-name devtrailprodkv --name firecrawl-api-key ...
 
 # Container App env vars wired to secret refs:
 XAI_API_KEY → secretref:xai-api-key
@@ -460,7 +460,7 @@ Add as 7th tool:
 ```ts
 server.tool(
   'save_from_url',
-  `Fetch and save a URL to Open Brain. Handles YouTube transcripts, X threads, PDFs, HTML articles, and direct media links. The URL is preserved as the item's source and surfaced in search results.
+  `Fetch and save a URL to DevTrail. Handles YouTube transcripts, X threads, PDFs, HTML articles, and direct media links. The URL is preserved as the item's source and surfaced in search results.
 
 Use this instead of 'create' when the user wants to save something they've linked (article, video, tweet, PDF link). Tiny MCP payload (just the URL), backend does the fetch.
 

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TimelineTab } from './TimelineTab';
 import { listProjectTimeline, listSessionTimeline } from '../../lib/api';
-import type { TimelineEvent } from '@open-brain/shared';
+import type { TimelineEvent } from '@devtrail/shared';
 
 vi.mock('../../lib/api',()=>({listProjectTimeline:vi.fn(),listSessionTimeline:vi.fn()}));
 const projectId='00000000-0000-4000-8000-000000000001';

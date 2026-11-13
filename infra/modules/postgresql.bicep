@@ -16,7 +16,7 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
   }
   properties: {
     version: '16'
-    administratorLogin: 'openbrain'
+    administratorLogin: 'devtrail'
     administratorLoginPassword: adminPassword
     storage: {
       storageSizeGB: 32
@@ -54,8 +54,8 @@ resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
 // Database
 resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
   parent: postgresServer
-  name: 'openbrain'
+  name: 'devtrail'
 }
 
-output connectionString string = 'postgresql://openbrain:${adminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/openbrain?sslmode=require'
+output connectionString string = 'postgresql://devtrail:${adminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/devtrail?sslmode=require'
 output serverName string = postgresServer.name

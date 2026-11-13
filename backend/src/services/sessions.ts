@@ -3,7 +3,7 @@ import { insertContentItem } from '../db/content-items.js';
 import { newTrace } from '../capture/ingest-trace.js';
 import { randomUUID } from 'node:crypto';
 import type { ServiceDeps } from './index.js';
-import type { Session, SessionCreateSchema, SessionUpdateSchema } from '@open-brain/shared';
+import type { Session, SessionCreateSchema, SessionUpdateSchema } from '@devtrail/shared';
 import type { z } from 'zod';
 
 const selection = `SELECT s.*,

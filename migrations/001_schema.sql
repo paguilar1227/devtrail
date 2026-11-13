@@ -1,5 +1,5 @@
 -- ============================================================================
--- Open Brain V2 — Project-scoped Knowledge Base + Productivity Tool
+-- DevTrail V2 — Project-scoped Knowledge Base + Productivity Tool
 -- Clean slate schema. No legacy compatibility.
 -- ============================================================================
 

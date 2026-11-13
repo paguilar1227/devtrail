@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SessionCreateSchema, SessionUpdateSchema, TimelineQuerySchema } from '@open-brain/shared';
+import { SessionCreateSchema, SessionUpdateSchema, TimelineQuerySchema } from '@devtrail/shared';
 import type { ServiceDeps } from '../services/index.js';
 import * as sessions from '../services/sessions.js';
 import { listProjectTimeline, listSessionTimeline } from '../db/timeline.js';

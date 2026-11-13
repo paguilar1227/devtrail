@@ -1,10 +1,10 @@
 // frontend/src/lib/api.ts
 //
-// Typed fetch client for the Open Brain REST API. All responses are validated
-// against shared Zod schemas (`@open-brain/shared`) — bad data fails loud.
+// Typed fetch client for the DevTrail REST API. All responses are validated
+// against shared Zod schemas (`@devtrail/shared`) — bad data fails loud.
 //
 // Auth: dual-mode.
-//   - Local dev: VITE_OPEN_BRAIN_API_KEY → Bearer header; matches the
+//   - Local dev: VITE_DEVTRAIL_API_KEY → Bearer header; matches the
 //     backend's stub-mode key out of the box.
 //   - Production: same Bearer header is sent (with the placeholder fallback,
 //     which the backend rejects), but the request also carries the Easy
@@ -80,7 +80,7 @@ import {
   type TimelineCursor,
   type TimelineResponse,
   type TimelineTagMatch,
-} from '@open-brain/shared';
+} from '@devtrail/shared';
 import { z } from 'zod';
 import { apiOrigin, clearServerOrigin, fetchCredentials, isNativeApp, saveServerOrigin, storedServerOrigin } from './nativeConfig';
 
@@ -89,10 +89,10 @@ import { apiOrigin, clearServerOrigin, fetchCredentials, isNativeApp, saveServer
 // Derived per request so config changes can never race a module-load
 // snapshot — correctness doesn't depend on callers remembering to reload.
 const base = (): string => `${apiOrigin()}/api/v1`;
-const TOKEN_STORAGE_KEY = 'ob.api_key';
+const TOKEN_STORAGE_KEY = 'devtrail.api_key';
 
 // Resolve the Bearer key the UI uses for /api/v1/* calls. Three sources:
-//   - Local dev (web): `VITE_OPEN_BRAIN_API_KEY` from the build env (matches
+//   - Local dev (web): `VITE_DEVTRAIL_API_KEY` from the build env (matches
 //     the backend's stub-mode default).
 //   - Production (web): the `/api/auth/token` exchange, which sits behind
 //     Easy Auth — the platform has already validated the user's cookie
@@ -113,7 +113,7 @@ function resolveInitialApiKey(): string {
   const stored =
     typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '';
   if (isNativeApp()) return stored;
-  return import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? stored;
+  return import.meta.env.VITE_DEVTRAIL_API_KEY ?? stored;
 }
 
 
@@ -139,7 +139,7 @@ export function logout(): void {
     window.location.reload();
     return;
   }
-  API_KEY = import.meta.env.VITE_OPEN_BRAIN_API_KEY ?? '';
+  API_KEY = import.meta.env.VITE_DEVTRAIL_API_KEY ?? '';
   if (import.meta.env.DEV) {
     window.location.assign('/');
     return;
@@ -158,7 +158,7 @@ export class NativeSetupRequired extends Error {
   }
 }
 
-// Connect-screen preflight: proves the origin hosts an Open Brain backend
+// Connect-screen preflight: proves the origin hosts an DevTrail backend
 // AND that the key is accepted, without touching module state. /stats is the
 // cheapest authenticated read — and its body is validated against the shared
 // schema so a captive portal or wildcard vhost that 200s everything can't
@@ -185,10 +185,10 @@ export async function probeServer(origin: string, key: string): Promise<void> {
   try {
     body = await res.json();
   } catch {
-    throw new ApiError(res.status, "That URL responded, but not like an Open Brain server — check it");
+    throw new ApiError(res.status, "That URL responded, but not like an DevTrail server — check it");
   }
   if (!StatsSchema.safeParse(body).success) {
-    throw new ApiError(res.status, "That URL responded, but not like an Open Brain server — check it");
+    throw new ApiError(res.status, "That URL responded, but not like an DevTrail server — check it");
   }
 }
 
@@ -210,7 +210,7 @@ export async function bootAuth(): Promise<void> {
   }
 
   // If the build supplied a key, we're in local dev — nothing to exchange.
-  if (import.meta.env.VITE_OPEN_BRAIN_API_KEY) return;
+  if (import.meta.env.VITE_DEVTRAIL_API_KEY) return;
 
   // If we already have a cached token from a prior session, optimistically
   // use it; expired-cookie re-auth will surface as 401 on the next /api/v1

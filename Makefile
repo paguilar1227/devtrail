@@ -30,10 +30,10 @@ ci: build-shared typecheck test build
 # run the full suite (incl. e2e) before merging until it's ported.
 ci-full: ci e2e
 
-# @open-brain/shared ships compiled JS; backend tsc + vitest resolve through
+# @devtrail/shared ships compiled JS; backend tsc + vitest resolve through
 # the workspace symlink, so dist/ must exist before anything else runs.
 build-shared:
-	npm run build --workspace=@open-brain/shared
+	npm run build --workspace=@devtrail/shared
 
 # Backend type check (frontend is type-checked by its `build` via `tsc -b`).
 typecheck:

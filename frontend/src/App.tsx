@@ -29,13 +29,13 @@ import type { ModalKind, Route, SidebarMode, Theme } from './types';
 
 function readInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'light';
-  const v = localStorage.getItem('ob.theme');
+  const v = localStorage.getItem('devtrail.theme');
   return v === 'dark' ? 'dark' : 'light';
 }
 
 function readInitialSidebarMode(): SidebarMode {
   if (typeof window === 'undefined') return 'collapsed';
-  const v = localStorage.getItem('ob.sidebarMode');
+  const v = localStorage.getItem('devtrail.sidebarMode');
   return v === 'expanded' || v === 'hidden' ? v : 'collapsed';
 }
 
@@ -50,11 +50,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151715' : '#ffffff');
-    localStorage.setItem('ob.theme', theme);
+    localStorage.setItem('devtrail.theme', theme);
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem('ob.sidebarMode', sidebarMode);
+    localStorage.setItem('devtrail.sidebarMode', sidebarMode);
   }, [sidebarMode]);
 
   // Keyboard sequences fire from a listener registered once — route through

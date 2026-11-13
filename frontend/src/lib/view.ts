@@ -1,6 +1,6 @@
 // frontend/src/lib/view.ts
 //
-// Adapter from API shapes (@open-brain/shared) to the legacy UI shapes
+// Adapter from API shapes (@devtrail/shared) to the legacy UI shapes
 // (frontend/src/types.ts) that components currently consume.
 //
 // This file is *temporary scaffolding*. As components are migrated to consume
@@ -16,7 +16,7 @@ import type {
   SearchHit as ApiSearchHit,
   Stats as ApiStats,
   Todo as ApiTodo,
-} from '@open-brain/shared';
+} from '@devtrail/shared';
 import type {
   ActivityEntityKind as UiActivityKind,
   ActivityEvent as UiActivity,

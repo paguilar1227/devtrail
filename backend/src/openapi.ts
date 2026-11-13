@@ -7,7 +7,7 @@ const SWAGGER_HTML = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Open Brain API</title>
+  <title>DevTrail API</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css" />
   <style>body { margin: 0; }</style>
 </head>

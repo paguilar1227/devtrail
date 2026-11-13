@@ -72,9 +72,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url)' }
         { name: 'GEMINI_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=gemini-api-key)' }
         { name: 'ANTHROPIC_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=anthropic-api-key)' }
-        { name: 'OPEN_BRAIN_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=open-brain-api-key)' }
+        { name: 'DEVTRAIL_API_KEY', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=devtrail-api-key)' }
         { name: 'AZURE_STORAGE_CONNECTION_STRING', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=storage-connection-string)' }
-        { name: 'AZURE_STORAGE_CONTAINER', value: 'open-brain-files' }
+        { name: 'AZURE_STORAGE_CONTAINER', value: 'devtrail-files' }
         { name: 'TELEGRAM_BOT_TOKEN', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-bot-token)' }
         { name: 'TELEGRAM_WEBHOOK_SECRET', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-webhook-secret)' }
         { name: 'TELEGRAM_CHAT_ID', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=telegram-chat-id)' }

@@ -35,7 +35,7 @@ import {
   type FolderNode,
 } from '../lib/folders';
 import { cls } from '../lib/util';
-import type { ContentItem } from '@open-brain/shared';
+import type { ContentItem } from '@devtrail/shared';
 import type { ActionDispatch, Note, Route } from '../types';
 
 type ScopeMode = 'personal' | 'all' | string;
