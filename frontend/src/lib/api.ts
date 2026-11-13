@@ -97,8 +97,9 @@ export function signedInAccount(): { name: string; detail: string } {
 }
 
 // Resolve the Bearer key the UI uses for /api/v1/* calls. Four sources:
-//   - Local dev (web): `VITE_DEVTRAIL_API_KEY` from the build env (matches
-//     the backend's stub-mode default).
+//   - Local dev (web): `VITE_DEVTRAIL_API_KEY` from the Vite dev server env
+//     (matches the backend's stub-mode default). Production builds ignore it,
+//     so a stray frontend/.env.local can never bake a key into the bundle.
 //   - Self-hosted web (AUTH_MODE=api-key): the key the user entered on the
 //     sign-in screen. /api/auth/token answers 404 in this mode.
 //   - Azure web (AUTH_MODE=easyauth): the `/api/auth/token` exchange, which
@@ -116,11 +117,15 @@ export function signedInAccount(): { name: string; detail: string } {
 // to the current page so the user lands back where they were.
 let API_KEY: string = resolveInitialApiKey();
 
+function devApiKey(): string {
+  return import.meta.env.DEV ? import.meta.env.VITE_DEVTRAIL_API_KEY ?? '' : '';
+}
+
 function resolveInitialApiKey(): string {
   const stored =
     typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' : '';
   if (isNativeApp()) return stored;
-  return import.meta.env.VITE_DEVTRAIL_API_KEY ?? stored;
+  return devApiKey() || stored;
 }
 
 
@@ -152,7 +157,7 @@ export function logout(): void {
     window.location.reload();
     return;
   }
-  API_KEY = import.meta.env.VITE_DEVTRAIL_API_KEY ?? '';
+  API_KEY = devApiKey();
   if (import.meta.env.DEV || !easyAuth) {
     window.location.assign('/');
     return;
@@ -236,8 +241,8 @@ export async function bootAuth(): Promise<void> {
     return;
   }
 
-  // If the build supplied a key, we're in local dev — nothing to exchange.
-  if (import.meta.env.VITE_DEVTRAIL_API_KEY) return;
+  // Vite dev server with a configured key — nothing to exchange.
+  if (devApiKey()) return;
 
   // If we already have a cached token from a prior session, optimistically
   // use it; expired-cookie re-auth will surface as 401 on the next /api/v1

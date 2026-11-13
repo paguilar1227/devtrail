@@ -11,7 +11,7 @@ import './theme.css';
 
 // bootAuth resolves the Bearer key: the stored key, the Easy Auth exchange via
 // /api/auth/token, or — when neither exists — the sign-in screen. In local
-// dev (VITE_DEVTRAIL_API_KEY set) it's a no-op. If the user's session has expired bootAuth performs a
+// dev (Vite dev server with VITE_DEVTRAIL_API_KEY set) it's a no-op. If the user's session has expired bootAuth performs a
 // hard navigation to the AAD login URL and never resolves — that's why we
 // don't render anything inside the catch.
 bootAuth()

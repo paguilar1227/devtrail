@@ -1,0 +1,18 @@
+# Docker build context. Mirrors .daggerignore: local env files hold dev
+# secrets (frontend/.env.local would otherwise be read by the Vite build).
+.git
+.env
+.env.local
+**/.env
+**/.env.local
+node_modules
+**/node_modules
+dist
+**/dist
+build
+coverage
+playwright-report
+test-results
+.playwright-mcp
+ci/sdk
+frontend/ios

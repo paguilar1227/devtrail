@@ -30,5 +30,14 @@ describe('bootAuth on the web', () => {
     await api.bootAuth();
     expect(localStorage.getItem('devtrail.api_key')).toBe('exchanged-key');
     expect(localStorage.getItem('devtrail.auth_mode')).toBe('easyauth');
+    expect(api.signedInAccount()).toEqual({ name: 'n', detail: 'Microsoft Entra ID' });
+  });
+
+  it('ignores a build-time dev key outside the Vite dev server', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_DEVTRAIL_API_KEY', 'baked-into-bundle');
+    respond(404, { error: 'Not found' });
+    const api = await import('./api');
+    await expect(api.bootAuth()).rejects.toBeInstanceOf(api.ApiKeyRequired);
   });
 });
