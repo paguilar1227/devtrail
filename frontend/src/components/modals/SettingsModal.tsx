@@ -3,7 +3,7 @@
 // closing it left users stranded one nav-click away from their work.
 import { Icons } from '../Icons';
 import { Modal } from '../primitives';
-import { logout } from '../../lib/api';
+import { logout, signedInAccount } from '../../lib/api';
 import { cls } from '../../lib/util';
 import type { Theme } from '../../types';
 
@@ -16,6 +16,7 @@ interface Props {
 const APP_VERSION = '2.5';
 
 export function SettingsModal({ theme, onTheme, onClose }: Props) {
+  const account = signedInAccount();
   return (
     <Modal title="Settings" size="lg" onClose={onClose}>
       <div className="settings-card">
@@ -46,10 +47,10 @@ export function SettingsModal({ theme, onTheme, onClose }: Props) {
       <div className="settings-card">
         <div className="settings-row">
           <div className="account-id">
-            <div className="account-avatar">P</div>
+            <div className="account-avatar">{account.name.charAt(0).toUpperCase()}</div>
             <div>
-              <div className="account-name">Alex</div>
-              <div className="account-email">you@example.com</div>
+              <div className="account-name">{account.name}</div>
+              <div className="account-email">{account.detail}</div>
             </div>
           </div>
           <button className="btn btn-danger" onClick={logout}>

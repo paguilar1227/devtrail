@@ -1,5 +1,7 @@
 import { addWorkspaceRoutes } from './workspace-routes.js';
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import {
   ActivityListQuerySchema,
@@ -113,82 +115,45 @@ export function createApp(deps: ServiceDeps) {
   });
 
   // ----- auth -----
-  // /api/v1/* and /api/openapi.json + /api/docs use Bearer (Authorization
-  // header or `?key=`). All non-browser callers (MCP, CLI, scripts, the
-  // OpenAPI/Swagger viewer with `?key=`) hit this surface.
-  //
-  // /api/auth/* is intentionally NOT covered by this middleware — those
-  // endpoints sit in front of Easy Auth and read the
-  // `x-ms-client-principal-*` headers Easy Auth injects on authenticated
-  // browser requests. Easy Auth's `excludedPaths` covers `/api/v1/*` and
-  // `/api/openapi.json` + `/api/docs` so Bearer callers aren't redirected
-  // to login, but `/api/auth/*` is gated so the principal headers are
-  // actually injected when a valid session cookie is present.
-  app.use('/api/v1/*', async (c, next) => {
-    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key !== deps.config.apiKey) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    await next();
-  });
-  app.use('/api/openapi.json', async (c, next) => {
-    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key !== deps.config.apiKey) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    await next();
-  });
-  app.use('/api/docs', async (c, next) => {
-    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key !== deps.config.apiKey) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    await next();
-  });
-  // /mcp uses the same Bearer / ?key= contract as /api/v1/*. The endpoint
-  // is wired up with `app.all('/mcp', ...)` further down; this middleware
-  // gates it before the handler ever spins up an MCP server. Match-by-path
-  // here means we don't accidentally protect the entire app with `*`.
-  app.use('/mcp', async (c, next) => {
-    const key = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.query('key');
-    if (key !== deps.config.apiKey) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    await next();
-  });
+  // /api/v1/* and /mcp require Authorization: Bearer <DEVTRAIL_API_KEY>; the
+  // OpenAPI spec and docs page are public. /mcp also takes ?key= when
+  // MCP_ALLOW_URL_KEY=true, for MCP clients that can only be given a URL.
+  // /api/auth/token exists only with AUTH_MODE=easyauth: Azure Easy Auth
+  // signs the browser in and injects the x-ms-client-principal headers.
+  const publicApiPaths = new Set(['/api/v1/openapi.json', '/api/v1/docs']);
+  const requireApiKey = requireBearerKey(deps.config.apiKey, false);
+  app.use('/api/v1/*', (c, next) => (publicApiPaths.has(c.req.path) ? next() : requireApiKey(c, next)));
+  app.use('/mcp', requireBearerKey(deps.config.apiKey, deps.config.mcpAllowUrlKey === true));
 
-  // /api/auth/token: the React UI calls this on boot to exchange its Easy
-  // Auth session cookie for the long-lived Bearer key the rest of the
-  // /api/v1 surface expects. Easy Auth gates this endpoint (it isn't in
-  // excludedPaths), so by the time the request reaches us the platform has
-  // already validated the cookie and injected the principal headers.
-  // Anonymous browser sessions get a 302 to the AAD login flow before
-  // ever reaching this code.
-  //
-  // Note: this returns the same long-lived key today — option 3 phase 1.
-  // Phase 2 will derive a short-lived per-session token (see task #122).
-  app.get('/api/auth/token', (c) => {
-    const principalId = c.req.header('x-ms-client-principal-id');
-    const principal = c.req.header('x-ms-client-principal');
-    if (!principalId && !principal) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    return c.json({
-      key: deps.config.apiKey,
-      principalId: principalId ?? null,
-      principalName: c.req.header('x-ms-client-principal-name') ?? null,
+  if (deps.config.authMode === 'easyauth') {
+    app.get('/api/auth/token', (c) => {
+      const principalId = c.req.header('x-ms-client-principal-id');
+      const principal = c.req.header('x-ms-client-principal');
+      if (!principalId && !principal) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      return c.json({
+        key: deps.config.apiKey,
+        principalId: principalId ?? null,
+        principalName: c.req.header('x-ms-client-principal-name') ?? null,
+      });
     });
-  });
+  }
 
   addWorkspaceRoutes(app, deps);
 
   // ----- health -----
   app.get('/health', (c) => c.json({ ok: true, service: 'devtrail', version: '2.0.0' }));
 
-  // ----- OpenAPI spec + Swagger UI (auth-gated by /api/* middleware above) -----
+  // ----- OpenAPI spec + Swagger UI (public; "Authorize" takes the Bearer key) -----
   // The spec is auto-generated from each `app.openapi(...)` route's Zod
   // schemas — no hand-rolled JSON to drift from the actual handlers.
-  app.doc31('/api/openapi.json', {
+  app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
+    type: 'http',
+    scheme: 'bearer',
+    description: 'DEVTRAIL_API_KEY',
+  });
+  app.doc31('/api/v1/openapi.json', {
     openapi: '3.1.0',
     info: {
       title: 'DevTrail API',
@@ -196,13 +161,14 @@ export function createApp(deps: ServiceDeps) {
       description:
         'Personal knowledge base + productivity tool. Single user. ' +
         'Hybrid semantic + entity-graph search across documents, notes, and todos. ' +
-        'Auth: `Authorization: Bearer <key>` or `?key=<key>` query param.',
+        'Auth: `Authorization: Bearer <DEVTRAIL_API_KEY>` on every /api/v1 route except this spec and /api/v1/docs.',
     },
     servers: [
       { url: '/', description: 'Current host' },
     ],
+    security: [{ bearerAuth: [] }],
   });
-  app.get('/api/docs', () => swaggerUiHandler());
+  app.get('/api/v1/docs', () => swaggerUiHandler());
 
   // ==========================================================================
   // PROJECTS
@@ -1867,6 +1833,8 @@ export function createApp(deps: ServiceDeps) {
     }
   });
 
+  app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
+
   // ==========================================================================
   // Static web UI (served last, after API + MCP so they take precedence)
   // ==========================================================================
@@ -1987,6 +1955,20 @@ function serializeComment(c: {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidUuid(s: string): boolean {
   return UUID_RE.test(s);
+}
+
+function requireBearerKey(apiKey: string, allowUrlKey: boolean): MiddlewareHandler {
+  const expected = createHash('sha256').update(apiKey).digest();
+  return async (c, next) => {
+    const header = c.req.header('Authorization');
+    const presented = header?.startsWith('Bearer ')
+      ? header.slice('Bearer '.length)
+      : allowUrlKey ? c.req.query('key') : undefined;
+    const valid = presented !== undefined
+      && timingSafeEqual(createHash('sha256').update(presented).digest(), expected);
+    if (!valid) return c.json({ error: 'Unauthorized' }, 401);
+    await next();
+  };
 }
 
 /**

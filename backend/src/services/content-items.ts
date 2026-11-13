@@ -939,7 +939,7 @@ export interface ReplaceContentResult {
  *   - PDF v2 / audio v2 / video v2 (blob-backed content where edit-body is
  *     forbidden)
  *   - Refreshing a URL-ingested article (re-fetch with the same source_url)
- *   - Alex iterating with Claude on a markdown doc and wanting to preserve
+ *   - Iterating with an agent on a markdown doc and wanting to preserve
  *     v1 in the archive rather than overwriting it via edit-body
  *
  * State rules:

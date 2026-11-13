@@ -21,6 +21,8 @@ const configSchema = z.object({
   // When 'stub', all LLM + embedding calls are routed to deterministic in-memory
   // fakes (see providers/stub.ts). Real upstream API keys are not required.
   llmProvider: z.enum(['real', 'stub']),
+  authMode: z.enum(['api-key', 'easyauth']),
+  mcpAllowUrlKey: z.boolean(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -50,5 +52,7 @@ export function loadConfig(): Config {
     nodeEnv: process.env.NODE_ENV || 'development',
     timezone: process.env.TIMEZONE || 'America/Chicago',
     llmProvider,
+    authMode: process.env.AUTH_MODE || 'api-key',
+    mcpAllowUrlKey: process.env.MCP_ALLOW_URL_KEY === 'true',
   });
 }

@@ -196,16 +196,16 @@ describe('MCP endpoint via Hono app', () => {
     expect(res.status).toBe(401);
   });
 
-  it('accepts /mcp calls with the key in the ?key= query param', async () => {
-    // Same contract as /api/v1/* — Authorization header OR ?key=. Lets
-    // clients that can't set headers (e.g. quick-and-dirty curl, MCP
-    // shareable URLs) still authenticate.
-    const req = new Request('http://localhost/mcp?key=test-key', {
+  it('accepts the key as ?key= on /mcp only when MCP_ALLOW_URL_KEY is on', async () => {
+    // URL keys exist for MCP clients that can only be given a URL; they are
+    // off by default because URLs end up in logs and browser history.
+    const call = (target: ReturnType<typeof createApp>) => target.fetch(new Request('http://localhost/mcp?key=test-key', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
-    });
-    const res = await app.fetch(req);
+    }));
+    expect((await call(app)).status).toBe(401);
+    const res = await call(createApp({ ...deps, config: { ...deps.config, mcpAllowUrlKey: true } }));
     expect(res.status).toBe(200);
     const body = JSON.parse(await res.text());
     expect(body.result?.tools?.length).toBe(32);
@@ -241,9 +241,23 @@ describe('REST API health + auth', () => {
     expect(res.status).toBe(200);
   });
 
-  it('accepts API calls with key as query param', async () => {
-    vi.mocked(deps.db.query).mockResolvedValueOnce({ rows: [] } as any);
-    const res = await app.fetch(new Request('http://localhost/api/v1/projects?key=test-key'));
+  it('never accepts the key as a query param on /api/v1, even with MCP_ALLOW_URL_KEY on', async () => {
+    const urlKeyApp = createApp({ ...deps, config: { ...deps.config, mcpAllowUrlKey: true } });
+    const res = await urlKeyApp.fetch(new Request('http://localhost/api/v1/projects?key=test-key'));
+    expect(res.status).toBe(401);
+  });
+
+  it('serves the OpenAPI spec without auth, with Bearer auth declared and the session routes included', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/v1/openapi.json'));
     expect(res.status).toBe(200);
+    const spec = await res.json();
+    expect(spec.components.securitySchemes.bearerAuth).toMatchObject({ type: 'http', scheme: 'bearer' });
+    expect(spec.security).toEqual([{ bearerAuth: [] }]);
+    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining([
+      '/api/v1/sessions/{id}',
+      '/api/v1/sessions/{id}/timeline',
+      '/api/v1/projects/{id}/timeline',
+    ]));
+    expect((await app.fetch(new Request('http://localhost/api/v1/docs'))).status).toBe(200);
   });
 });

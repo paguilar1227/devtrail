@@ -1,5 +1,5 @@
 // Todos — the standalone sectioned todos view reached from the sidebar.
-// Kept as its own page (deliberate — Alex isn't ready to retire it); the
+// Kept as its own page (deliberately, alongside the project views); the
 // body is the shared TodosPanel, so this file is just a shell: heading +
 // a scope dropdown (Personal / All / each active project) over the exact
 // implementation Home's Todos tab and the project Todos tabs render.

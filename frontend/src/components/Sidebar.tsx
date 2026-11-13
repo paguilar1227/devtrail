@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Icons } from './Icons';
 import { cls } from '../lib/util';
-import { listProjects, listTodos } from '../lib/api';
+import { listProjects, listTodos, signedInAccount } from '../lib/api';
 import { toUiProjects } from '../lib/view';
 import type { ActionDispatch, Route } from '../types';
 
@@ -15,6 +15,7 @@ interface Props {
 }
 
 export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed }: Props) {
+  const account = signedInAccount();
   const [projectsQ, inboxQ] = useQueries({
     queries: [
       { queryKey: ['projects', 'all'], queryFn: () => listProjects() },
@@ -124,10 +125,10 @@ export function Sidebar({ route, onRoute, onAction, collapsed, onToggleCollapsed
         title="Settings"
         aria-label="Settings"
       >
-        <span className="sb-avatar">P</span>
+        <span className="sb-avatar">{account.name.charAt(0).toUpperCase()}</span>
         <span className="sb-user">
-          <span className="nm">Alex</span>
-          <span className="em">you@example.com</span>
+          <span className="nm">{account.name}</span>
+          <span className="em">{account.detail}</span>
         </span>
         <span className="sb-cog" aria-hidden="true">
           <Icons.Cog />

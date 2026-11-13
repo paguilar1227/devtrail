@@ -146,7 +146,7 @@ describe('session workspaces',()=>{
   await artifact('Standalone spec',standalone.id,['front-end','standalone']);
   // Explicit interleaving proves one chronology rather than concatenated session lists.
   for(const [index,id] of [direct,second,first,backend].entries())await pg.query('UPDATE project_timeline_events SET occurred_at=$2 WHERE entity_id=$1',[id,`2026-01-0${index+1}T12:00:00Z`]);
-  const response=await request(`/api/v1/projects/${p}/timeline?limit=2&tag=front-end`);
+  const response=await request(`/api/v1/projects/${p}/timeline?limit=2&tags=front-end`);
   expect(response.status).toBe(200);
   const page=TimelineResponseSchema.parse(await response.json());
   const tagUnion=['back-end','front-end','project-only','session-one','session-two'];
@@ -197,7 +197,7 @@ describe('session workspaces',()=>{
   const direct=await tagged('Direct project tags',null,['design','release']);
   const unrelated=await tagged('Unrelated tags',b.id,['unrelated']);
   const ids=(page:any)=>page.events.map((e:any)=>e.entity_id).sort();
-  const tags='tag=design&tag=release';
+  const tags='tags=design,release';
   const defaultPage=await (await request(`/api/v1/projects/${p}/timeline?${tags}`)).json();
   expect(ids(defaultPage)).toEqual([both,direct].sort());
   expect(defaultPage.available_tags).toEqual(['design','release','unrelated']);

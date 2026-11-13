@@ -1,4 +1,4 @@
-# .github/workflows/ci.yml — Alex local-ci standard (thin mirror of `dagger call ci`).
+# .github/workflows/ci.yml — local-ci standard (thin mirror of `dagger call ci`).
 #
 # THE ONE RULE: the `ci` job body is ONLY `dagger call ci`. No extra run: steps.
 # Every pass/fail gate is a Dagger function (see ci/src/index.ts), so this runs

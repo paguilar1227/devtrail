@@ -3,15 +3,10 @@
 // Typed fetch client for the DevTrail REST API. All responses are validated
 // against shared Zod schemas (`@devtrail/shared`) — bad data fails loud.
 //
-// Auth: dual-mode.
-//   - Local dev: VITE_DEVTRAIL_API_KEY → Bearer header; matches the
-//     backend's stub-mode key out of the box.
-//   - Production: same Bearer header is sent (with the placeholder fallback,
-//     which the backend rejects), but the request also carries the Easy
-//     Auth session cookie (`credentials: 'include'`). The backend's
-//     `/api/*` middleware accepts EITHER signal, so the placeholder Bearer
-//     is harmless and the cookie+principal-header path is what actually
-//     authenticates browser calls in prod.
+// Auth: every /api/v1 call carries `Authorization: Bearer <key>`. The key
+// comes from the build env in local dev, from the sign-in screen when the
+// server runs with AUTH_MODE=api-key (the default), or from the
+// /api/auth/token exchange when it runs behind Azure Easy Auth.
 
 import {
   SessionSchema, type Session, SessionCreateSchema, SessionUpdateSchema,
@@ -90,15 +85,27 @@ import { apiOrigin, clearServerOrigin, fetchCredentials, isNativeApp, saveServer
 // snapshot — correctness doesn't depend on callers remembering to reload.
 const base = (): string => `${apiOrigin()}/api/v1`;
 const TOKEN_STORAGE_KEY = 'devtrail.api_key';
+const AUTH_MODE_STORAGE_KEY = 'devtrail.auth_mode';
+const PRINCIPAL_STORAGE_KEY = 'devtrail.principal_name';
 
-// Resolve the Bearer key the UI uses for /api/v1/* calls. Three sources:
+// Who the account row shows: the Entra sign-in name when Easy Auth provided
+// one, otherwise the generic owner of an API-key-protected server.
+export function signedInAccount(): { name: string; detail: string } {
+  let principal = '';
+  try { principal = localStorage.getItem(PRINCIPAL_STORAGE_KEY) ?? ''; } catch { /* ignore */ }
+  return principal ? { name: principal, detail: 'Microsoft Entra ID' } : { name: 'Owner', detail: 'API key' };
+}
+
+// Resolve the Bearer key the UI uses for /api/v1/* calls. Four sources:
 //   - Local dev (web): `VITE_DEVTRAIL_API_KEY` from the build env (matches
 //     the backend's stub-mode default).
-//   - Production (web): the `/api/auth/token` exchange, which sits behind
-//     Easy Auth — the platform has already validated the user's cookie
-//     session by the time that endpoint runs, and the response carries the
-//     long-lived Bearer key plus the Entra principal id/name. We cache it in
-//     localStorage so the next page load skips the round-trip.
+//   - Self-hosted web (AUTH_MODE=api-key): the key the user entered on the
+//     sign-in screen. /api/auth/token answers 404 in this mode.
+//   - Azure web (AUTH_MODE=easyauth): the `/api/auth/token` exchange, which
+//     sits behind Easy Auth — the platform has already validated the user's
+//     cookie session by the time that endpoint runs, and the response carries
+//     the long-lived Bearer key plus the Entra principal id/name. We cache it
+//     in localStorage so the next page load skips the round-trip.
 //   - Native shell: ONLY the key stored by the connect screen counts — a
 //     dev key baked into the bundle at build time would silently pair the
 //     app with the wrong backend.
@@ -119,7 +126,7 @@ function resolveInitialApiKey(): string {
 
 export function listProjectTimeline(projectId: string, search: string, cursor: TimelineCursor | null, signal?: AbortSignal, tags: string[] = [], tagMatch: TimelineTagMatch = 'all'): Promise<TimelineResponse> {
   const params = new URLSearchParams({ search, tag_match: tagMatch });
-  tags.forEach(tag => params.append('tag', tag));
+  if (tags.length) params.set('tags', tags.join(','));
   if (cursor) { params.set('before_at', cursor.at); params.set('before_id', cursor.id); }
   return request(`/projects/${projectId}/timeline?${params}`, TimelineResponseSchema, { signal });
 }
@@ -130,7 +137,13 @@ export function listProjectTimeline(projectId: string, search: string, cursor: T
 // re-trigger the AAD login). In dev there's no cookie session — we just
 // reload so any in-memory state resets.
 export function logout(): void {
-  try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch { /* ignore */ }
+  let easyAuth = false;
+  try {
+    easyAuth = localStorage.getItem(AUTH_MODE_STORAGE_KEY) === 'easyauth';
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(AUTH_MODE_STORAGE_KEY);
+    localStorage.removeItem(PRINCIPAL_STORAGE_KEY);
+  } catch { /* ignore */ }
   if (isNativeApp()) {
     // Native shell = full disconnect: drop the stored server origin too, so
     // the relaunch lands back on the connect screen.
@@ -140,13 +153,23 @@ export function logout(): void {
     return;
   }
   API_KEY = import.meta.env.VITE_DEVTRAIL_API_KEY ?? '';
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || !easyAuth) {
     window.location.assign('/');
     return;
   }
   // post_logout_redirect_uri matters: without it Easy Auth lands on its
   // own /.auth/logout/complete page, which is jarring.
   window.location.assign('/.auth/logout?post_logout_redirect_uri=/');
+}
+
+// Thrown by bootAuth on the web when the server has no token exchange
+// (AUTH_MODE=api-key) and no key is stored yet. main.tsx renders the sign-in
+// screen instead of the app.
+export class ApiKeyRequired extends Error {
+  constructor() {
+    super('Sign in with the server API key');
+    this.name = 'ApiKeyRequired';
+  }
 }
 
 // Thrown by bootAuth when the native shell has no stored server config yet.
@@ -195,6 +218,10 @@ export async function probeServer(origin: string, key: string): Promise<void> {
 // Persist the connect-screen pair. Callers reload the page afterwards so the
 // app boots cleanly from the stored config (the API prefix itself is derived
 // per request and needs no reload).
+export function saveApiKey(key: string): void {
+  localStorage.setItem(TOKEN_STORAGE_KEY, key);
+}
+
 export function saveNativeServerConfig(origin: string, key: string): void {
   saveServerOrigin(origin);
   localStorage.setItem(TOKEN_STORAGE_KEY, key);
@@ -231,13 +258,16 @@ export async function bootAuth(): Promise<void> {
     throw new Error('Redirecting to login…');
   }
 
+  if (res.status === 404) throw new ApiKeyRequired();
   if (!res.ok) {
     throw new Error(`bootAuth failed: HTTP ${res.status}`);
   }
-  const data = (await res.json()) as { key: string };
+  const data = (await res.json()) as { key: string; principalName?: string | null };
   API_KEY = data.key;
   try {
     localStorage.setItem(TOKEN_STORAGE_KEY, data.key);
+    localStorage.setItem(AUTH_MODE_STORAGE_KEY, 'easyauth');
+    localStorage.setItem(PRINCIPAL_STORAGE_KEY, data.principalName ?? '');
   } catch { /* ignore quota / private-mode errors */ }
 }
 
@@ -622,7 +652,7 @@ export async function deleteSession(id:string):Promise<{ok:boolean;pending_files
   return request(`/sessions/${id}`,z.object({ok:z.boolean(),pending_files:z.number()}),{method:'DELETE'});
 }
 export function listSessionTimeline(sessionId:string,search:string,cursor:TimelineCursor|null,signal?:AbortSignal,tags:string[]=[],tagMatch:TimelineTagMatch='all'):Promise<TimelineResponse> {
-  const params=new URLSearchParams({search,tag_match:tagMatch});tags.forEach(tag=>params.append('tag',tag));
+  const params=new URLSearchParams({search,tag_match:tagMatch});if(tags.length)params.set('tags',tags.join(','));
   if(cursor){params.set('before_at',cursor.at);params.set('before_id',cursor.id);}
   return request(`/sessions/${sessionId}/timeline?${params}`,TimelineResponseSchema,{signal});
 }

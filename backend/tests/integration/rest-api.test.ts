@@ -104,7 +104,17 @@ describe('Token exchange (/api/auth/token)', () => {
 
   beforeEach(() => {
     deps = mockDeps();
-    app = createApp(deps);
+    app = createApp({ ...deps, config: { ...deps.config, authMode: 'easyauth' } });
+  });
+
+  it('does not exist unless AUTH_MODE=easyauth, so forged principal headers get nothing', async () => {
+    // Without Easy Auth in front, anyone can send x-ms-client-principal-*
+    // headers; exposing the exchange there would hand out the API key.
+    const res = await createApp(deps).fetch(new Request('http://localhost/api/auth/token', {
+      headers: { 'x-ms-client-principal-id': 'forged', 'x-ms-client-principal-name': 'forged' },
+    }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not found' });
   });
 
   it('returns 401 when no Easy Auth principal headers are present', async () => {

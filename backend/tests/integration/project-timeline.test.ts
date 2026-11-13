@@ -195,13 +195,13 @@ describe('durable project timeline',()=>{
     const id=await document(p,'Tagged upload');
     await pg.query("UPDATE content_items SET tags=ARRAY['design','tag with spaces'] WHERE id=$1",[id]);
     const app=createApp({db,config:{apiKey:'test-key'}} as ServiceDeps);
-    const response=await app.request(`/api/v1/projects/${p}/timeline?tag=design&tag=tag%20with%20spaces&limit=1`,{headers:{Authorization:'Bearer test-key'}});
+    const response=await app.request(`/api/v1/projects/${p}/timeline?tags=design,tag%20with%20spaces&limit=1`,{headers:{Authorization:'Bearer test-key'}});
     const first=TimelineResponseSchema.parse(await response.json());
     expect(first.total).toBe(2);
     expect(first.events).toHaveLength(1);
-    const next=await app.request(`/api/v1/projects/${p}/timeline?tag=design&limit=1&before_at=${encodeURIComponent(first.next_cursor!.at)}&before_id=${first.next_cursor!.id}`,{headers:{Authorization:'Bearer test-key'}});
+    const next=await app.request(`/api/v1/projects/${p}/timeline?tags=design&limit=1&before_at=${encodeURIComponent(first.next_cursor!.at)}&before_id=${first.next_cursor!.id}`,{headers:{Authorization:'Bearer test-key'}});
     expect(TimelineResponseSchema.parse(await next.json()).events).toHaveLength(1);
-    const missing=await app.request(`/api/v1/projects/${p}/timeline?tag=absent&search=upload`,{headers:{Authorization:'Bearer test-key'}});
+    const missing=await app.request(`/api/v1/projects/${p}/timeline?tags=absent&search=upload`,{headers:{Authorization:'Bearer test-key'}});
     expect(TimelineResponseSchema.parse(await missing.json()).total).toBe(0);
   });
   it('rolls back mutation and history together',async()=>{

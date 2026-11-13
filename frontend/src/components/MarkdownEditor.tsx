@@ -42,7 +42,7 @@ const bearHighlight = HighlightStyle.define([
   { tag: t.contentSeparator, color: 'var(--muted)' },
   // Inline emphasis. Bold gets weight 800 + a slight color lift so it
   // actually reads as bold at 13.5px in the body sans — weight 700
-  // alone was too subtle for Alex to perceive.
+  // alone was too subtle to read as bold.
   { tag: t.strong, fontWeight: '800', color: 'var(--fg)' },
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.strikethrough, textDecoration: 'line-through' },
