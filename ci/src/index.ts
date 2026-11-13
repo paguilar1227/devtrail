@@ -126,7 +126,7 @@ export class Ci {
     const trivy = await dag
       .container()
       .from(TRIVY)
-      .withMountedCache("/root/.cache/trivy", dag.cacheVolume("ob-trivy-cache"))
+      .withMountedCache("/root/.cache/trivy", dag.cacheVolume("devtrail-trivy-cache"))
       .withDirectory("/src", source)
       .withWorkdir("/src")
       .withExec(

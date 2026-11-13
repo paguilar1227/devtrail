@@ -14,8 +14,14 @@ if (!reportPath) {
   process.exit(2);
 }
 const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+// Fail closed: a registry or network error still produces JSON, just without
+// a vulnerability map. Treating that as "no findings" would pass the gate.
+if (report.error || typeof report.vulnerabilities !== 'object' || report.vulnerabilities === null) {
+  console.error('npm audit did not produce a report: ' + JSON.stringify(report.error ?? report).slice(0, 500));
+  process.exit(1);
+}
 const allowlist = new Map(JSON.parse(readFileSync(allowPath, 'utf8')).map((entry) => [entry.id, entry]));
-const vulnerabilities = report.vulnerabilities ?? {};
+const vulnerabilities = report.vulnerabilities;
 const gating = new Set(['high', 'critical']);
 
 function advisories(name, seen = new Set()) {

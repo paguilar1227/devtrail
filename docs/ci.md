@@ -28,10 +28,11 @@ All three checks **fail the build**:
   (Azurite public dev key, model IDs) in `gitleaks.toml`.
 - **trivy fs** — a *fixable* HIGH/CRITICAL dependency CVE (`--ignore-unfixed`, so
   only actionable findings block).
-- **npm audit** — a HIGH+ advisory.
+- **npm audit** — a HIGH+ advisory not listed in `.audit-allowlist.json` (the gate
+  also fails if npm audit cannot produce a report).
 
 Promoted from report-only after the dependency-remediation pass took the tree to
-**0 findings** (`npm audit` clean; trivy clean). Transitive CVEs whose parents
+trivy clean and `npm audit` down to one allowlisted advisory (zod 3, no 3.x fix). Transitive CVEs whose parents
 hadn't shipped a fix are pinned to patched versions via npm **`overrides`** in the
 root `package.json` (axios, fast-uri, esbuild, …) — drop an entry once its parent
 upgrades past the advisory.
