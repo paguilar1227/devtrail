@@ -40,6 +40,12 @@ upgrades past the advisory.
 `overrides` (preferred), or add a `.trivyignore` entry; bypass a single local
 push in a pinch with `LEFTHOOK=0 git push`.
 
+The npm audit step runs `scripts/audit-gate.mjs` over `npm audit --json`. It fails on any
+HIGH or CRITICAL advisory unless its GHSA id is listed in `.audit-allowlist.json` with a
+reason. Today that list holds one entry: the zod 3 advisory GHSA-mrhx-c7xc-m3w5, which
+has no zod 3 fix and is reachable only by API-key holders. Remove it with the zod 4
+migration.
+
 > **Note — stale nested lockfiles.** `backend/package-lock.json` and
 > `frontend/package-lock.json` are tracked **cruft**: this is an npm *workspaces*
 > repo, so the root `package-lock.json` is authoritative (the Dockerfile,

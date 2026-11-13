@@ -1,0 +1,7 @@
+[
+  {
+    "id": "GHSA-mrhx-c7xc-m3w5",
+    "package": "zod",
+    "reason": "No zod 3.x release fixes it, and every zod 3 copy in the tree (shared schemas, @hono/zod-openapi, the MCP SDK, Firecrawl) is affected. Request validation runs only after the Bearer check, so only API-key holders can send oversized input. Remove this entry with the zod 4 migration."
+  }
+]

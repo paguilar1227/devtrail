@@ -97,7 +97,7 @@ export class Ci {
    *  - trivy fs    — no *fixable* HIGH/CRITICAL dependency CVEs (--ignore-unfixed
    *                  so only actionable findings block; scans the authoritative
    *                  root lock — stale nested workspace locks are mount-excluded).
-   *  - npm audit   — no HIGH+ advisories.
+   *  - npm audit   — no HIGH+ advisories outside .audit-allowlist.json.
    * Promoted from report-only once the tree hit 0 findings (Phase C of the
    * dependency remediation; see docs/ci.md). Escape valve for an unfixable/accepted
    * CVE: pin a patched version via npm `overrides` (preferred — see root
@@ -135,9 +135,9 @@ export class Ci {
       )
       .stdout()
 
-    // GATE: no `|| true` — a HIGH+ advisory exits non-zero and fails the gate.
+    // GATE: any HIGH+ advisory not listed in .audit-allowlist.json exits non-zero.
     const audit = await this.base(source)
-      .withExec(["sh", "-c", "npm audit --audit-level=high"])
+      .withExec(["sh", "-c", "npm audit --json > /tmp/npm-audit.json; node scripts/audit-gate.mjs /tmp/npm-audit.json"])
       .stdout()
 
     return [
