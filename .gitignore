@@ -19,7 +19,7 @@ coverage/
 !.claude/rules/
 !.claude/rules/**
 tmp.md
-tests/fixtures/e2e/.venv/
+backend/tests/fixtures/e2e/.venv/
 # Playwright
 frontend/test-results/
 backend/test-results/

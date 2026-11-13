@@ -49,8 +49,8 @@ A shared workspace where people and AI agents track work, with hybrid semantic a
 | Role | Provider | Model |
 |------|----------|-------|
 | Embeddings | Gemini | `gemini-embedding-2-preview` (3072d, multimodal) |
-| Media understanding (OCR, transcripts) | Gemini | `gemini-3-flash-preview` |
-| Metadata + entity extraction | Anthropic | `claude-haiku-4-5-20251001` |
+| Metadata for audio and video (transcripts) | Gemini | `gemini-3-flash-preview` |
+| Metadata for text, images (OCR) and PDFs; entity extraction | Anthropic | `claude-haiku-4-5-20251001` |
 | Query depth classifier | Anthropic | `claude-haiku-4-5-20251001` |
 | RAG fast path (default) | Azure OpenAI / Foundry chat completions | `gpt-5-4` |
 | RAG thorough path (opt-in) | Azure OpenAI / Foundry Responses API | `gpt-5-4-pro` |

@@ -256,7 +256,7 @@
       "delta": "unchanged",
       "lane": "providers",
       "subtitle": "LLMs + embeddings",
-      "summary": "Gemini embeds text and reads images, PDFs and audio; Claude Haiku writes metadata and extracts entities; Azure OpenAI writes cited answers.",
+      "summary": "Gemini embeds text and files and writes metadata for audio and video; Claude Haiku writes metadata for text, images (OCR) and PDFs and extracts entities; Azure OpenAI writes cited answers.",
       "files": [
         {
           "path": "backend/src/server.ts"

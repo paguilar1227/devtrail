@@ -86,7 +86,7 @@ Wired in `src/server.ts`. The `ServiceDeps` interface is in `src/services/index.
 
 ## 4. Data Architecture
 
-5 core tables + 2 graph-layer tables. No ORM — raw SQL via the `pg` driver, with one `db/*.ts` module per table.
+11 tables: 5 core, 2 for the entity graph and 4 for sessions and timelines (`project_sessions`, `project_timeline_events`, `session_file_cleanup`, `project_memory`). The diagram shows the core and graph tables. No ORM — raw SQL via the `pg` driver, with one `db/*.ts` module per table.
 
 ```
 projects
@@ -164,7 +164,7 @@ Mixing them up is a top-3 bug source — REST and MCP both fail loudly when the 
 | `todos.project_id` → `projects.id` | `ON DELETE SET NULL` | Orphaned todos become Inbox items |
 | `content_items.project_ids` → `projects.id` | `uuid[]` (no FK) | Multi-project membership; can't be a single FK |
 
-Because `project_ids` is `uuid[]`, deleting a project does **not** cascade-delete its content. To prevent dangling references, `deleteProjectHard()` runs `array_remove(project_ids, $1::uuid)` across all content_items in the same transaction. So a doc that only belonged to a deleted project ends up with `project_ids: []` (back in personal scope), not a stale UUID. Verified end-to-end in `E2E_TEST_PLAN.md` T9.4.
+Because `project_ids` is `uuid[]`, deleting a project does **not** cascade-delete its content. To prevent dangling references, `deleteProjectHard()` runs `array_remove(project_ids, $1::uuid)` across all content_items in the same transaction. So a doc that only belonged to a deleted project ends up with `project_ids: []` (back in personal scope), not a stale UUID. Verified end-to-end in [the live E2E plan](testing/live-e2e-plan.md) T9.4.
 
 ### Embeddings
 
@@ -222,7 +222,7 @@ interface ServiceDeps {
 | `content-items.ts` | `createContentItem` orchestrates: dedup → optional blob upload → metadata extraction → chunking → embedding → entity-graph wiring |
 | `todos.ts` | Todo + subtask CRUD with depth/parent management, embedding on insert/update |
 | `todo-comments.ts` | Comment CRUD |
-| `search.ts` | `searchWithTimings()` — hybrid vector + graph search with RRF fusion + per-hit `retrieval_path` |
+| `search.ts` | `searchWithTimings()` — hybrid vector + lexical + graph search with RRF fusion + per-hit `retrieval_path` |
 | `rag.ts` | `ragQuery()` — depth classify → search → synthesize via fast or thorough LLM, returns answer + citations + per-stage timing |
 | `query-depth.ts` | Haiku-based fast/thorough classifier; **also** extracts named entities from the query (used by both RAG and search to seed graph expansion) |
 | `entities.ts` | `extractEntities` (Haiku) → resolve against canonical registry (exact name, alias, embedding similarity > 0.85) → map mentions to chunks → persist `chunk_entities` edges |
@@ -289,7 +289,7 @@ Failure modes (all hit in production at least once, all covered by tests in `tes
 
 - Firecrawl returning `Example Domain` / 404 placeholder pages → reject content shorter than 300 chars or matching error titles
 - xAI X-search returning miss responses (templated "I couldn't find...") → detect failure phrases and surface a clean `X_SEARCH_MISS:` error
-- YouTube snowflake IDs vs xAI date windows → decode the post snowflake to derive a ±6h search window so xAI can find the post
+- X post IDs vs xAI date windows → decode the post's snowflake ID to derive a ±6h search window so xAI can find the post
 - Supadata transient failures → no fallback by design; the call fails loudly and the user retries. Past silent fallback ladders chained 60–180s of latency that exceeded Azure's 240s response timeout. Predictable failure beats unpredictable success here.
 
 ---
@@ -317,18 +317,20 @@ Implementation: `src/services/search.ts`, exposed via `POST /api/v1/search` and 
 
 ```
 1. Embed query (Gemini Embedding 2)
-2. Vector seed: pgvector cosine scan against chunks + todos
-   - Filtered by project_id, tags, entity_types, threshold
+2. Seeds, run in parallel with the same filters (project_id, tags, entity_types):
+   - Vector: pgvector cosine scan against chunks + todos, above the threshold
+   - Lexical: ILIKE keyword match against chunks + todos, ranked by title match then recency
+     (catches exact names and IDs that embeddings miss)
 3. (If graph: true) Graph expansion:
    - For each query entity, find entities matching by canonical name / alias / embedding similarity
    - For each matched entity, fetch chunk_entities edges → expand to candidate chunks
    - Apply the SAME filters (project_id, tags, parent_type) on the expansion path's SQL
      (this was F2 — vector path filtered correctly, expansion didn't)
-4. Reciprocal Rank Fusion (RRF, k=60) merges the two ranked lists
-5. Annotate each hit with retrieval_path: [{step: 'vector', score}, {step: 'entity', entity, confidence}, ...]
+4. Reciprocal Rank Fusion (RRF, k=60) merges the vector, lexical and graph lists; hits found by several arms rise to the top
+5. Annotate each hit with retrieval_path: [{step: 'vector', score}, {step: 'lexical', score}, {step: 'entity', entity, confidence}, ...]
 ```
 
-Each hit returns `{type: 'chunk'|'todo', similarity, chunk?: {...}, todo?: {...}, retrieval_path: [...]}`. The web UI and RAG synthesizer both surface `retrieval_path` so users can see whether a hit came from cosine similarity, the entity graph, or both.
+Each hit returns `{type: 'chunk'|'todo', similarity, chunk?: {...}, todo?: {...}, retrieval_path: [...]}`. The web UI and RAG synthesizer both surface `retrieval_path` so users can see whether a hit came from cosine similarity, a keyword match, the entity graph, or several of them.
 
 ### `find_mentions` (graph-only)
 
@@ -435,7 +437,7 @@ Conventions:
 | Sessions | `GET/POST /sessions`, `GET/PUT/DELETE /sessions/{id}`, `GET /sessions/{id}/context`, `GET /sessions/{id}/timeline` |
 | Search | `POST /search`, `POST /find-mentions`, `POST /rag` (`depth: 'auto' \| 'fast' \| 'thorough'`) |
 | Inventory | `GET /tags`, `PUT/DELETE /tags/{name}`, `GET /activity`, `GET /stats` |
-| Diagnostics | `GET /diagnostics/entities`, `GET /diagnostics/content/{id}`, `GET /diagnostics/content/{id}/edges`, `POST /diagnostics/backfill-entities` |
+| Diagnostics | `GET /diagnostics/entities`, `GET /diagnostics/content/{id}/edges`, `POST /diagnostics/backfill-entities` |
 
 `/api/v1/content` responses route `blob_url` through `stripAndSignContent()`, producing a SAS-signed URL (60-minute default TTL) via `BlobStorage.getReadSasUrl()`. Empty, external or already-signed URLs pass through unchanged.
 
@@ -502,9 +504,9 @@ Every LLM-JSON path in the service layer routes through this. When you add a new
 
 Deployment steps are in [deploy-azure.md](deploy-azure.md).
 
-### Why the ACR role assignment is CLI-only
+### Why the ACR role assignment is a manual step
 
-The container registry usually lives in another resource group, and a resource-group-scoped template cannot assign roles there, so `AcrPull` is granted with `az role assignment create` after the first deployment.
+The container registry is shared and not owned by these templates, and granting a role on it needs rights on the registry itself. So the templates never touch it; `AcrPull` is granted once with `az role assignment create` (see [deploy-azure.md](deploy-azure.md) step 4).
 
 ### Auto-migration on startup
 
@@ -532,7 +534,7 @@ Vitest for unit and integration tests, Playwright for workflow e2e.
 
 As of this writing: 340 backend tests in 26 files and 108 frontend unit tests in 10 files, all with stub providers (no network or model spend). Mocks live in `backend/tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
 
-For live-system validation, [testing/live-e2e-plan.md](testing/live-e2e-plan.md) has 52 reproducible tests across 10 phases against a real deployment. It is not part of the automated suite (model nondeterminism, cost, and it needs real keys).
+For live-system validation, [testing/live-e2e-plan.md](testing/live-e2e-plan.md) has 64 reproducible tests across 11 phases against a real deployment. It is not part of the automated suite (model nondeterminism, cost, and it needs real keys).
 
 ---
 
@@ -558,15 +560,15 @@ For live-system validation, [testing/live-e2e-plan.md](testing/live-e2e-plan.md)
 
 ### Azure
 
-- **240s response timeout on Container App.** URL ingestion can exceed this when fallbacks chain. Server completes the work; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
+- **240s response timeout on Container App.** This is why ingest is asynchronous: `POST /content` and `/content/from-url` return `202` and finish in the background; poll `GET /content/{id}/status`.
 - **Image tag uniqueness for revisions.** Container Apps only creates a new revision when the image *reference* changes. Push under git SHA tags, not just `:latest`.
-- **Cross-RG role assignment must be CLI.** The registry usually lives in another resource group, and a resource-group-scoped template can't assign roles there.
+- **AcrPull is granted outside the templates.** The registry is shared and not owned by this deployment, so the first deploy can fail on image pull until step 4 of [deploy-azure.md](deploy-azure.md) is done.
 - **Apple Silicon platform flag.** `docker build --platform linux/amd64`. Default arm64 won't run on Azure x86-64.
 
 ### URL ingest
 
-- **YouTube: tries direct → Firecrawl → xAI.** Only succeeds when one returns a real transcript.
-- **X/Twitter: xAI Grok primary, Firecrawl stealth fallback.** Detect xAI miss responses up front to surface a clean `X_SEARCH_MISS:` error.
+- **YouTube: one Supadata transcript call, no fallback.** The old direct → Firecrawl → xAI ladder chained 60–180s on cold cases.
+- **X/Twitter: xAI Grok `x_search` only.** Firecrawl refuses x.com, so there is no fallback; xAI misses surface as a clean `X_SEARCH_MISS:` error.
 - **HTML: Firecrawl markdown.** Reject content shorter than 300 chars or matching error/placeholder titles.
 - **Dedup is by source_url first, then file_hash for binary downloads.**
 

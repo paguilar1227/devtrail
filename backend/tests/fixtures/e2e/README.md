@@ -13,11 +13,11 @@ Pinned, checked-in inputs for `docs/testing/live-e2e-plan.md`. Filenames are sta
 
 ## Regeneration
 
-`regen.sh` handles everything — creates a local venv (`tests/fixtures/e2e/.venv`, gitignored), pins `reportlab` + `pillow` from `requirements.txt`, runs `generate.py`, then produces the WAV with macOS `say` + `ffmpeg`. **No global pip installs.**
+`regen.sh` handles everything — creates a local venv (`backend/tests/fixtures/e2e/.venv`, gitignored), pins `reportlab` + `pillow` from `requirements.txt`, runs `generate.py`, then produces the WAV with macOS `say` + `ffmpeg`. **No global pip installs.**
 
 ```bash
 # From the repo root:
-bash tests/fixtures/e2e/regen.sh
+bash backend/tests/fixtures/e2e/regen.sh
 ```
 
 Re-run any time the source (`sample.md`, the PNG/WAV text strings inside `generate.py`/`regen.sh`) changes. Outputs are reproducible — same source → same byte-stable PDF/PNG (the WAV varies slightly because TTS is nondeterministic, but the spoken text is fixed).

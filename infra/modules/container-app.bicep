@@ -56,8 +56,8 @@ resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-// NOTE: AcrPull role for the managed identity on the shared ACR (different RG)
-// must be assigned via CLI after deployment:
+// NOTE: AcrPull for this identity on the shared ACR is granted outside the
+// templates (see docs/deploy-azure.md, step 4):
 // az role assignment create --assignee <identity-principal-id> --role AcrPull --scope <acr-resource-id>
 
 // Container App (depends on KV role assignment)

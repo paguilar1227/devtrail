@@ -9,8 +9,8 @@ For local development you need none of this; see the README quick start.
 - An Azure subscription, the `az` CLI (logged in) and Docker.
 - An existing **Azure Container Registry** (ACR). The templates reference it rather than create it, so one registry can serve several projects.
 - Model access:
-  - **Gemini** API key (embeddings, OCR, transcripts). Enable the *Generative Language API* on its Google Cloud project.
-  - **Anthropic** API key (metadata, entity extraction).
+  - **Gemini** API key (embeddings, plus metadata for audio and video). Enable the *Generative Language API* on its Google Cloud project.
+  - **Anthropic** API key (metadata for text, images and PDFs, including OCR; entity extraction).
   - **Azure OpenAI / Foundry** endpoint and key with two chat deployments, by default `gpt-5-4` (fast answers) and `gpt-5-4-pro` (opt-in thorough answers).
   - Optional URL sources: **Supadata** (YouTube), **Firecrawl** (web pages), **xAI** (X threads). Pass any placeholder for a source you do not use; saving that kind of URL will then fail with a clear error.
 - A long random API key for DevTrail itself: `openssl rand -hex 32`.
@@ -70,17 +70,20 @@ This creates Log Analytics + Application Insights, PostgreSQL Flexible Server wi
 
 Migrations run automatically every time the container starts; there is no manual migration step.
 
+The first run can fail or time out at the Container App, because its identity cannot pull from your registry yet. That is expected: do step 4, then run the same command again.
+
 ## 4. Let the Container App pull from your registry
 
-The registry usually lives in another resource group, which a resource-group-scoped template cannot grant access to. Do it once with the CLI:
+The templates create the app's managed identity but leave your registry alone: it is shared, not owned by this deployment, and granting a role on it needs rights on the registry itself. Grant `AcrPull` once with the CLI:
 
 ```bash
-PRINCIPAL_ID=$(az deployment group show -g "$RG" -n main --query properties.outputs.identityPrincipalId.value -o tsv)
+PRINCIPAL_ID=$(az identity show -n devtrail-prod-identity -g "$RG" --query principalId -o tsv)
 ACR_ID=$(az acr show --name "$ACR_NAME" --resource-group "$ACR_RG" --query id -o tsv)
-az role assignment create --assignee "$PRINCIPAL_ID" --role AcrPull --scope "$ACR_ID"
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
+  --role AcrPull --scope "$ACR_ID"
 ```
 
-If the first revision failed to pull before this assignment existed, roll it again with `az containerapp update -n "$APP" -g "$RG" --image "$ACR_NAME.azurecr.io/devtrail:$TAG"`.
+Role assignments take a minute or two to apply. Then rerun the step 3 deployment, or, if it already succeeded, roll the app with `az containerapp update -n "$APP" -g "$RG" --image "$ACR_NAME.azurecr.io/devtrail:$TAG"`.
 
 ## 5. Sign-in
 
@@ -166,4 +169,4 @@ For a deploy without GitHub Actions, `RESOURCE_GROUP=$RG ACR_NAME=$ACR_NAME CONT
 - **Vector search:** embeddings are 3072-dimensional and searched with a sequential scan; there is no HNSW index, because the smallest Postgres tier cannot build one at that dimension. That is fine at personal scale. For much larger corpora, upsize the database or reduce the embedding dimension.
 - **Long ingests:** Container Apps closes HTTP requests after about 240 seconds. Ingest is asynchronous (`202` + poll `/api/v1/content/{id}/status`), so long URL fetches finish in the background.
 - **Telemetry:** `infra/workbook-telemetry.bicep` deploys an Application Insights workbook over the app's request and provider telemetry.
-- **Live validation:** [docs/testing/live-e2e-plan.md](testing/live-e2e-plan.md) is a 52-test manual plan for exercising REST and MCP against a real deployment.
+- **Live validation:** [docs/testing/live-e2e-plan.md](testing/live-e2e-plan.md) is a 64-test manual plan for exercising REST and MCP against a real deployment.

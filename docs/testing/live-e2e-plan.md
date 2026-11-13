@@ -10,7 +10,7 @@ Each test is self-contained — copy the curl, verify the pass criteria, check t
 
 Every input is pinned. Same inputs → same expected outcomes (within LLM nondeterminism, which is documented per test).
 
-- **File fixtures** are checked in at `tests/fixtures/e2e/` (PDF, PNG, WAV). Regenerate via instructions in `tests/fixtures/e2e/README.md` if needed — but if you do, update the expected-outcomes section below.
+- **File fixtures** are checked in at `backend/tests/fixtures/e2e/` (PDF, PNG, WAV). Regenerate via instructions in `backend/tests/fixtures/e2e/README.md` if needed — but if you do, update the expected-outcomes section below.
 - **URLs** are pinned to stable resources (an arXiv abstract from 2017, a TED talk that's been online for years, a long-stable blog post).
 - **Inline content** for documents/notes/todos is hardcoded in the curl bodies. Don't edit it.
 - **Test project name** uses a deterministic prefix (`E2E Test`) so cleanup can find leftovers from a crashed run.
@@ -22,7 +22,7 @@ If a test diverges from the expected outcome, that's the bug — investigate bef
 ### Environment
 
 ```bash
-cd ~/src/devtrail
+cd devtrail   # repo root
 export API="https://your-app.your-env.region.azurecontainerapps.io"
 export KEY="$(az keyvault secret show --vault-name your-keyvault --name devtrail-api-key --query value -o tsv)"
 export AUTH="Authorization: Bearer $KEY"
@@ -34,9 +34,9 @@ export ARXIV_URL="https://arxiv.org/abs/1706.03762"            # "Attention Is A
 export BLOG_URL="https://www.paulgraham.com/wealth.html"       # "How to Make Wealth" — Paul Graham — long-stable, no paywall
 
 # Local file fixtures
-export PDF_FILE="$PWD/tests/fixtures/e2e/sample.pdf"
-export IMG_FILE="$PWD/tests/fixtures/e2e/sample.png"
-export AUDIO_FILE="$PWD/tests/fixtures/e2e/sample.wav"
+export PDF_FILE="$PWD/backend/tests/fixtures/e2e/sample.pdf"
+export IMG_FILE="$PWD/backend/tests/fixtures/e2e/sample.png"
+export AUDIO_FILE="$PWD/backend/tests/fixtures/e2e/sample.wav"
 
 # Sanity
 curl -s "$API/health" | jq .
@@ -44,7 +44,7 @@ curl -s "$API/health" | jq .
 
 # Verify fixtures exist
 for f in "$PDF_FILE" "$IMG_FILE" "$AUDIO_FILE"; do
-  [ -f "$f" ] || { echo "MISSING FIXTURE: $f — see tests/fixtures/e2e/README.md to regenerate"; exit 1; }
+  [ -f "$f" ] || { echo "MISSING FIXTURE: $f — see backend/tests/fixtures/e2e/README.md to regenerate"; exit 1; }
 done
 echo "Fixtures OK."
 ```
@@ -952,7 +952,7 @@ These are the deterministic outputs anyone running the plan should see. Any dive
 
 ### Total
 
-- **52 tests** across 10 phases
+- **64 tests** across 11 phases (T0–T10)
 - **15-20 minutes** runtime
 - **~$0.10** in LLM cost (Haiku metadata + Azure GPT-5.4 RAG)
 

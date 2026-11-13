@@ -136,12 +136,12 @@ make e2e          # Playwright workflow suite against a local stack
 dagger call ci    # the CI gate: also runs gitleaks, trivy and npm audit
 ```
 
-448 unit and integration tests run in stub mode with no network calls; the Playwright suite covers desktop and mobile workflows. Agents working on this repo should start with [AGENTS.md](AGENTS.md).
+449 unit and integration tests run in stub mode with no network calls; the Playwright suite covers desktop and mobile workflows. Agents working on this repo should start with [AGENTS.md](AGENTS.md).
 
 ## Limits
 
 - One owner per deployment; there are no user accounts or sharing.
-- Models are Gemini, Anthropic and Azure OpenAI; files go to Azure Blob Storage (or Azurite).
+- Models are Gemini, Anthropic and Azure OpenAI, plus xAI Grok for X threads; files go to Azure Blob Storage (or Azurite).
 - Vector search is a sequential scan over 3072-dimensional embeddings: fast at personal scale, not built for millions of chunks.
 
 ## Documentation
