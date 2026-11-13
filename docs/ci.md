@@ -1,6 +1,6 @@
 # CI
 
-This repo uses the owner's **local-ci** standard: one uniform gate (a Dagger module
+This repo uses a **local-ci** standard: one uniform gate (a Dagger module
 in `ci/`) run locally via Lefthook and mirrored by a thin GitHub Actions
 workflow. A green local `dagger call ci` means a green GitHub run — same engine
 (Dagger v0.21.6, pinned both sides), same result.
@@ -70,7 +70,7 @@ lefthook install
 - **On push** (feature branch): full `dagger call ci` — the parity gate.
 - **On GitHub**: `push: main` + `workflow_dispatch` run the same `dagger call ci`
   (no per-PR trigger — the local pre-push gate covers PRs; keeps Actions minutes
-  from burning. See CLAUDE.md "CI model").
+  from burning. See AGENTS.md "CI").
 
 The Makefile targets (`make ci` / `make ci-full`) still exist for the e2e flow
 and dev convenience, but **Dagger is the CI source of truth** — the GitHub job

@@ -1,176 +1,157 @@
 # DevTrail
 
-Personal knowledge base + productivity tool. Single user. NotebookLM-style: organize knowledge into **projects**, dump documents/notes/todos into them, run hybrid semantic + entity-graph search across everything.
+**A shared workspace where people and AI agents track work, and anyone can see where a project stands.**
 
-DevTrail runs as a single Hono process serving three surfaces — REST API, MCP server, and a Vite/React web UI — backed by PostgreSQL + pgvector and Azure Blob Storage. Multimedia ingestion (PDF/image/audio) and URL ingestion (YouTube/X/HTML) flow through the same chunking + embedding + entity-extraction pipeline.
+[![CI](https://github.com/paguilar1227/devtrail/actions/workflows/ci.yml/badge.svg)](https://github.com/paguilar1227/devtrail/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+DevTrail keeps projects, todos, notes, documents and agent sessions in one place. Agents work through an MCP server with 32 tools; people use the web and iOS app; both read and write the same records. The database records every change on a timeline, and everything you save is searchable with hybrid vector, keyword and entity-graph retrieval, with cited answers.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.svg">
+  <img alt="DevTrail architecture: people, AI agents and scripts reach one server through the web app, the MCP server and the REST API. All three call the same services, which store work in Postgres with pgvector and Blob storage, record every change on a timeline, and call AI models for embeddings, extraction and answers." src="docs/images/overview-light.svg">
+</picture>
+
+## Why
+
+Agents are good at doing work and bad at leaving a trail. Sessions end, context is lost, and the person who owns the project can't tell what happened or what comes next. DevTrail gives both sides one durable record:
+
+- **Agent-first.** 32 MCP tools mirror the REST API: create and update work, search, ask, open sessions, save handoffs, read timelines.
+- **Readable by people.** Sessions end with a handoff (summary, decisions, next steps) that shows up in the web and iOS app next to the work it produced.
+- **History you can't skip.** Postgres triggers write the project and session timelines in the same transaction as each change, whichever client made it.
+- **Search that explains itself.** Vector, keyword and entity-graph results are fused with reciprocal rank fusion; every hit carries its retrieval path, and answers cite their sources.
+- **Anything in, asynchronously.** Notes, PDFs, images, audio and video, plus YouTube, web pages and X threads by URL. Ingest returns `202` at once and finishes in the background.
+- **Built to run.** OpenAPI 3.1 spec, Docker image, Azure Bicep templates, a CI gate with typecheck, tests and security scans, and a stub mode that runs everything with zero model spend.
+
+![A DevTrail project: its live timeline, with tabs for sessions, chat, documents, notes and todos](docs/images/screenshot-project-timeline.png)
+
+## How it works
+
+**An agent's handoff reaches a person.** The agent calls `save_session`; the session and a searchable note are written; a trigger records the change; the person opens the session timeline.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/handoff-flow-dark.svg">
+  <img alt="Sequence: an AI agent calls save_session on the MCP server, which saves the handoff through the workspace services into Postgres; a trigger records the change on the timeline; later the web app requests the session timeline from the REST API and receives the handoff and full history." src="docs/images/handoff-flow-light.svg">
+</picture>
+
+**Answering from everything saved.** The question is embedded, retrieved three ways, fused, and answered from the top chunks with citations.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/ask-flow-dark.svg">
+  <img alt="Sequence: an agent calls ask on the MCP server; search embeds the question with Gemini, retrieves vector and keyword seeds and expands the entity graph in Postgres, fuses the results with RRF, asks Azure OpenAI to answer from the top chunks, and returns the answer with citations and retrieval paths." src="docs/images/ask-flow-light.svg">
+</picture>
+
+<details>
+<summary>Take the animated tour</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/walkthrough-dark.svg">
+  <img alt="Animated six-step tour of DevTrail: agents work through MCP, people and agents share one record, every change lands on a timeline, handoffs reach people, search fuses three retrieval arms, answers come back with citations." src="docs/images/walkthrough-light.svg">
+</picture>
+
+</details>
 
 ## Quick start
 
+You need Docker and Node 20+.
+
 ```bash
-# One command brings up Postgres + Azurite (Blob emulator) + backend + frontend
+git clone https://github.com/paguilar1227/devtrail.git
+cd devtrail
 npm run dev:up
-
-# UI:        http://localhost:5173
-# Backend:   http://localhost:3001
-# API docs:  http://localhost:3001/api/docs?key=local-dev-key-not-secret
-# OpenAPI:   http://localhost:3001/api/openapi.json (Bearer or ?key=)
-
-# Stop docker (data preserved): npm run dev:down
-# Wipe volumes (with confirm):  npm run dev:reset
 ```
 
-`dev:up` is idempotent: bootstraps `backend/.env` from `.env.example` if missing, runs `npm ci` anywhere `node_modules` is missing, brings up Docker, seeds an empty DB, and hands off to backend + frontend dev servers with HMR. Default config is **stub mode** (`LLM_PROVIDER=stub`) — every LLM + embedding call is faked deterministically, zero upstream API spend. Flip to real APIs by editing `backend/.env`.
+This starts Postgres (with pgvector) and Azurite in Docker, installs dependencies, seeds demo data and runs the backend and web app with hot reload, all in **stub mode**: every model call is faked deterministically, so you need no API keys.
 
-## Features
+- Web app: <http://localhost:5173>
+- API docs: <http://localhost:3001/api/v1/docs> (click **Authorize** and use `local-dev-key-not-secret`)
+- MCP: `http://localhost:3001/mcp`
 
-### Content & retrieval
+Stop with Ctrl-C; `npm run dev:down` stops the containers and keeps the data. To use real models, set `LLM_PROVIDER=real` and the provider keys in `backend/.env`.
 
-- **Project-scoped knowledge:** documents and notes can belong to multiple projects; todos belong to one (or live in a personal Inbox).
-- **Multimodal ingestion:** PDFs, images (with OCR), audio (with transcription), all chunked and embedded via Gemini Embedding 2 (3072d, multimodal).
-- **URL ingestion:** YouTube transcripts (Supadata), X/Twitter threads (xAI Grok), PDFs, HTML articles (Firecrawl) — `source_url` preserved and surfaced in citations.
-- **Async ingest contract:** `POST /api/v1/content` and `/from-url` return 202 + `{id, processing_status: "pending"}`. Poll `/content/:id/status` until `ready` or `failed`.
-- **Hybrid search:** vector seed + graph expansion along chunk→entity edges, fused via Reciprocal Rank Fusion. Each hit includes a `retrieval_path` explaining how it was reached.
-- **Entity graph layer:** Haiku 4.5 extracts entities at ingest, resolved against a canonical registry (exact name, alias, embedding similarity). `find_mentions` returns every chunk that mentions a given entity.
-- **RAG with auto-depth routing:** Haiku classifier picks fast (Azure GPT-5.4, ~3-5s) or thorough (Azure GPT-5.4 Pro Responses API, 15-60s) per question. Per-stage `timings_ms` in every response.
+## Connect an agent
 
-### Sessions and timelines
+Any MCP client that speaks Streamable HTTP works. Send the API key as a Bearer token.
 
-- **Session workspaces:** create or resume by a stable key, keep notes/documents/todos together, and optionally assign a project. Moving a session moves its owned work and history.
-- **Session handoffs:** factual summaries, decisions, and next steps remain in session context and a searchable source note.
-- **Durable timelines:** project history includes child sessions; session history is independently browsable. Search matches, cursor pagination, and shared AND/OR tag filters work across both. Deleted artifacts retain event metadata, never copied bodies. Existing data is marked as reconstructed history.
-- **Navigation:** Sessions is available in the desktop sidebar and mobile More menu; each project has Sessions and Timeline tabs.
-- **Cloud compatibility:** existing Easy Auth, Bearer API access, Azure Blob storage, 3072-dimensional embeddings, shared browse panels, folders, and root-only todo tags are retained.
+**Claude Code** (`.mcp.json` in your project):
 
-### Tasks
-
-- **Hierarchical todos** with subtasks, comments, status (`not_started` / `in_progress` / `paused` / `done`), priority (P1/P2/P3), due dates, tags.
-- **Cascade behavior:** hard-deleting a parent todo cascades to all descendants (`parent_id ON DELETE CASCADE`); deleting a content item cascades to its chunks + chunk_entities.
-- **Soft delete + restore + pin/unpin:** archive/unarchive on every entity, pin to the top of any list.
-- **Bulk operations:** `POST /api/v1/{content,todos}/bulk` for archive/delete/tag-edit across many ids in one call.
-
-### MCP server (32 tools)
-
-Read tools: `list_projects`, `list`, `get`, `search`, `find_mentions`, `list_tags`, `list_comments`, `list_activity`, `ask`. Write tools: `create_project`, `create`, `update`, `replace`, `archive`, `restore`, `add_comment`, `update_comment`, `save_from_url`, `retry`, `reprocess`, `rename_tag`. Session tools: `list_sessions`, `create_session`, `update_session`, `get_session_context`, `get_project_context`, `save_session`, `session_timeline`, `project_timeline`, `delete_session`, `retry_session_cleanup`. Browse and search accept session scope and expose the shared filtering options.
-
-Stateless: a fresh server + transport per request, mounted at `/mcp`. The server includes an `INSTRUCTIONS` string that Claude.ai / Claude Code apply automatically — covers project membership asymmetry (`project_id` vs `project_ids`), prefer-search-before-creating discipline, and the entity model.
-
-## Architecture
-
-| Layer | Technology |
-|-------|-----------|
-| API | Hono on Node 20, served by `@hono/node-server` |
-| Web UI | Vite + React, no Tailwind; design system in `frontend/src/styles.css` |
-| MCP | `@modelcontextprotocol/sdk` over Streamable HTTP, mounted at `/mcp` |
-| Database | PostgreSQL + pgvector (3072-dim, sequential scan — no HNSW) |
-| Blob storage | Azure Blob Storage (private; SAS-signed read URLs at API response time) |
-| Container | Docker on Azure Container Apps |
-| Web auth (prod) | Container Apps Easy Auth → Microsoft Entra ID; `/api/*` and `/mcp` excluded (Bearer-only) |
-| Embeddings | Gemini Embedding 2 (`gemini-embedding-2-preview`, 3072d, multimodal) |
-| Metadata + entity extraction | Anthropic Claude Haiku 4.5 |
-| Query depth classifier | Anthropic Claude Haiku 4.5 |
-| RAG fast path | Azure Foundry chat completions (gpt-5-4) |
-| RAG thorough path | Azure Foundry Responses API (gpt-5-4-pro) |
-| CI/CD | GitHub Actions (OIDC); CI runs unit + integration + Playwright e2e on every PR |
-
-The Container App hosts all three surfaces in a single process. Adapters are thin; all business logic lives in `backend/src/services/` (see `CLAUDE.md` for the layout). Migrations auto-apply on startup.
-
-## Repo layout
-
-```
-backend/                  # Hono API + MCP server (Node 20)
-frontend/                 # Vite + React web client
-shared/                   # @devtrail/shared — Zod schemas + TS types shared on the wire
-migrations/               # SQL migrations applied on backend startup
-scripts/                  # dev-up.sh, dev-down.sh, dev-reset.sh, deploy.sh, seed-local.ts
-docs/                     # design docs, plans, UI build brief
-.github/workflows/        # CI + Deploy to Azure
-docker-compose.yml        # local Postgres (pgvector) + Azurite (Blob emulator)
-Dockerfile                # multi-stage: frontend build → backend build → runtime
+```json
+{
+  "mcpServers": {
+    "devtrail": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp",
+      "headers": { "Authorization": "Bearer local-dev-key-not-secret" }
+    }
+  }
+}
 ```
 
-Root `package.json` is a thin orchestrator:
+**Codex** (`~/.codex/config.toml`, with `DEVTRAIL_API_KEY` exported in your shell):
+
+```toml
+[mcp_servers.devtrail]
+url = "http://localhost:3001/mcp"
+bearer_token_env_var = "DEVTRAIL_API_KEY"
+```
+
+For clients that can only be given a URL, start the server with `MCP_ALLOW_URL_KEY=true` and use `/mcp?key=<key>`. URLs end up in logs, so prefer the header.
+
+## API
+
+| Path | For | Auth |
+|---|---|---|
+| `/api/v1/*` | REST clients and the web app | `Authorization: Bearer <DEVTRAIL_API_KEY>` |
+| `/api/v1/openapi.json`, `/api/v1/docs` | anyone | public |
+| `/mcp` | MCP clients | Bearer (`?key=` only with `MCP_ALLOW_URL_KEY=true`) |
+| `/api/auth/token` | browsers behind Azure Easy Auth | only with `AUTH_MODE=easyauth` |
+| `/health` | probes | public |
+
+All 57 REST operations are generated from Zod schemas into the OpenAPI spec, so the docs can't drift from the handlers. Lists filter with `?project_id=`, `?tags=a,b` and `?pinned=`; deletes are soft unless `?hard=true`; errors are `{ "error": "..." }`.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEVTRAIL_API_KEY` | required | Bearer key for REST, MCP and web sign-in |
+| `DATABASE_URL` | required | Postgres with the `vector` extension |
+| `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER` | required | Blob storage for original files (Azurite works locally) |
+| `LLM_PROVIDER` | `real` | `stub` fakes every model call |
+| `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY` | required in `real` mode | Embeddings and media, extraction, answers |
+| `SUPADATA_API_KEY`, `FIRECRAWL_API_KEY`, `XAI_API_KEY` | required in `real` mode | YouTube, web page and X thread ingest |
+| `AUTH_MODE` | `api-key` | `easyauth` only behind Azure Container Apps authentication |
+| `MCP_ALLOW_URL_KEY` | `false` | Accept `?key=` on `/mcp` |
+
+The full list is in [docs/architecture.md](docs/architecture.md#18-environment-variables).
+
+## Deploy
+
+The Docker image (`docker build -t devtrail .`) runs anywhere with Postgres + pgvector and Blob storage. The reference deployment is Azure Container Apps with PostgreSQL Flexible Server, Blob Storage and Key Vault, defined in `infra/` and deployable from GitHub Actions. See [docs/deploy-azure.md](docs/deploy-azure.md).
+
+## Development
 
 ```bash
-npm run dev:up        # full local stack from any state (recommended)
-npm run dev:down      # stop docker, keep data
-npm run dev:reset     # wipe volumes (with confirm)
-npm run dev:full      # backend + frontend only (assumes compose up)
-npm run seed:local    # populate DB with realistic projects/notes/todos
-npm test              # backend test suite
-npm run test:e2e      # frontend Playwright suite
-npm run install:all   # backend + frontend deps
-npm run build:all     # production build
+make ci           # typecheck + backend and frontend unit tests + build
+make e2e          # Playwright workflow suite against a local stack
+dagger call ci    # the CI gate: also runs gitleaks, trivy and npm audit
 ```
 
-## Schema
+448 unit and integration tests run in stub mode with no network calls; the Playwright suite covers desktop and mobile workflows. Agents working on this repo should start with [AGENTS.md](AGENTS.md).
 
-13 migrations under `migrations/`, applied idempotently on backend startup:
+## Limits
 
-| File | What |
-|------|------|
-| `001_schema.sql` | projects, content_items, chunks, todos, todo_comments |
-| `002_source_url.sql` | `source_url` on content_items for URL-ingested entries |
-| `003_entities_graph.sql` | entities + chunk_entities tables, `published_at` on content_items |
-| `004_processing_status.sql` | `processing_status` + `processing_error` on content_items (async ingest contract) |
-| `005_backfill_control_chars.sql` | strip C0/DEL bytes from old content rows |
-| `006_ingest_completed_at.sql` | `ingest_completed_at` for the polling endpoint |
-| `007_pinned.sql` | `pinned_at` TIMESTAMPTZ + partial indexes on content_items, todos, projects |
-| `008_manual_order.sql` | Per-sibling todo ordering |
-| `009_content_folder.sql` | First-class content folders |
-| `010_subtask_tags_cleanup.sql` | Root-only todo tags |
-| `011_project_memory.sql` | Durable project sessions and handoff storage |
-| `012_project_timeline.sql` | Transactional timeline capture and honest historical backfill |
-| `013_session_workspaces.sql` | Session ownership, moves, cascading cleanup, and session timelines |
-
-
-## API documentation
-
-Full OpenAPI 3.1 spec at `/api/openapi.json`, Swagger UI at `/api/docs`. Both are Bearer-gated. For local: `http://localhost:3001/api/docs?key=local-dev-key-not-secret`. The page carries the `?key=` query param into all "Try it out" requests so you can exercise the API live.
-
-37 paths across Projects, Content, Todos, Comments, Search, Tags, Activity, Diagnostics, MCP. Source of truth: `backend/src/openapi.ts`.
-
-## Testing
-
-235 tests across unit + integration. Unit tests cover providers, capture utilities, db client, MCP server wiring, services. Integration tests exercise the full REST surface against mocked deps + an in-memory pg.
-
-```bash
-npm test                                              # backend (unit + integration)
-cd backend && npx tsc --noEmit                        # type check
-cd backend && npx vitest run tests/integration/rest-api.test.ts  # single file
-npm run test:e2e                                      # frontend Playwright
-```
-
-CI runs the full backend suite + frontend build + Playwright on every PR. No real upstream API keys required — all providers are mocked at the test boundary.
-
-## Deployment
-
-GitHub Actions deploys on every push to `main` (`.github/workflows/deploy.yml`). Build the container, push to ACR, update the Azure Container App, wait for `/health` 200, run a curl-based smoke job that hits health, REST gate, MCP initialize, and the auth-redirect.
-
-The smoke job is intentionally **free** — only public + cheap endpoints. See the cost-invariant comment in `deploy.yml` before adding paid checks.
-
-For first-time setup, see [`SETUP.md`](./SETUP.md). Manual deploy from a local machine:
-
-```bash
-RESOURCE_GROUP=<rg> ACR_NAME=<acr> ./scripts/deploy.sh
-```
-
-## Production
-
-| | |
-|--|--|
-| App URL | `https://your-app.your-env.region.azurecontainerapps.io` |
-| Health | `<app-url>/health` returns `{"ok":true,"service":"devtrail","version":"2.0.0"}` |
-| Web UI | Easy Auth gated — sign in with Microsoft Entra ID (restricted to one user) |
-| API | `<app-url>/api/v1/*` — Bearer auth (excluded from Easy Auth) |
-| MCP | `<app-url>/mcp?key=<api-key>` — stateless, per-request server |
-| API key | Azure Key Vault: `your-keyvault/devtrail-api-key` |
-| Database | `your-pg-server.postgres.database.azure.com` |
-| Storage | Azure Blob; `Allow Blob Public Access = false`; API generates short-lived SAS read URLs in responses |
+- One owner per deployment; there are no user accounts or sharing.
+- Models are Gemini, Anthropic and Azure OpenAI; files go to Azure Blob Storage (or Azurite).
+- Vector search is a sequential scan over 3072-dimensional embeddings: fast at personal scale, not built for millions of chunks.
 
 ## Documentation
 
-- [`CLAUDE.md`](./CLAUDE.md) — instructions for AI sessions working on this codebase
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — deeper architectural notes
-- [`SETUP.md`](./SETUP.md) — first-time Azure deployment walkthrough
-- `/api/docs` — live Swagger UI for the REST surface
-- `backend/src/openapi.ts` — OpenAPI 3.1 spec (source of truth for the contract)
+- [Architecture](docs/architecture.md): data model, ingest, search, RAG, entity graph, sessions and timelines
+- [Deploying to Azure](docs/deploy-azure.md)
+- [CI](docs/ci.md) and the [live test plan](docs/testing/live-e2e-plan.md)
+- [iOS shell](docs/ios-shell.md)
+- [AGENTS.md](AGENTS.md): conventions for agents and contributors
+
+## License
+
+[MIT](LICENSE)

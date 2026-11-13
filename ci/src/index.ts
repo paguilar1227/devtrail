@@ -11,7 +11,7 @@
 import { dag, Container, Directory, object, func, argument } from "@dagger.io/dagger"
 
 // Pinned images (never :latest) — hermetic steps = local == GitHub.
-const NODE = "node:20-bookworm-slim" // repo targets Node 20 (.nvmrc / CLAUDE.md)
+const NODE = "node:20-bookworm-slim" // repo targets Node 20 (.nvmrc / AGENTS.md)
 const GITLEAKS = "zricethezav/gitleaks:v8.30.1"
 const TRIVY = "aquasec/trivy:0.58.1"
 
@@ -99,7 +99,7 @@ export class Ci {
    *                  root lock — stale nested workspace locks are mount-excluded).
    *  - npm audit   — no HIGH+ advisories.
    * Promoted from report-only once the tree hit 0 findings (Phase C of the
-   * dependency remediation; see CI.md). Escape valve for an unfixable/accepted
+   * dependency remediation; see docs/ci.md). Escape valve for an unfixable/accepted
    * CVE: pin a patched version via npm `overrides` (preferred — see root
    * package.json) or add a .trivyignore entry; bypass a local push in a pinch
    * with `LEFTHOOK=0 git push`.

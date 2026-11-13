@@ -6,7 +6,7 @@
 # to be diffed against prior runs in docs/profiles/.
 #
 # Prerequisites:
-#   1. E2E_TEST_PLAN.md phases 0-4 already run, populating:
+#   1. docs/testing/live-e2e-plan.md phases 0-4 already run, populating:
 #        - A test project with the standard sample.pdf / sample.png /
 #          sample.wav uploaded plus the pinned URL-ingested docs (arXiv,
 #          blog, YouTube). 7 content items total.

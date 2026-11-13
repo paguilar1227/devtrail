@@ -1,6 +1,6 @@
 # Dev-convenience CI targets.
 #
-# NOTE: the CI *source of truth* is now the Dagger module (`ci/`, see CI.md).
+# NOTE: the CI *source of truth* is now the Dagger module (`ci/`, see docs/ci.md).
 # Lefthook `pre-push` runs `dagger call ci`, and the GitHub workflow body is the
 # same `dagger call ci` — so parity is guaranteed by the shared engine, not by
 # these targets. These remain because the e2e (`make e2e`) isn't a Dagger gate

@@ -14,7 +14,7 @@ node_modules
 # Dockerfile, Makefile, and CI all run root `npm ci`, so these are never
 # consulted by the build/deploy. They're frozen at old versions and only
 # produce trivy false-positives; the security gate must reflect the deployed
-# artifact (the root lock). (Cruft worth deleting from the repo too — see CI.md.)
+# artifact (the root lock). (Cruft worth deleting from the repo too — see docs/ci.md.)
 backend/package-lock.json
 frontend/package-lock.json
 dist

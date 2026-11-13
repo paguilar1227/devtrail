@@ -1,5 +1,5 @@
 // infra/main.bicep — DevTrail on Azure Container Apps.
-// Usage: see SETUP.md. Secrets go to Key Vault; the Container App reads them
+// Usage: see docs/deploy-azure.md. Secrets go to Key Vault; the Container App reads them
 // through its managed identity.
 targetScope = 'resourceGroup'
 

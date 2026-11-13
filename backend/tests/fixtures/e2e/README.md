@@ -1,6 +1,6 @@
 # E2E test fixtures
 
-Pinned, checked-in inputs for `E2E_TEST_PLAN.md`. Filenames are stable; the contents are deterministic given the source files in this directory.
+Pinned, checked-in inputs for `docs/testing/live-e2e-plan.md`. Filenames are stable; the contents are deterministic given the source files in this directory.
 
 ## Files
 
@@ -29,7 +29,7 @@ If sample.wav can't be regenerated (non-macOS host, no `ffmpeg`), commit the exi
 - If you edit `sample.md` (PDF source), `generate.py` (PNG layout), or the audio script in `regen.sh`.
 - After major Python tooling upgrades that might change reportlab/Pillow output.
 
-After regenerating, **update the "Baseline expected outcomes" section in `E2E_TEST_PLAN.md`** if the visible content (OCR words, transcript phrasing, page count) changed.
+After regenerating, **update the "Baseline expected outcomes" section in `docs/testing/live-e2e-plan.md`** if the visible content (OCR words, transcript phrasing, page count) changed.
 
 ## Why these fixtures
 

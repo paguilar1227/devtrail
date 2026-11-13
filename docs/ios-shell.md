@@ -17,8 +17,9 @@ behaviorally; the native shell adds a thin runtime-config layer.
 
 ## Architecture
 
-- **Web:** requests stay same-origin (`apiOrigin()` → `''`). Prod auth = Easy Auth cookie →
-  `/api/auth/token` exchange, exactly as before.
+- **Web:** requests stay same-origin (`apiOrigin()` → `''`). The key comes from the
+  sign-in screen (`AUTH_MODE=api-key`) or the Easy Auth `/api/auth/token` exchange
+  (`AUTH_MODE=easyauth`).
 - **Native:** the bundle loads from `capacitor://localhost`, so there is no same origin. A
   first-run **connect screen** collects the server URL + API key, verifies the pair against
   `GET /api/v1/stats`, and persists both in localStorage. `bootAuth()` gates on them via
@@ -49,7 +50,7 @@ behaviorally; the native shell adds a thin runtime-config layer.
 
 ## Build + run
 
-See `CLAUDE.md → "iOS app (Capacitor shell)"` for the canonical loop
+See `AGENTS.md → "iOS app (Capacitor shell)"` for the canonical loop
 (`npm run build` → `npx cap sync ios` → `xcodebuild` → `simctl install/launch`).
 ATS allows plain-http to local hosts only; production servers are https.
 
@@ -61,11 +62,8 @@ ATS allows plain-http to local hosts only; production servers are https.
   launch → connect screen (typed URL + key, verified against live backend) → reload →
   Home with live seeded data → Projects tab navigation. Config persists across
   relaunches and in-place updates (an uninstall clears app data — first-run
-  connect again, which is exactly what `make ios-smoke` exercises). Screenshots
-  embedded in the whiteboard
-  ([ios-shell-board.html](./ios-shell-board.html)).
-- Full Playwright web suite (`make e2e`) run for parity — verdict + failure attribution
-  in the whiteboard. Known caveat: local runs share a long-lived dev DB and drift-prone
+  connect again, which is exactly what `make ios-smoke` exercises).
+- Full Playwright web suite (`make e2e`) run for parity. Known caveat: local runs share a long-lived dev DB and drift-prone
   specs exist (`project_local_db_pollution_vs_e2e`); cloud CI on merge is authoritative.
 
 ## Follow-ups (not in this branch)

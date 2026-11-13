@@ -122,11 +122,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "$AUTH" "$API/api/v1/projects"
 
 [ ] PASS / [ ] FAIL — Notes: ____
 
-### T0.3 — Auth via query string
+### T0.3 — Query-string keys are refused on REST
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" "$API/api/v1/projects?key=$KEY"
+curl -s -o /dev/null -w "%{http_code}\n" "$API/api/v1/openapi.json"
 ```
-**Pass:** `200`.
+**Pass:** `401` (REST accepts the Bearer header only), then `200` (the OpenAPI spec is public).
 
 [ ] PASS / [ ] FAIL — Notes: ____
 
@@ -741,7 +742,7 @@ Each MCP tool is exercised through equivalent REST calls above; this phase confi
 
 ### T8.1 — `list_projects`
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}' \
   | jq -r '.result.content[0].text' | jq 'map(select(.id == "'"$PROJECT_ID"'")) | length'
 ```
 **Pass:** `1`.
@@ -750,7 +751,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":1,"method
 
 ### T8.2 — `create` (quick_note)
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create","arguments":{"type":"quick_note","content":"E2E quick note from MCP","project_ids":["'"$PROJECT_ID"'"]}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create","arguments":{"type":"quick_note","content":"E2E quick note from MCP","project_ids":["'"$PROJECT_ID"'"]}}}' \
   | jq -r '.result.content[0].text' | jq '{id, type, title}'
 ```
 **Pass:** `type: "note"` (quick_note maps to note). AI-generated `title`.
@@ -759,7 +760,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":2,"method
 
 ### T8.3 — `list`
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list","arguments":{"entity_type":"document","project_id":"'"$PROJECT_ID"'"}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list","arguments":{"entity_type":"document","project_id":"'"$PROJECT_ID"'"}}}' \
   | jq -r '.result.content[0].text' | jq length
 ```
 **Pass:** Count >= 5 (DOC_ID + PDF + IMG + AUDIO + URL-ingested).
@@ -768,7 +769,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":3,"method
 
 ### T8.4 — `get`
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get","arguments":{"id":"'"$DOC_ID"'"}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get","arguments":{"id":"'"$DOC_ID"'"}}}' \
   | jq -r '.result.content[0].text' | jq .title
 ```
 **Pass:** `"pgvector vs HNSW notes"`.
@@ -777,7 +778,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":4,"method
 
 ### T8.5 — `search` with graph
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"search","arguments":{"query":"pgvector","project_id":"'"$PROJECT_ID"'","limit":3}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"search","arguments":{"query":"pgvector","project_id":"'"$PROJECT_ID"'","limit":3}}}' \
   | jq -r '.result.content[0].text' | jq 'map(.retrieval_path | length)'
 ```
 **Pass:** Each hit has non-empty `retrieval_path`.
@@ -786,7 +787,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":5,"method
 
 ### T8.6 — `find_mentions`
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"find_mentions","arguments":{"entity":"pgvector","limit":5}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"find_mentions","arguments":{"entity":"pgvector","limit":5}}}' \
   | jq -r '.result.content[0].text' | jq '{name: .entity.canonical_name, n: (.mentions | length)}'
 ```
 **Pass:** Resolved with mentions.
@@ -795,7 +796,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":6,"method
 
 ### T8.7 — `save_from_url` (dedup)
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"save_from_url","arguments":{"url":"'"$YT_URL"'"}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"save_from_url","arguments":{"url":"'"$YT_URL"'"}}}' \
   | jq -r '.result.content[0].text' | jq '{id, deduped}'
 ```
 **Pass:** `id == $YT_DOC_ID`, `deduped: true`.
@@ -804,7 +805,7 @@ curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":7,"method
 
 ### T8.8 — `get` with bad UUID
 ```bash
-curl -s -X POST "$API/mcp?key=$KEY" -H "$CT" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get","arguments":{"id":"not-a-uuid"}}}' \
+curl -s -X POST "$API/mcp" -H "$AUTH" -H "$CT" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get","arguments":{"id":"not-a-uuid"}}}' \
   | jq '.result | {isError, text: .content[0].text}'
 ```
 **Pass:** `isError: true`, message includes `"Invalid UUID format"`.
@@ -961,7 +962,7 @@ These are the deterministic outputs anyone running the plan should see. Any dive
 
 | Feature | REST | MCP | Tested in |
 |---------|------|-----|-----------|
-| Auth (Bearer / query / 401) | ✓ | inherited | T0.2-T0.4 |
+| Auth (Bearer / query refused / 401) | ✓ | inherited | T0.2-T0.4 |
 | Projects CRUD | ✓ | partial (no PUT/DEL via MCP) | T1.* |
 | Project bad UUID | ✓ | ✓ | T1.6, T8.8 |
 | Content (text) CRUD | ✓ | partial (no PUT/DEL via MCP) | T2.*, T8.* |

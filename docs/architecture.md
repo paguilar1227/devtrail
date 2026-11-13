@@ -1,75 +1,52 @@
 # DevTrail — Architecture
 
-Authoritative reference for the V2 codebase. Written for AI agents and humans who want a complete, factual picture of what is *actually built* — not what was designed in the V1 era.
+Reference for how DevTrail is built, for people and AI agents who want a complete, factual picture of the code.
 
 > **Reality check first.** Architecture changes happen between sessions. Cheap checks before trusting this doc:
 > - `git log --oneline -20` — recent changes
 > - `find src -type f -name '*.ts' | sort` — what files actually exist
 > - `ls migrations/` — current schema
 > - `cat package.json` — current deps
-> - `curl <app-url>/health` — what's deployed
+> - `curl <app-url>/health` — what is deployed
 >
 > If a memory or doc references a file/function/entity that no longer exists in the repo, **the code wins**. Update or remove the stale doc.
 
-> **Path convention.** This doc uses `src/`, `tests/`, `migrations/` etc. as if rooted at the repo top. As of April 2026 the repo is split into npm workspaces — backend code lives under `backend/`, frontend under `frontend/`, shared schemas under `shared/`. So `src/services/foo.ts` in this doc is `backend/src/services/foo.ts` on disk. The §17 File Map and tree diagrams in §13/§14 are pre-split snapshots; treat them as logical structure, not literal paths.
+> **Path convention.** Backend paths such as `src/services/foo.ts` are relative to `backend/` (so `backend/src/services/foo.ts` on disk); `migrations/`, `infra/` and `shared/` are at the repository root.
 
 ---
 
 ## 1. Purpose
 
-DevTrail is a **single-user, NotebookLM-style personal knowledge base + productivity tool**. The user organizes knowledge into **projects**; each project contains documents (uploaded reference material), notes (self-authored), and todos (with subtasks + comments). Hybrid semantic + entity-graph search spans everything. A retrieval-augmented Q&A surface routes between a fast model and a reasoning model based on the question.
+DevTrail is a **shared workspace where people and AI agents track work**. The owner organizes knowledge into **projects**; each project holds documents (uploaded files and saved URLs), notes (written text), todos (with subtasks and comments) and **sessions**, the workspaces an agent or person creates or resumes by a stable key and hands off with a summary, decisions and next steps. Database triggers record every change on a durable **project and session timeline**. Hybrid semantic + entity-graph search spans everything, and a retrieval-augmented Q&A surface answers with citations.
 
-There is **no multi-tenancy**. There is **no Telegram bot**, **no consolidation/facts/insights pipeline**, **no reflection engine** — those existed in the pre-V2 architecture and were deleted in the April 2026 rewrite. Vestigial Bicep parameters and the `functions/consolidation-trigger/` folder still exist as cleanup candidates (see §16).
+There is **no multi-tenancy**: one owner per deployment.
 
-Three client surfaces:
+Three client surfaces, all served by one Hono process on Node 20:
 
 | Surface | Path | Used by |
 |---------|------|---------|
-| REST API | `/api/v1/*` | Web UI, scripts, automated tests |
-| MCP server | `/mcp` | Claude.ai, Claude Desktop, Claude Code, ChatGPT, any MCP-aware client |
-| Web UI | `/` (static) | The user's browser |
-
-All three surfaces run in a single Hono process on Node 20, deployed as a Docker container to Azure Container Apps.
+| REST API | `/api/v1/*` | Web app, scripts, integrations |
+| MCP server | `/mcp` | Claude Code, Codex, Claude Desktop, any MCP client |
+| Web app | `/` (static) | The owner's browser, and the iOS shell |
 
 ---
 
 ## 2. System Overview
 
-```
-                        Internet
-                            |
-                +-----------+-----------+
-                |           |           |
-            Web UI      MCP Clients  REST API
-            (browser)   (Claude*)    (curl, web UI fetch)
-                |           |           |
-                +-----------+-----------+
-                            |
-            Azure Container App (minReplicas: 1, always-on)
-            +---------------------------------------------+
-            |  Hono process on :3000                       |
-            |                                              |
-            |  /                Static web UI from frontend/dist
-            |  /health          {"ok":true,...}            |
-            |  /api/v1/*        REST adapter (src/app.ts)  |
-            |  /mcp             MCP adapter (per-request)  |
-            |  /api/docs        Swagger UI (Bearer-gated)  |
-            |  /api/openapi.json   OpenAPI 3.1 spec        |
-            |                                              |
-            |  Auto-migrations on startup (001..007)       |
-            +---------------------------------------------+
-                |              |              |
-                |              |              |
-       +--------+        +-----+-----+     +-+----+-----+
-       |                 |           |     |             |
-   PostgreSQL        Azure Blob   Gemini   Anthropic   Azure Foundry
-   + pgvector        Storage      API      API         (OpenAI)
-   (B1ms,            (private,
-    no HNSW)         SAS URLs)    Embedding   Haiku 4.5   gpt-5-4
-                                  2 + Flash   (Claude)    gpt-5-4-pro
-                                              + xAI + Firecrawl
-                                              for URL ingest fallbacks
-```
+![DevTrail architecture: people, agents and scripts reach one server through the web app, the MCP server and the REST API; all three call the same services, which write to Postgres and Blob storage and call the AI providers](images/overview-light.svg)
+
+The diagram source is [images/architecture.graph.json](images/architecture.graph.json); the two flow diagrams ([handoff](images/handoff-flow-light.svg), [ask](images/ask-flow-light.svg)) show a session handoff and a cited answer step by step.
+
+| Path | Purpose | Auth |
+|---|---|---|
+| `/` | Static web app from `frontend/dist` | sign-in screen (API key) or Easy Auth |
+| `/health` | `{"ok":true,...}` | public |
+| `/api/v1/*` | REST adapter (`src/app.ts`, `src/workspace-routes.ts`) | Bearer |
+| `/api/v1/openapi.json`, `/api/v1/docs` | OpenAPI 3.1 spec and Swagger UI | public |
+| `/mcp` | MCP adapter (fresh server per request) | Bearer (`?key=` only with `MCP_ALLOW_URL_KEY=true`) |
+| `/api/auth/token` | Easy Auth cookie → API key exchange | only with `AUTH_MODE=easyauth` |
+
+Migrations apply automatically on startup.
 
 ### Architecture pattern: thin adapters, fat services
 
@@ -196,15 +173,25 @@ Because `project_ids` is `uuid[]`, deleting a project does **not** cascade-delet
 
 ### Migrations
 
-Three SQL files under `migrations/`:
+Thirteen SQL files under `migrations/`:
 
 | File | Adds |
 |------|------|
 | `001_schema.sql` | `projects`, `content_items`, `chunks`, `todos`, `todo_comments` + pgvector extension + B-tree/GIN indexes |
-| `002_source_url.sql` | `source_url` column on `content_items` for URL-ingested entries |
-| `003_entities_graph.sql` | `entities`, `chunk_entities`, `published_at` column on `content_items` |
+| `002_source_url.sql` | `source_url` on `content_items` for URL-ingested entries |
+| `003_entities_graph.sql` | `entities`, `chunk_entities`, `published_at` on `content_items` |
+| `004_processing_status.sql` | `processing_status` + `processing_error` (async ingest contract) |
+| `005_backfill_control_chars.sql` | Strips C0/DEL bytes from old content rows |
+| `006_ingest_completed_at.sql` | `ingest_completed_at` for the status endpoint |
+| `007_pinned.sql` | `pinned_at` + partial indexes on content items, todos and projects |
+| `008_manual_order.sql` | Per-sibling todo ordering |
+| `009_content_folder.sql` | Content folders |
+| `010_subtask_tags_cleanup.sql` | Root-only todo tags |
+| `011_project_memory.sql` | Durable project sessions and handoff storage |
+| `012_project_timeline.sql` | Trigger-captured project timeline with historical backfill |
+| `013_session_workspaces.sql` | Session ownership, moves, cascading cleanup and session timelines |
 
-Auto-applied by `runMigrations()` in `src/server.ts` on every container start, idempotently (each migration is gated on a table-existence or column-existence probe). Adding a new migration means: drop the file, add a probe in `runMigrations()`. Migrations that create the `vector` extension must use `pool.query()` directly (not the pgvector-typed client) to avoid the chicken-and-egg of registering pgvector types before the extension exists.
+Auto-applied by `runMigrations()` in `src/server.ts` on every container start, idempotently (each migration is gated on a table- or column-existence probe). Adding a migration means: add the file and a probe in `runMigrations()`. Migrations that create the `vector` extension must use `pool.query()` directly (not the pgvector-typed client) to avoid registering pgvector types before the extension exists.
 
 ---
 
@@ -284,7 +271,7 @@ All ingest paths converge on `createContentItem()` in `src/services/content-item
 
 ### Why audio/video routes through Gemini
 
-Anthropic SDK doesn't accept audio input — it silently maps non-text content to `image/png` and produces garbage. We catch this at the service layer: when any file in `filesForMeta` has `audio/*` or `video/*` mime, the call routes to `mediaMetadataLLM` (Gemini 3 Flash Preview) instead. Everything else stays on Haiku for consistency + entity-extraction quality (~3% hallucination vs Gemini's higher rate on extraction tasks). Logged as commit `3178b24`.
+Anthropic SDK doesn't accept audio input — it silently maps non-text content to `image/png` and produces garbage. We catch this at the service layer: when any file in `filesForMeta` has `audio/*` or `video/*` mime, the call routes to `mediaMetadataLLM` (Gemini 3 Flash Preview) instead. Everything else stays on Haiku for consistency + entity-extraction quality (~3% hallucination vs Gemini's higher rate on extraction tasks). Logged as commit `e8918ba`.
 
 ### URL ingest (`src/services/url-ingest.ts`)
 
@@ -368,7 +355,7 @@ Question-answering over the corpus. Exposed via `POST /api/v1/rag` only (not in 
 5. Return answer + citations + meta.timings_ms (classify, embed, db_scan, graph, synthesize, total)
 ```
 
-### Default depth: `fast` (commit `a355ca6`)
+### Default depth: `fast` (commit `e6dbc6f`)
 
 Why this matters: a baseline profile (`docs/profiles/2026-04-25-rag-effort-baseline.md`) showed the reasoning model paying **22-36× the latency for marginal-to-zero quality gain** on retrieval-grounded queries. The classifier was routing ~half the queries to thorough; defaulting to fast cuts p95 latency dramatically without measurable quality loss. `auto` and `thorough` remain available as opt-in via the `depth` body parameter. The classifier code stays — it's still useful for query-entity extraction.
 
@@ -410,57 +397,47 @@ These exist because Postgres is firewalled in production — direct `psql` from 
 
 ---
 
-## 10. MCP Server (`src/mcp/server.ts`)
+## 10. MCP Server (`src/mcp/server.ts`, `src/mcp/session-tools.ts`)
 
-Stateless HTTP. The server constructs a fresh `McpServer` + `WebStandardStreamableHTTPServerTransport` per request — no session state between requests. Auth via `Authorization: Bearer ...` header or `?key=...` query parameter (same key as REST).
+Stateless Streamable HTTP. The server constructs a fresh `McpServer` + `WebStandardStreamableHTTPServerTransport` per request; there is no session state between requests. Auth is `Authorization: Bearer <DEVTRAIL_API_KEY>`, the same key as REST. Clients that can only take a URL can use `?key=` when the server runs with `MCP_ALLOW_URL_KEY=true`.
 
-The server passes a long `INSTRUCTIONS` string to clients that support it (Claude.ai, Claude Desktop, Claude Code). It tells the AI to scope project queries, prefer `search` before answering from training, dedup before creating, and never invent UUIDs.
+The server passes a long `INSTRUCTIONS` string to clients that support it. It tells the agent to scope queries to a project or session, search before answering or creating, keep tags user-supplied, and never invent UUIDs.
 
-### 8 tools
+### 32 tools
 
-| # | Tool | What it does |
-|---|------|-------------|
-| 1 | `list_projects` | List all projects (filter by status optional) |
-| 2 | `create_project` | Create a project |
-| 3 | `list` | Browse with `entity_type` filter (`document` / `note` / `todo`) + project filter |
-| 4 | `get` | Fetch by UUID — auto-detects entity type (project / content / todo) |
-| 5 | `create` | Discriminated union over `document` / `note` / `quick_note` / `todo` |
-| 6 | `search` | Hybrid vector + graph semantic search; returns `retrieval_path` per hit |
-| 7 | `find_mentions` | Exact entity lookup (canonical name or alias) → list of chunks |
-| 8 | `save_from_url` | Ingest by URL (YouTube / X / PDF / HTML / direct media) |
+| Group | Tools |
+|---|---|
+| Read | `list_projects`, `list`, `get`, `download`, `search`, `find_mentions`, `ask`, `list_tags`, `list_comments`, `list_activity` |
+| Write | `create_project`, `create`, `update`, `replace`, `archive`, `restore`, `add_comment`, `update_comment`, `rename_tag`, `save_from_url`, `retry`, `reprocess` |
+| Sessions | `list_sessions`, `create_session`, `update_session`, `get_session_context`, `get_project_context`, `save_session`, `session_timeline`, `project_timeline`, `delete_session`, `retry_session_cleanup` |
 
-**No `update_*` or `delete_*` MCP tools.** Edits and deletes go through the web UI (or REST). Rationale: AI clients should be additive about a user's knowledge base — let the human curate destructive ops.
+The tool surface mirrors REST: every MCP operation calls the same service function as its REST route. `archive` is a soft delete that `restore` undoes; permanent deletion of content and todos stays in the web app and REST (`?hard=true`).
 
 ---
 
 ## 11. REST API
 
-Defined in `src/app.ts`. Auth: `Authorization: Bearer <api-key>` or `?key=<api-key>` (same key as MCP).
+Defined with `app.openapi(createRoute(...))` in `src/app.ts` and `src/workspace-routes.ts`: every route carries Zod request and response schemas, and the OpenAPI 3.1 spec at `/api/v1/openapi.json` is generated from them (57 operations). Auth is `Authorization: Bearer <DEVTRAIL_API_KEY>` on every `/api/v1` route except the spec and `/api/v1/docs`; query-string keys are not accepted.
 
-### Endpoints
+Conventions:
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | `{"ok":true,"service":"devtrail","version":"2.0.0"}` (no auth) |
-| GET / POST / PUT / DELETE | `/api/v1/projects[/:id]` | Project CRUD |
-| POST | `/api/v1/projects/:id/restore` | Unarchive |
-| GET / POST / PUT / DELETE | `/api/v1/content[/:id]` | Content item CRUD (POST accepts JSON or `multipart/form-data` with `file` field) |
-| POST | `/api/v1/content/from-url` | URL ingestion |
-| POST | `/api/v1/content/:id/restore` | Unarchive |
-| GET / POST / PUT / DELETE | `/api/v1/todos[/:id]` | Todo CRUD |
-| POST | `/api/v1/todos/:id/restore` | Unarchive |
-| GET / POST / PUT / DELETE | `/api/v1/todos/:id/comments[/:cid]` | Todo comments CRUD |
-| POST | `/api/v1/search` | Hybrid vector + graph search |
-| POST | `/api/v1/find-mentions` | Exact entity lookup |
-| POST | `/api/v1/rag` | RAG Q&A (`depth: 'auto' | 'fast' | 'thorough'`, `reasoning_effort: 'low' | 'medium' | 'high'`) |
-| GET | `/api/v1/diagnostics/entities` | List entities |
-| GET | `/api/v1/diagnostics/content/:id/edges` | Per-content graph introspection |
-| POST | `/api/v1/diagnostics/backfill-entities` | Re-run entity extraction |
-| ALL | `/mcp` | Stateless MCP — fresh server + transport per request |
+- Path parameters are `{id}` (`{cid}` for comments, `{name}` for tags).
+- List filters: `?project_id=` (`null` = no project), `?tags=a,b`, `?pinned=`, `?limit=`.
+- Soft delete by default (`archived = true`); `?hard=true` deletes permanently. `POST .../restore`, `/pin`, `/unpin`.
+- Errors are `{ "error": string }`; unknown `/api/*` paths return a JSON 404.
+- Ingest is asynchronous: `POST /content` and `/content/from-url` return `202` + `{id, processing_status: 'pending'}`; poll `GET /content/{id}/status`.
 
-Soft delete by default (`archived = true`); `?hard=true` deletes permanently. The `restore` endpoints flip `archived` back.
+| Group | Routes |
+|---|---|
+| Projects | `GET/POST /projects`, `GET/PUT/DELETE /projects/{id}`, `/restore`, `/pin`, `/unpin`, `GET /projects/counts`, `GET /projects/{id}/timeline` |
+| Content | `GET/POST /content`, `POST /content/from-url`, `POST /content/bulk`, `GET/PUT/DELETE /content/{id}`, `/status`, `/retry`, `/reprocess`, `/replace`, `/edit-body`, `/restore`, `/pin`, `/unpin` |
+| Todos | `GET/POST /todos`, `POST /todos/bulk`, `POST /todos/reorder`, `GET/PUT/DELETE /todos/{id}`, `/restore`, `/pin`, `/unpin`, comments under `/todos/{id}/comments[/{cid}]` |
+| Sessions | `GET/POST /sessions`, `GET/PUT/DELETE /sessions/{id}`, `GET /sessions/{id}/context`, `GET /sessions/{id}/timeline` |
+| Search | `POST /search`, `POST /find-mentions`, `POST /rag` (`depth: 'auto' \| 'fast' \| 'thorough'`) |
+| Inventory | `GET /tags`, `PUT/DELETE /tags/{name}`, `GET /activity`, `GET /stats` |
+| Diagnostics | `GET /diagnostics/entities`, `GET /diagnostics/content/{id}`, `GET /diagnostics/content/{id}/edges`, `POST /diagnostics/backfill-entities` |
 
-`/api/v1/content` GET / list / update endpoints route their `blob_url` field through `stripAndSignContent()` before responding — produces a SAS-signed URL with default 60-min TTL via `BlobStorage.getReadSasUrl()`. URLs that are empty, external, or already signed pass through unchanged.
+`/api/v1/content` responses route `blob_url` through `stripAndSignContent()`, producing a SAS-signed URL (60-minute default TTL) via `BlobStorage.getReadSasUrl()`. Empty, external or already-signed URLs pass through unchanged.
 
 ---
 
@@ -491,7 +468,7 @@ interface LLMProvider {
 | `AzureFoundryLLMProvider` | `azure-foundry-llm.ts` | chat completions; `gpt-5-4` |
 | `AzureFoundryResponsesProvider` | `azure-foundry-responses.ts` | Responses API; `gpt-5-4-pro` (reasoning support) |
 
-All four LLM providers were instrumented in commit `e5133dc` to log per-call latency + tokens (input / output / reasoning / visible) and `output_items` breakdown for the Responses API. Use these to triage RAG latency without redeploying.
+All four LLM providers were instrumented in commit `62ccd7b` to log per-call latency + tokens (input / output / reasoning / visible) and `output_items` breakdown for the Responses API. Use these to triage RAG latency without redeploying.
 
 ### `extractJson()` (`src/providers/json-utils.ts`)
 
@@ -515,50 +492,47 @@ Every LLM-JSON path in the service layer routes through this. When you add a new
 
 | Module | Resource |
 |--------|----------|
-| `modules/container-app.bicep` | Hosts API + MCP + web UI. `minReplicas: 1` (always-on). Managed identity for ACR pull. |
+| `main.bicep` | Wires the modules; parameters for keys, model deployments, `authMode`, `mcpAllowUrlKey`, image tag |
+| `modules/container-app.bicep` | Hosts API + MCP + web app. `minReplicas: 1` (always on). Managed identity reads Key Vault and pulls from ACR. Probes hit `/health`. |
 | `modules/postgresql.bicep` | PostgreSQL Flexible Server (B1ms, pgvector enabled) |
-| `modules/storage.bicep` | Blob Storage account + container; `Allow Blob Public Access = false` |
-| `modules/keyvault.bicep` | All secrets (db connection string, API keys) |
+| `modules/storage.bicep` | Blob Storage account + private container |
+| `modules/keyvault.bicep` | Every secret: database URL, storage connection string, API and provider keys |
 | `modules/monitoring.bicep` | Log Analytics + Application Insights |
-| `modules/function-app.bicep` | **Legacy** — pre-pivot consolidation timer trigger; now deploys a no-op (see §16) |
+| `workbook-telemetry.bicep` | Optional Application Insights workbook |
 
-### Why ACR role assignment is CLI-only
+Deployment steps are in [deploy-azure.md](deploy-azure.md).
 
-The shared ACR lives in `shared-rg`; the Container App lives in `devtrail-rg`. Cross-resource-group role assignment can't be expressed in Bicep at resource-group scope, so SETUP.md does it via `az role assignment create` after Bicep deploys.
+### Why the ACR role assignment is CLI-only
+
+The container registry usually lives in another resource group, and a resource-group-scoped template cannot assign roles there, so `AcrPull` is granted with `az role assignment create` after the first deployment.
 
 ### Auto-migration on startup
 
-`runMigrations()` in `src/server.ts` is the canonical migration path. It probes for table/column existence and applies any missing migrations. Idempotent — safe to restart the container any number of times. The Postgres pool is the raw `pg.Pool` (not the pgvector-typed client) so it works before the `vector` extension is registered.
+`runMigrations()` in `src/server.ts` is the canonical migration path. It probes for table/column existence and applies any missing migrations, so restarting the container is always safe. It uses the raw `pg.Pool` (not the pgvector-typed client) so it works before the `vector` extension is registered.
 
 ### CI/CD (`.github/workflows/`)
 
-- **`ci.yml`** (PR + push to main): `npm ci`, `tsc --noEmit`, `npm test`, `cd web && npm ci && npm run build`. `GEMINI_API_KEY` is exposed for any tests that hit real Gemini integration paths (most tests use mocks; very few hit the real API).
-- **`deploy.yml`** (push to main): OIDC auth → build Docker image with `${{ github.sha }}` tag → push to ACR → `az containerapp update --image ...`. Also runs `Azure/functions-action` to publish the legacy consolidation function (cleanup pending — see §16).
-
-CI and Deploy run independently. CI passing while Deploy fails (and vice versa) is possible. Always check both.
+- **`ci.yml`** (push to `main`, manual dispatch): `dagger call ci`, the same gate Lefthook runs before a push: typecheck, backend + frontend unit tests, frontend build, and security (gitleaks, trivy, npm audit). See [ci.md](ci.md).
+- **`deploy.yml`** (push to `main`, manual dispatch, only when the Azure repository variables are set): OIDC login → build and push the image tagged with the commit SHA → `az containerapp update` → wait for `/health` → smoke tests for the auth gates, MCP initialize and a project create/delete round trip.
+- **`react-doctor.yml`**: React diagnostics on frontend pull requests.
 
 ---
 
 ## 14. Testing
 
-Vitest. **88 tests across 16 files** (as of 2026-04-25). One vitest config (`vitest.config.ts`) for unit + integration; a separate `vitest.e2e.config.ts` exists but the `tests/e2e/` folder it points at is currently unused — the `tests/integration/` files already exercise the full app surface against mocked providers and an in-memory test pg, which is what's actually being run in CI.
+Vitest for unit and integration tests, Playwright for workflow e2e.
 
 | Layer | Path | What it tests |
 |-------|------|---------------|
-| Unit | `tests/unit/capture/` | Mime utilities, URL detection |
-| Unit | `tests/unit/db/` | Db client (pgvector type registration on first use) |
-| Unit | `tests/unit/mcp/` | MCP server tool wiring |
-| Unit | `tests/unit/providers/` | Anthropic, Gemini, embedding, PDF extraction, error paths |
-| Unit | `tests/unit/services/` | Search filter parity (F2 regression), entity mapping (F3) |
-| Unit | `tests/unit/storage/` | Blob client (incl. SAS signing for T3.5 fix) |
-| Integration | `tests/integration/rest-api.test.ts` | All REST endpoints against mocked deps |
-| Integration | `tests/integration/mcp-integration.test.ts` | MCP tool surface end-to-end |
-| Integration | `tests/integration/url-ingest.test.ts` | URL classification + fetcher routing (mocked YouTube/Firecrawl/xAI) |
-| Integration | `tests/integration/archive-delete.test.ts` | Soft- and hard-delete flows |
+| Backend unit | `backend/tests/unit/**` | Capture utilities, db client, MCP wiring, providers, services, blob storage, telemetry |
+| Backend integration | `backend/tests/integration/**` | REST routes and auth, MCP over HTTP, URL ingest, archive/delete, timelines and session workspaces (PGlite with real migrations) |
+| Frontend unit | `frontend/src/**/*.test.ts` | Search syntax, tag filters, native config, sign-in boot flow, todo ordering |
+| Frontend e2e | `frontend/tests/e2e/**` | Desktop and mobile workflows (Chromium) plus core mobile flows on WebKit |
+| iOS smoke | `scripts/ios-smoke.sh` | Local simulator: install, connect, create a todo, verify via REST |
 
-Mocks live in `tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
+As of this writing: 340 backend tests in 26 files and 108 frontend unit tests in 10 files, all with stub providers (no network or model spend). Mocks live in `backend/tests/helpers/mocks.ts`. New behavior gets a test at the appropriate layer; bug fixes get a regression test at the lowest layer that would have caught them.
 
-For full live-system validation, see `E2E_TEST_PLAN.md` — 52 reproducible tests across 10 phases that hit production. Not part of the automated suite (LLM nondeterminism + cost + needs the owner's API key).
+For live-system validation, [testing/live-e2e-plan.md](testing/live-e2e-plan.md) has 52 reproducible tests across 10 phases against a real deployment. It is not part of the automated suite (model nondeterminism, cost, and it needs real keys).
 
 ---
 
@@ -586,7 +560,7 @@ For full live-system validation, see `E2E_TEST_PLAN.md` — 52 reproducible test
 
 - **240s response timeout on Container App.** URL ingestion can exceed this when fallbacks chain. Server completes the work; client gets 504. Open task: convert URL ingest to async + 202/job_id polling.
 - **Image tag uniqueness for revisions.** Container Apps only creates a new revision when the image *reference* changes. Push under git SHA tags, not just `:latest`.
-- **Cross-RG role assignment must be CLI.** ACR lives in `shared-rg`; Container App in `devtrail-rg`. Bicep at RG-scope can't express it.
+- **Cross-RG role assignment must be CLI.** The registry usually lives in another resource group, and a resource-group-scoped template can't assign roles there.
 - **Apple Silicon platform flag.** `docker build --platform linux/amd64`. Default arm64 won't run on Azure x86-64.
 
 ### URL ingest
@@ -599,136 +573,40 @@ For full live-system validation, see `E2E_TEST_PLAN.md` — 52 reproducible test
 ### Search / RAG
 
 - **Filter parity on graph expansion.** The vector-seed path filters via `findSimilarChunks`; the graph-expansion path's separate SQL must include the same project/tags/parent_type filters. Was F2 — leaked untagged chunks at sim=1.0 if you forgot. Tests in `tests/unit/services/search.test.ts` lock this in.
-- **Entity threshold is 30 chars.** Was 100 originally and silently skipped image OCR (~79 chars) and audio transcription (~81 chars). Was F3 — fixed in commit `c9acd89`.
+- **Entity threshold is 30 chars.** Was 100 originally and silently skipped image OCR (~79 chars) and audio transcription (~81 chars). Was F3 — fixed in commit `ec48373`.
 
 ---
 
-## 16. Legacy Infrastructure (cleanup candidates)
+## 16. Sessions and Timelines
 
-Things still deployed but **not used** by the V2 app. Slated for removal on a quiet day. Listed here so future-you doesn't trip over them.
+Added by migrations `011`–`013`; services in `src/services/sessions.ts` and `src/db/timeline.ts`, routes in `src/workspace-routes.ts`, MCP tools in `src/mcp/session-tools.ts`.
 
-| Item | Why it's still there | When to remove |
-|------|---------------------|----------------|
-| `infra/modules/function-app.bicep` | Pre-pivot consolidation timer trigger | After confirming nothing in production points at it |
-| `functions/consolidation-trigger/` | Pre-pivot Azure Function source | With the Bicep module |
-| `Azure/functions-action` step in `deploy.yml` | Publishes the no-op function on every deploy | With the Bicep module |
-| `psql ... migrations/001_initial_schema.sql` step in `scripts/deploy.sh` | References a migration filename that no longer exists | Anytime — auto-migration on startup is the real path |
-| `telegramBotToken` / `telegramWebhookSecret` / `telegramChatId` Bicep params | Pre-pivot Telegram bot | After updating Bicep schema (no V2 code reads these) |
-| `consolidationSchedule` Bicep param | CRON for the no-op function | With the function-app module |
-
-When you do the cleanup, also strip references from `SETUP.md`, this doc, and any handoff docs in `docs/`.
+- **Sessions** (`project_sessions`) are created or resumed by a stable `session_key`, optionally under a project. Content items and todos can belong to a session (`session_id`); triggers keep ownership consistent and move a session's work when the session moves to another project.
+- **Handoffs.** `save_session` stores a summary, decisions and next steps on the session and writes them to a searchable source note (folder `system/sessions`), so a handoff is both structured and findable by search and `ask`.
+- **Timelines.** `project_timeline_events` is written by `AFTER INSERT OR UPDATE OR DELETE` triggers on content items, todos and comments, in the same transaction as the change. Every client (web app, REST, MCP) produces the same history, and a rolled-back change leaves no event. Existing rows were backfilled and marked `reconstructed`.
+- **Reading them.** `GET /api/v1/projects/{id}/timeline` and `GET /api/v1/sessions/{id}/timeline` (MCP: `project_timeline`, `session_timeline`) page newest first with a `before_at`/`before_id` cursor, free-text `search`, and `tags=a,b` with `tag_match=all|any`. A project timeline includes its sessions.
+- **Deleting a session** deletes what it owns and queues blob cleanup; `pending_files` in the response counts cleanup that a repeated delete (or `retry_session_cleanup`) finishes.
 
 ---
 
 ## 17. File Map
 
-```
-devtrail/
-├── src/
-│   ├── server.ts                       Entry point: deps wiring + migrations + serve
-│   ├── app.ts                          Hono app: REST routes + MCP mount + static web
-│   ├── config.ts                       Zod-validated env config
-│   ├── capture/
-│   │   ├── chunker.ts                  500/100 sliding window with sentence-boundary alignment
-│   │   ├── ingest-trace.ts             Per-ingest trace IDs + fingerprints
-│   │   ├── metadata.ts                 Haiku metadata: title, topics, tags, extracted_text, published_at
-│   │   ├── mime-utils.ts               inferMimeFromFilename, resolveUploadMime
-│   │   └── url-detect.ts               Classify URL type (YouTube, X, PDF, image, audio, html)
-│   ├── db/                             Raw SQL, no ORM. One module per table.
-│   │   ├── client.ts                   pg.Pool wrapper that registers pgvector types on first use
-│   │   ├── projects.ts
-│   │   ├── content-items.ts
-│   │   ├── chunks.ts
-│   │   ├── todos.ts
-│   │   ├── todo-comments.ts
-│   │   └── entities.ts                 entities + chunk_entities edges
-│   ├── services/                       Business logic. Adapters call into here.
-│   │   ├── index.ts                    ServiceDeps interface (DI contract)
-│   │   ├── projects.ts
-│   │   ├── content-items.ts            Orchestrates dedup→upload→metadata→chunk→embed→graph
-│   │   ├── todos.ts
-│   │   ├── todo-comments.ts
-│   │   ├── search.ts                   Hybrid vector + graph search with RRF fusion + retrieval_path
-│   │   ├── rag.ts                      Q&A: depth classify → search → synthesize via fast or pro
-│   │   ├── query-depth.ts              Haiku classifier: fast vs thorough + entity extraction
-│   │   ├── entities.ts                 extract → resolve → map mentions to chunks → persist edges
-│   │   └── url-ingest.ts               YouTube / X / PDF / HTML ingestion → content-items pipeline
-│   ├── providers/
-│   │   ├── types.ts                    EmbeddingProvider, LLMProvider interfaces
-│   │   ├── gemini-embedding.ts
-│   │   ├── gemini-llm.ts
-│   │   ├── anthropic-llm.ts
-│   │   ├── azure-foundry-llm.ts        Chat completions (gpt-5-4)
-│   │   ├── azure-foundry-responses.ts  Responses API (gpt-5-4-pro) with reasoning support
-│   │   ├── pdf-extract.ts              pdf-parse v2 PDFParse class + control-char sanitizer
-│   │   ├── supadata.ts                 YouTube transcript via Supadata (single-call, no fallback)
-│   │   ├── firecrawl.ts                HTML extraction
-│   │   ├── xai.ts                      X/Twitter live-search via Grok
-│   │   └── json-utils.ts               extractJson() — strips markdown fences from LLM output
-│   ├── mcp/
-│   │   └── server.ts                   21 MCP tools + INSTRUCTIONS string
-│   └── storage/
-│       └── blob.ts                     Azure Blob upload/download + getReadSasUrl
-├── migrations/
-│   ├── 001_schema.sql                  projects, content_items, chunks, todos, todo_comments
-│   ├── 002_source_url.sql              source_url column on content_items
-│   ├── 003_entities_graph.sql          entities, chunk_entities, published_at
-│   ├── 004_processing_status.sql       processing_status + processing_error (async ingest)
-│   ├── 005_backfill_control_chars.sql  strip C0/DEL bytes from old content rows
-│   ├── 006_ingest_completed_at.sql     ingest_completed_at for the polling endpoint
-│   └── 007_pinned.sql                  pinned_at on projects/content/todos + partial indexes
-├── infra/
-│   ├── main.bicep                      Top-level template
-│   ├── parameters.json                 Non-secret values
-│   └── modules/
-│       ├── container-app.bicep         Container App (minReplicas: 1, managed identity)
-│       ├── postgresql.bicep            Flexible Server (B1ms, pgvector)
-│       ├── storage.bicep               Blob storage (private)
-│       ├── keyvault.bicep              All secrets
-│       ├── monitoring.bicep            Log Analytics + App Insights
-│       └── function-app.bicep          [LEGACY — see §16]
-├── functions/
-│   └── consolidation-trigger/          [LEGACY — see §16]
-├── scripts/
-│   ├── deploy.sh                       Manual deploy (has stale migration step — see §16)
-│   ├── migrate-azure.sh                Manual psql against Azure (rarely needed; auto-migration is canonical)
-│   ├── backfill-entities.ts            Bulk re-run entity extraction
-│   ├── cleanup-stale-ingests.ts
-│   └── rag-profile.sh                  Reproducible RAG latency/quality profile
-├── frontend/                           Vite + React UI (hand-rolled CSS in src/styles.css; built into frontend/dist, served by Hono)
-├── tests/
-│   ├── helpers/
-│   │   └── mocks.ts                    Shared mock factories
-│   ├── unit/
-│   │   ├── capture/                    mime-utils, url-detect
-│   │   ├── db/                         client
-│   │   ├── mcp/                        server
-│   │   ├── providers/                  anthropic-llm, gemini-embedding, gemini-llm, pdf-extract, provider-errors
-│   │   ├── services/                   entities, search
-│   │   └── storage/                    blob
-│   └── integration/
-│       ├── archive-delete.test.ts
-│       ├── mcp-integration.test.ts
-│       ├── rest-api.test.ts
-│       └── url-ingest.test.ts
-├── docs/
-│   ├── handoffs/                       Session handoff docs
-│   └── profiles/                       Reproducible benchmark baselines (e.g., RAG effort)
-├── .github/workflows/
-│   ├── ci.yml                          Typecheck + tests on PR/push
-│   └── deploy.yml                      Build, push, deploy on push to main (OIDC)
-├── docker-compose.yml                  Local Postgres on port 5434
-├── Dockerfile                          Multi-stage build
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-├── vitest.e2e.config.ts                (currently unused; tests/e2e/ folder is empty)
-├── README.md                           Project overview + local dev setup
-├── SETUP.md                            First-time Azure deployment walkthrough
-├── ARCHITECTURE.md                     This doc
-├── CLAUDE.md                           Instructions for AI sessions in this repo
-└── E2E_TEST_PLAN.md                    52-test reproducible live-system validation
-```
+The workspace layout is in [AGENTS.md](../AGENTS.md#code-layout). Key backend files (paths under `backend/`):
+
+| File | Role |
+|---|---|
+| `src/server.ts` | Entry point: config, provider wiring, migrations, serve |
+| `src/app.ts` | Hono app: auth, REST routes, OpenAPI, MCP mount, static web app |
+| `src/workspace-routes.ts` | Session and timeline routes |
+| `src/config.ts` | Zod-validated environment config |
+| `src/mcp/server.ts`, `src/mcp/session-tools.ts` | The 32 MCP tools and their instructions |
+| `src/services/*.ts` | Business logic shared by REST and MCP |
+| `src/db/*.ts` | SQL access, timeline queries |
+| `src/capture/*.ts` | Chunking, metadata, MIME and URL detection |
+| `src/providers/*.ts` | Gemini, Anthropic, Azure OpenAI, Supadata, Firecrawl, xAI, stubs |
+| `src/storage/blob.ts` | Blob uploads and signed read URLs |
+| `../shared/src/schemas.ts` | Wire schemas shared with the frontend |
+| `../migrations/*.sql` | Schema, applied at startup |
 
 ---
 
@@ -754,6 +632,9 @@ Validated by `loadConfig()` in `src/config.ts` on startup. All required values t
 | `PORT` | No | `3000` | HTTP server port |
 | `NODE_ENV` | No | `development` | `development` / `production` / `test` |
 | `TIMEZONE` | No | `America/Chicago` | IANA timezone (date math) |
+| `AUTH_MODE` | No | `api-key` | Web sign-in: `api-key` (sign-in screen) or `easyauth` (behind Azure Easy Auth only) |
+| `MCP_ALLOW_URL_KEY` | No | `false` | Accept `?key=` on `/mcp` for MCP clients that can only be given a URL |
+| `LLM_PROVIDER` | No | `real` | `stub` swaps every model call for deterministic fakes (local dev, tests) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | — | Set automatically by Azure when App Insights is wired |
 
-No `TELEGRAM_*` env vars are read by V2 code. Bicep parameters of those names are vestigial — see §16.
+In stub mode the provider keys may be empty.

@@ -1,0 +1,744 @@
+{
+  "schemaVersion": "0.3.1",
+  "kind": "graph",
+  "title": "DevTrail architecture",
+  "summary": "DevTrail is one server that people and AI agents share. People use the web and iOS app; agents use the MCP server; scripts use the REST API. All three call the same services, so a todo, note, document or session handoff written by an agent is the same record a person reads. Postgres triggers record every change into a durable timeline, and everything saved is chunked, embedded and linked into an entity graph so hybrid search and cited answers can find it.",
+  "lenses": [
+    "architecture",
+    "data-flow"
+  ],
+  "provenance": {
+    "repo": {
+      "owner": "paguilar1227",
+      "name": "devtrail",
+      "host": "github.com"
+    },
+    "base": {
+      "sha": "e70929c93b09671e4120fd9491f3808b7f9ec980",
+      "ref": "main"
+    },
+    "head": {
+      "sha": "e70929c93b09671e4120fd9491f3808b7f9ec980",
+      "ref": "main"
+    },
+    "generator": {
+      "name": "codex",
+      "version": "1.0.0"
+    }
+  },
+  "lanes": [
+    {
+      "id": "clients",
+      "label": "People and agents",
+      "subtitle": "Browser, iOS, any MCP client",
+      "order": 0
+    },
+    {
+      "id": "server",
+      "label": "DevTrail server",
+      "subtitle": "Node 20 · one Hono process",
+      "order": 1
+    },
+    {
+      "id": "data",
+      "label": "Storage",
+      "subtitle": "Postgres + pgvector, Blob",
+      "order": 2
+    },
+    {
+      "id": "providers",
+      "label": "AI and ingest providers",
+      "subtitle": "Called by the server",
+      "order": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "web-app",
+      "label": "Web and iOS app",
+      "kind": "ui",
+      "delta": "unchanged",
+      "lane": "clients",
+      "subtitle": "React · Capacitor",
+      "summary": "Projects, todos, notes, documents, sessions and timelines for the person in the loop.",
+      "files": [
+        {
+          "path": "frontend/src/App.tsx"
+        },
+        {
+          "path": "frontend/src/lib/api.ts"
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "label": "AI agents",
+      "kind": "external",
+      "delta": "unchanged",
+      "lane": "clients",
+      "subtitle": "any MCP client",
+      "summary": "Claude Code, Codex, Copilot or any MCP client. Agents read, write and hand off work in the same workspace people use."
+    },
+    {
+      "id": "scripts",
+      "label": "Scripts and integrations",
+      "kind": "external",
+      "delta": "unchanged",
+      "lane": "clients",
+      "subtitle": "REST + OpenAPI",
+      "summary": "Anything that can send a Bearer key: CLIs, automations, other services."
+    },
+    {
+      "id": "rest-api",
+      "label": "REST API",
+      "kind": "route",
+      "delta": "unchanged",
+      "lane": "server",
+      "subtitle": "/api/v1 · OpenAPI",
+      "summary": "57 schema-validated operations with a generated OpenAPI 3.1 spec at /api/v1/openapi.json.",
+      "files": [
+        {
+          "path": "backend/src/app.ts"
+        },
+        {
+          "path": "backend/src/workspace-routes.ts"
+        }
+      ]
+    },
+    {
+      "id": "mcp-server",
+      "label": "MCP server",
+      "kind": "route",
+      "delta": "unchanged",
+      "lane": "server",
+      "subtitle": "/mcp · 32 tools",
+      "summary": "Stateless Streamable HTTP. Tools mirror the REST surface: create, search, ask, sessions, timelines.",
+      "files": [
+        {
+          "path": "backend/src/mcp/server.ts"
+        },
+        {
+          "path": "backend/src/mcp/session-tools.ts"
+        }
+      ]
+    },
+    {
+      "id": "services",
+      "label": "Workspace services",
+      "kind": "module",
+      "delta": "unchanged",
+      "lane": "server",
+      "subtitle": "projects · todos · sessions",
+      "summary": "The one place business rules live. REST and MCP are thin adapters over it.",
+      "files": [
+        {
+          "path": "backend/src/services/sessions.ts"
+        },
+        {
+          "path": "backend/src/services/todos.ts"
+        },
+        {
+          "path": "backend/src/services/projects.ts"
+        }
+      ]
+    },
+    {
+      "id": "ingest",
+      "label": "Ingest pipeline",
+      "kind": "job",
+      "delta": "unchanged",
+      "lane": "server",
+      "subtitle": "chunk · embed · link",
+      "summary": "Notes, files and URLs are acknowledged at once, then chunked, embedded and linked to entities in the background.",
+      "files": [
+        {
+          "path": "backend/src/services/content-items.ts"
+        },
+        {
+          "path": "backend/src/capture/chunker.ts"
+        },
+        {
+          "path": "backend/src/services/url-ingest.ts"
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "label": "Search and answers",
+      "kind": "module",
+      "delta": "unchanged",
+      "lane": "server",
+      "subtitle": "hybrid retrieval",
+      "summary": "Three retrieval arms fused with reciprocal rank fusion. Every hit explains how it was reached.",
+      "files": [
+        {
+          "path": "backend/src/services/search.ts"
+        },
+        {
+          "path": "backend/src/services/rag.ts"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL + pgvector",
+      "kind": "datastore",
+      "delta": "unchanged",
+      "lane": "data",
+      "group": "postgres",
+      "subtitle": "work items · embeddings",
+      "summary": "Projects, todos, comments, notes, documents, 3072-d chunk embeddings and the entity graph.",
+      "files": [
+        {
+          "path": "migrations/001_schema.sql"
+        },
+        {
+          "path": "migrations/003_entities_graph.sql"
+        }
+      ]
+    },
+    {
+      "id": "timeline",
+      "label": "Timeline",
+      "kind": "datastore",
+      "delta": "unchanged",
+      "lane": "data",
+      "group": "postgres",
+      "subtitle": "every change, recorded",
+      "summary": "Database triggers write an event for every change, whoever made it, so project and session history cannot be skipped.",
+      "files": [
+        {
+          "path": "migrations/012_project_timeline.sql"
+        },
+        {
+          "path": "migrations/013_session_workspaces.sql"
+        }
+      ]
+    },
+    {
+      "id": "blob",
+      "label": "Blob storage",
+      "kind": "datastore",
+      "delta": "unchanged",
+      "lane": "data",
+      "subtitle": "original files",
+      "summary": "Uploaded bytes kept as-is; reads go through short-lived signed URLs.",
+      "files": [
+        {
+          "path": "backend/src/storage/blob.ts"
+        }
+      ]
+    },
+    {
+      "id": "url-sources",
+      "label": "URL sources",
+      "kind": "external",
+      "delta": "unchanged",
+      "lane": "providers",
+      "subtitle": "YouTube · web · X",
+      "summary": "Supadata, Firecrawl and xAI fetch content for save_from_url.",
+      "files": [
+        {
+          "path": "backend/src/providers/supadata.ts"
+        },
+        {
+          "path": "backend/src/providers/firecrawl.ts"
+        },
+        {
+          "path": "backend/src/providers/xai.ts"
+        }
+      ]
+    },
+    {
+      "id": "ai-models",
+      "label": "AI models",
+      "kind": "external",
+      "delta": "unchanged",
+      "lane": "providers",
+      "subtitle": "LLMs + embeddings",
+      "summary": "Gemini embeds text and reads images, PDFs and audio; Claude Haiku writes metadata and extracts entities; Azure OpenAI writes cited answers.",
+      "files": [
+        {
+          "path": "backend/src/server.ts"
+        },
+        {
+          "path": "backend/src/providers/gemini-embedding.ts"
+        },
+        {
+          "path": "backend/src/providers/anthropic-llm.ts"
+        },
+        {
+          "path": "backend/src/providers/azure-foundry-llm.ts"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "agents-to-mcp",
+      "from": "agents",
+      "to": "mcp-server",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "MCP tools",
+      "emphasis": "hero",
+      "animated": true
+    },
+    {
+      "id": "web-to-rest",
+      "from": "web-app",
+      "to": "rest-api",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "Bearer key",
+      "animated": true
+    },
+    {
+      "id": "scripts-to-rest",
+      "from": "scripts",
+      "to": "rest-api",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "REST"
+    },
+    {
+      "id": "rest-to-services",
+      "from": "rest-api",
+      "to": "services",
+      "kind": "call",
+      "delta": "unchanged",
+      "label": "same services"
+    },
+    {
+      "id": "mcp-to-services",
+      "from": "mcp-server",
+      "to": "services",
+      "kind": "call",
+      "delta": "unchanged",
+      "label": "same services"
+    },
+    {
+      "id": "services-to-postgres",
+      "from": "services",
+      "to": "postgres",
+      "kind": "data",
+      "delta": "unchanged",
+      "label": "read / write"
+    },
+    {
+      "id": "postgres-to-timeline",
+      "from": "postgres",
+      "to": "timeline",
+      "kind": "event",
+      "delta": "unchanged",
+      "label": "triggers record every change",
+      "emphasis": "hero",
+      "animated": true
+    },
+    {
+      "id": "services-to-ingest",
+      "from": "services",
+      "to": "ingest",
+      "kind": "queue",
+      "delta": "unchanged",
+      "label": "note, file or URL"
+    },
+    {
+      "id": "ingest-to-blob",
+      "from": "ingest",
+      "to": "blob",
+      "kind": "data",
+      "delta": "unchanged",
+      "label": "original bytes"
+    },
+    {
+      "id": "ingest-to-postgres",
+      "from": "ingest",
+      "to": "postgres",
+      "kind": "data",
+      "delta": "unchanged",
+      "label": "chunks · embeddings · entities"
+    },
+    {
+      "id": "ingest-to-urls",
+      "from": "ingest",
+      "to": "url-sources",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "fetch"
+    },
+    {
+      "id": "services-to-search",
+      "from": "services",
+      "to": "search",
+      "kind": "call",
+      "delta": "unchanged",
+      "label": "search / ask"
+    },
+    {
+      "id": "search-to-postgres",
+      "from": "search",
+      "to": "postgres",
+      "kind": "data",
+      "delta": "unchanged",
+      "label": "seed + expand graph"
+    },
+    {
+      "id": "ingest-to-ai",
+      "from": "ingest",
+      "to": "ai-models",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "embed · extract"
+    },
+    {
+      "id": "search-to-ai",
+      "from": "search",
+      "to": "ai-models",
+      "kind": "http",
+      "delta": "unchanged",
+      "label": "embed · answer"
+    }
+  ],
+  "flows": [
+    {
+      "id": "handoff",
+      "title": "An agent's handoff reaches a person",
+      "delta": "unchanged",
+      "participants": [
+        {
+          "node": "agents"
+        },
+        {
+          "node": "mcp-server"
+        },
+        {
+          "node": "services"
+        },
+        {
+          "node": "postgres"
+        },
+        {
+          "node": "timeline"
+        },
+        {
+          "node": "rest-api"
+        },
+        {
+          "node": "web-app"
+        }
+      ],
+      "messages": [
+        {
+          "id": "save-session",
+          "from": "agents",
+          "to": "mcp-server",
+          "label": "save_session(summary, decisions, next steps)",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "save-handoff",
+          "from": "mcp-server",
+          "to": "services",
+          "label": "save handoff",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "write-note",
+          "from": "services",
+          "to": "postgres",
+          "label": "session + searchable source note",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "record-event",
+          "from": "postgres",
+          "to": "timeline",
+          "label": "trigger records the change",
+          "kind": "async",
+          "delta": "unchanged"
+        },
+        {
+          "id": "open-timeline",
+          "from": "web-app",
+          "to": "rest-api",
+          "label": "GET /sessions/{id}/timeline",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "read-events",
+          "from": "rest-api",
+          "to": "timeline",
+          "label": "events, newest first",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "show-history",
+          "from": "rest-api",
+          "to": "web-app",
+          "label": "handoff + full history",
+          "kind": "return",
+          "delta": "unchanged"
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "title": "Answering from everything saved",
+      "delta": "unchanged",
+      "participants": [
+        {
+          "node": "agents"
+        },
+        {
+          "node": "mcp-server"
+        },
+        {
+          "node": "search"
+        },
+        {
+          "node": "postgres"
+        },
+        {
+          "node": "ai-models"
+        }
+      ],
+      "messages": [
+        {
+          "id": "ask-call",
+          "from": "agents",
+          "to": "mcp-server",
+          "label": "ask(question, project or session)",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "run-rag",
+          "from": "mcp-server",
+          "to": "search",
+          "label": "retrieve and answer",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "embed-question",
+          "from": "search",
+          "to": "ai-models",
+          "label": "embed the question (Gemini)",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "retrieve",
+          "from": "search",
+          "to": "postgres",
+          "label": "vector + keyword seeds, entity-graph expansion",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "fuse",
+          "from": "search",
+          "to": "search",
+          "label": "fuse with RRF",
+          "kind": "self",
+          "delta": "unchanged"
+        },
+        {
+          "id": "answer",
+          "from": "search",
+          "to": "ai-models",
+          "label": "answer from the top chunks (Azure OpenAI)",
+          "kind": "sync",
+          "delta": "unchanged"
+        },
+        {
+          "id": "answer-back",
+          "from": "ai-models",
+          "to": "search",
+          "label": "answer",
+          "kind": "return",
+          "delta": "unchanged"
+        },
+        {
+          "id": "cited",
+          "from": "mcp-server",
+          "to": "agents",
+          "label": "answer + citations + retrieval path",
+          "kind": "return",
+          "delta": "unchanged"
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "chips": [
+      {
+        "label": "MCP tools",
+        "value": "32",
+        "tone": "hero"
+      },
+      {
+        "label": "REST operations",
+        "value": "57",
+        "tone": "neutral"
+      },
+      {
+        "label": "Unit + integration tests",
+        "value": "448",
+        "tone": "neutral"
+      }
+    ]
+  },
+  "views": [
+    {
+      "id": "overview",
+      "title": "DevTrail at a glance",
+      "lens": "architecture",
+      "summary": "One server, three ways in, one shared record.",
+      "defaultOpen": true,
+      "scope": {
+        "kind": "all"
+      },
+      "children": []
+    },
+    {
+      "id": "handoff-flow",
+      "title": "An agent's handoff reaches a person",
+      "lens": "data-flow",
+      "scope": {
+        "kind": "selection",
+        "flows": [
+          "handoff"
+        ]
+      },
+      "children": []
+    },
+    {
+      "id": "ask-flow",
+      "title": "Answering from everything saved",
+      "lens": "data-flow",
+      "scope": {
+        "kind": "selection",
+        "flows": [
+          "ask"
+        ]
+      },
+      "children": []
+    }
+  ],
+  "walkthrough": {
+    "steps": [
+      {
+        "id": "agents-in",
+        "heading": "Agents work through 32 MCP tools",
+        "body": "Claude Code, Codex or any MCP client creates todos, saves notes and searches the same workspace people use.",
+        "stage": {
+          "kind": "view",
+          "view": "overview"
+        },
+        "focus": {
+          "kind": "selection",
+          "nodes": [
+            "mcp-server"
+          ]
+        }
+      },
+      {
+        "id": "one-record",
+        "heading": "People and agents share one record",
+        "body": "The web app, REST and MCP all call the same services, so nothing is copied or synced.",
+        "stage": {
+          "kind": "view",
+          "view": "overview"
+        },
+        "focus": {
+          "kind": "selection",
+          "nodes": [
+            "services"
+          ]
+        }
+      },
+      {
+        "id": "timeline",
+        "heading": "Every change lands on a timeline",
+        "body": "Database triggers write the history, so no client can forget to log what it did.",
+        "stage": {
+          "kind": "view",
+          "view": "overview"
+        },
+        "focus": {
+          "kind": "selection",
+          "nodes": [
+            "timeline"
+          ]
+        }
+      },
+      {
+        "id": "handoff",
+        "heading": "Agents hand off; people see it",
+        "body": "save_session stores the summary, decisions and next steps that a person opens on the session timeline.",
+        "stage": {
+          "kind": "flow",
+          "flow": "handoff"
+        },
+        "focus": {
+          "kind": "selection",
+          "messages": [
+            "save-session",
+            "save-handoff",
+            "write-note"
+          ]
+        }
+      },
+      {
+        "id": "retrieve",
+        "heading": "Search fuses three retrieval arms",
+        "body": "Vector, keyword and entity-graph results are combined with reciprocal rank fusion.",
+        "stage": {
+          "kind": "flow",
+          "flow": "ask"
+        },
+        "focus": {
+          "kind": "selection",
+          "messages": [
+            "embed-question",
+            "retrieve",
+            "fuse"
+          ]
+        }
+      },
+      {
+        "id": "cited",
+        "heading": "Answers come back with citations",
+        "body": "Each hit carries its retrieval path, so a person or agent can check where an answer came from.",
+        "stage": {
+          "kind": "flow",
+          "flow": "ask"
+        },
+        "focus": {
+          "kind": "selection",
+          "messages": [
+            "answer",
+            "answer-back",
+            "cited"
+          ]
+        }
+      }
+    ]
+  },
+  "layout": {
+    "direction": "right",
+    "laneOrder": [
+      "clients",
+      "server",
+      "data",
+      "providers"
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 # RAG Effort Profile — Baseline (2026-04-25)
 
-Profile run on production at commit `abfd03d` against the E2E test project (after F1/F2/F3 fixes deployed and graph backfill applied). Captures latency + answer-quality across the model and reasoning-effort matrix.
+Profile run on production at commit `a806390` against the E2E test project (after F1/F2/F3 fixes deployed and graph backfill applied). Captures latency + answer-quality across the model and reasoning-effort matrix.
 
 **Purpose:** Establish a baseline so future model swaps (gpt-5.5, etc.) and config changes (default depth, reasoning effort) can be objectively compared.
 
@@ -13,7 +13,7 @@ Profile run on production at commit `abfd03d` against the E2E test project (afte
 | | |
 |--|--|
 | Date | 2026-04-25 |
-| API commit | `abfd03d` |
+| API commit | `a806390` |
 | Endpoint | `https://your-app.your-env.region.azurecontainerapps.io` |
 | Project | E2E test project, 7 content items (DOC text, 3 file uploads PDF/IMG/AUDIO, 3 URL ingests YouTube/arXiv/blog) plus 1 root todo + 1 subtask + 1 grandchild |
 | Graph state | Backfilled: 110 edges across the project's chunks (DOC=9, PDF=13, IMG=5, AUDIO=4, ARXIV=32, BLOG=38, YT=4, todos=5) |

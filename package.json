@@ -2,6 +2,7 @@
   "name": "devtrail",
   "version": "2.0.0",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "shared",
     "backend",
@@ -34,7 +35,7 @@
     "lefthook": "^2.1.9",
     "wait-on": "^9.0.5"
   },
-  "comment:overrides": "Pin patched versions of transitive CVE deps whose parents (firecrawl-js, @modelcontextprotocol/sdk, @azure/*, ajv, wait-on) haven't shipped the fix yet. Exact versions (no caret) so npm forces nested/exact pins. All within-major. Drop an entry once its parent upgrades past the advisory. See CI.md.",
+  "comment:overrides": "Pin patched versions of transitive CVE deps whose parents (firecrawl-js, @modelcontextprotocol/sdk, @azure/*, ajv, wait-on) haven't shipped the fix yet. Exact versions (no caret) so npm forces nested/exact pins. All within-major. Drop an entry once its parent upgrades past the advisory. See docs/ci.md.",
   "overrides": {
     "axios": "1.20.0",
     "@grpc/grpc-js": "1.14.5",

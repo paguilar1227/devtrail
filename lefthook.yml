@@ -1,4 +1,4 @@
-# Local CI gate — the owner's local-ci standard.
+# Local CI gate — the local-ci standard (see docs/ci.md).
 # Install once:  lefthook install   (or: make bootstrap)
 #
 #   pre-commit (feature branches): fast native secrets scan on staged files.

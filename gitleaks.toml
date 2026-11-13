@@ -11,7 +11,7 @@ description = "Known non-secret local-dev values + generated/lock files"
 regexTarget = "match"
 regexes = [
   # The stub-mode local API key, intentionally fake + checked into .env.example
-  # and the e2e helpers. Matches backend/.env.example and CLAUDE.md.
+  # and the e2e helpers. Matches backend/.env.example and AGENTS.md.
   '''local-dev-key-not-secret''',
   # Azurite's well-known public dev storage key — a Microsoft-published constant,
   # identical in every Azurite install worldwide. Hardcoded as the local-seed

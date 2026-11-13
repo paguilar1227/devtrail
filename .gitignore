@@ -36,3 +36,6 @@ scratch/
 .superdev/
 .thermos/
 .ios-smoke/
+
+# Local copy of the Azure deployment parameters (see docs/deploy-azure.md)
+infra/parameters.json

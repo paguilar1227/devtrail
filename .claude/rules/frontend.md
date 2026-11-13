@@ -17,7 +17,7 @@ Loads when working in `frontend/`. Drawer composition pattern, compact-row patte
   proxy in dev, Hono static serving in prod). Native gets its origin from the connect
   screen (`components/ConnectScreen.tsx`), persisted in localStorage.
 - After changing web code, `npx cap sync ios` re-copies `dist/` into the shell. The build
-  loop lives in CLAUDE.md → "iOS app (Capacitor shell)".
+  loop lives in AGENTS.md → "iOS app (Capacitor shell)".
 - New native-only behavior gets unit tests next to `nativeConfig.test.ts` (mock
   `@capacitor/core` with a mutable flag — see that file for the pattern).
 - **Engine parity:** the `webkit-mobile` Playwright project reruns a curated slice of

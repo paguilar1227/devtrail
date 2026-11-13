@@ -34,7 +34,7 @@ Verify the current ID if you get 404s. The codebase pins Haiku to `claude-haiku-
 
 ## URL ingestion (`services/url-ingest.ts` + the URL providers)
 
-- **YouTube:** Supadata single-call. Replaced the direct-scrape → Firecrawl → xAI fallback chain (commit `aab7f16`); failure surfaces as `YOUTUBE_TRANSCRIPT_MISS:` rather than retrying.
+- **YouTube:** Supadata single-call. Replaced the direct-scrape → Firecrawl → xAI fallback chain (commit `72885b1`); failure surfaces as `YOUTUBE_TRANSCRIPT_MISS:` rather than retrying.
 - **X/Twitter:** xAI Grok live-search primary, Firecrawl stealth fallback. Detect failure phrases up front and surface `X_SEARCH_MISS:` rather than saving useless content.
 - **YouTube snowflake IDs** — decode the post snowflake to derive a ±6hr search window so `x_search` can actually find the post.
 - **PDFs by URL:** downloaded as bytes → `pdf-parse` (see above).

@@ -5,7 +5,7 @@
 # the SAME computation as the local Lefthook pre-push gate — green local ⇒ green
 # here, by construction (same BuildKit engine, pinned version).
 #
-# TRIGGER (see CLAUDE.md "CI model"): iterate locally behind the lefthook
+# TRIGGER (see AGENTS.md "CI"): iterate locally behind the lefthook
 # pre-push gate (`dagger call ci`). Cloud CI runs ONLY at merge / post-merge:
 #   - push: main         post-merge safety net (runs once per merge, not push)
 #   - workflow_dispatch  run the full gate on a branch before merging
